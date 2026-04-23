@@ -1,0 +1,144 @@
+package scrapers
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gocolly/colly/v2"
+	"go.uber.org/zap"
+)
+
+// CollyBase provides a pre-configured Colly collector for HTML scraping.
+// Embed this in utility-specific scrapers to avoid repeating boilerplate.
+//
+// Example:
+//
+//	type MyUtilityScraper struct {
+//	    CollyBase
+//	    scraperVersion string
+//	}
+//
+//	func (s *MyUtilityScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
+//	    c := s.NewCollector()
+//	    c.OnHTML(".rebate-item", func(e *colly.HTMLElement) { ... })
+//	    c.Visit("https://myutility.com/rebates")
+//	    return results, nil
+//	}
+type CollyBase struct {
+	AllowedDomain  string
+	RequestTimeout time.Duration
+	Parallelism    int
+	Delay          time.Duration
+	Logger         *zap.Logger
+}
+
+// NewCollector returns a *colly.Collector configured with the settings on CollyBase.
+func (b *CollyBase) NewCollector() *colly.Collector {
+	opts := []colly.CollectorOption{
+		colly.UserAgent("Mozilla/5.0 (compatible; IncenvaBot/1.0; +https://incenva.com/bot)"),
+	}
+	if b.AllowedDomain != "" {
+		opts = append(opts, colly.AllowedDomains(b.AllowedDomain))
+	}
+
+	c := colly.NewCollector(opts...)
+	c.SetRequestTimeout(b.requestTimeout())
+
+	parallelism := b.Parallelism
+	if parallelism <= 0 {
+		parallelism = 2
+	}
+	delay := b.Delay
+	if delay <= 0 {
+		delay = 500 * time.Millisecond
+	}
+
+	_ = c.Limit(&colly.LimitRule{
+		DomainGlob:  "*",
+		Parallelism: parallelism,
+		Delay:       delay,
+	})
+
+	if b.Logger != nil {
+		c.OnError(func(r *colly.Response, err error) {
+			b.Logger.Warn("colly request error",
+				zap.String("url", r.Request.URL.String()),
+				zap.Int("status", r.StatusCode),
+				zap.Error(err),
+			)
+		})
+	}
+
+	return c
+}
+
+func (b *CollyBase) requestTimeout() time.Duration {
+	if b.RequestTimeout > 0 {
+		return b.RequestTimeout
+	}
+	return 30 * time.Second
+}
+
+// ── Amount parsing helpers ────────────────────────────────────────────────────
+
+var (
+	reDollar  = regexp.MustCompile(`\$([0-9,]+(?:\.[0-9]+)?)`)
+	rePercent = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)\s*%`)
+	rePerKwh  = regexp.MustCompile(`\$([0-9]+(?:\.[0-9]+)?)\s*/\s*(?:k[Ww][Hh]|kwh)`)
+	reUpTo    = regexp.MustCompile(`(?i)up\s+to\s+\$([0-9,]+(?:\.[0-9]+)?)`)
+)
+
+// ParseAmount parses a human-readable incentive amount string into an
+// incentive_format enum value and a numeric amount.
+//
+// Examples:
+//
+//	"$600"           → ("dollar_amount", 600.0)
+//	"30% of cost"    → ("percent", 30.0)
+//	"up to $2,000"   → ("dollar_amount", 2000.0)
+//	"$0.10/kWh"      → ("per_unit", 0.10)
+//	"varies"         → ("narrative", nil)
+func ParseAmount(s string) (format string, amount *float64) {
+	s = strings.TrimSpace(s)
+
+	// Per-unit (kWh) — check before generic dollar
+	if m := rePerKwh.FindStringSubmatch(s); len(m) == 2 {
+		if f := parseCommaFloat(m[1]); f != 0 {
+			return "per_unit", &f
+		}
+	}
+
+	// Up to $X
+	if m := reUpTo.FindStringSubmatch(s); len(m) == 2 {
+		if f := parseCommaFloat(m[1]); f != 0 {
+			return "dollar_amount", &f
+		}
+	}
+
+	// Plain $X
+	if m := reDollar.FindStringSubmatch(s); len(m) == 2 {
+		if f := parseCommaFloat(m[1]); f != 0 {
+			return "dollar_amount", &f
+		}
+	}
+
+	// Percent
+	if m := rePercent.FindStringSubmatch(s); len(m) == 2 {
+		if f, err := strconv.ParseFloat(m[1], 64); err == nil && f != 0 {
+			return "percent", &f
+		}
+	}
+
+	return "narrative", nil
+}
+
+func parseCommaFloat(s string) float64 {
+	s = strings.ReplaceAll(s, ",", "")
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
+}

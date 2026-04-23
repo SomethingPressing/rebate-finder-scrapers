@@ -1,0 +1,28 @@
+{
+  "name": "incenva-scraper-service",
+  "version": "1.0.0",
+  "description": "Go-based incentive scraper service for Incenva Rebate Finder",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "go:deps":    "node scripts/go-mod.mjs download",
+    "go:tidy":    "node scripts/go-mod.mjs tidy",
+    "go:verify":  "node scripts/go-mod.mjs verify",
+
+    "run":                  "node scripts/run.mjs",
+    "run:all":              "node scripts/run.mjs all",
+    "run:dsireusa":         "node scripts/run.mjs dsireusa",
+    "run:rewiring_america": "node scripts/run.mjs rewiring_america",
+    "run:energy_star":      "node scripts/run.mjs energy_star",
+
+    "serve":                  "node scripts/run.mjs --serve",
+    "serve:dsireusa":         "node scripts/run.mjs dsireusa --serve",
+    "serve:rewiring_america": "node scripts/run.mjs rewiring_america --serve",
+    "serve:energy_star":      "node scripts/run.mjs energy_star --serve",
+
+    "pdf:consumers": "node scripts/run-pdf.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

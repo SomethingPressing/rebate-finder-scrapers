@@ -1,0 +1,23 @@
+# Go build outputs
+bin/
+*.exe
+*.test
+*.out
+
+# Go module vendor directory (rely on go.sum + module cache instead)
+vendor/
+
+# Compiled PDF scraper binary (built locally outside Docker)
+pdf-scraper
+cmd/pdf-scraper/pdf-scraper
+
+# Environment — copy .env.example → .env and fill in your values
+.env
+
+# macOS
+.DS_Store
+
+# JetBrains / VSCode
+.idea/
+.vscode/
+*.swp
