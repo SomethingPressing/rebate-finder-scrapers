@@ -69,7 +69,8 @@ type Incentive struct {
 	IncentiveFormat      *string
 	UnitType             *string
 	// ProgramHash is the zipcode-agnostic dedup key — SHA-256 hex of
-	// normalize(ProgramName)|normalize(UtilityCompany)|normalize(Source).
+	// normalize(ProgramName)|normalize(UtilityCompany).
+	// Source is excluded so the same program scraped by multiple sources merges.
 	// Pre-computed here so the promoter can rely on it without recomputing.
 	ProgramHash          string
 	State                *string

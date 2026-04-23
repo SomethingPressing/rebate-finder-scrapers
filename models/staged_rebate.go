@@ -116,7 +116,7 @@ func FromIncentive(inc Incentive) StagedRebate {
 		SourceID:             inc.ID,
 		ProgramName:          inc.ProgramName,
 		UtilityCompany:       inc.UtilityCompany,
-		ProgramHash:          ComputeProgramHash(inc.ProgramName, inc.UtilityCompany, inc.Source),
+		ProgramHash:          ComputeProgramHash(inc.ProgramName, inc.UtilityCompany),
 		IncentiveDescription: inc.IncentiveDescription,
 		IncentiveAmount:      inc.IncentiveAmount,
 		MaximumAmount:        inc.MaximumAmount,
