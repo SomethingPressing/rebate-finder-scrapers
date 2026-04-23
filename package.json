@@ -15,11 +15,6 @@
     "run:rewiring_america": "node scripts/run.mjs rewiring_america",
     "run:energy_star":      "node scripts/run.mjs energy_star",
 
-    "serve":                  "node scripts/run.mjs --serve",
-    "serve:dsireusa":         "node scripts/run.mjs dsireusa --serve",
-    "serve:rewiring_america": "node scripts/run.mjs rewiring_america --serve",
-    "serve:energy_star":      "node scripts/run.mjs energy_star --serve",
-
     "pdf": "node scripts/run-pdf.mjs"
   },
   "engines": {

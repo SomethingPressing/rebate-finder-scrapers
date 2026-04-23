@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 /**
- * Run cmd/scraper from the scraper-service directory.
+ * Run cmd/scraper from the scraper-service directory (one-shot).
  *
  * Usage:
- *   node scripts/run.mjs              # all sources, RUN_ONCE=true by default
+ *   node scripts/run.mjs              # all sources
  *   node scripts/run.mjs all          # same
- *   node scripts/run.mjs dsireusa     # single source (SOURCE env)
+ *   node scripts/run.mjs dsireusa     # single source
  *   node scripts/run.mjs rewiring_america
  *   node scripts/run.mjs energy_star
- *   node scripts/run.mjs --serve      # RUN_ONCE=false (cron / long-running)
- *   node scripts/run.mjs dsireusa --serve
  *
- * Env (optional): RUN_ONCE, SOURCE, LOG_LEVEL, LOG_FORMAT, DOTENV_PATH, etc.
+ * For long-running scheduled mode use PM2 or systemd — see README.md § Deployment.
+ * Env (optional): SOURCE, LOG_LEVEL, LOG_FORMAT, DOTENV_PATH, etc.
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -22,10 +21,7 @@ const scraperDir = path.join(__dirname, "..");
 
 const allowed = new Set(["all", "dsireusa", "rewiring_america", "energy_star"]);
 
-const rawArgs = process.argv.slice(2);
-const serve = rawArgs.includes("--serve");
-const positional = rawArgs.filter((a) => !a.startsWith("--"));
-const sourceArg = positional[0] ?? "all";
+const sourceArg = process.argv[2] ?? "all";
 
 if (!allowed.has(sourceArg)) {
   console.error(
@@ -35,11 +31,7 @@ if (!allowed.has(sourceArg)) {
 }
 
 const env = { ...process.env };
-if (serve) {
-  env.RUN_ONCE = "false";
-} else if (env.RUN_ONCE === undefined || env.RUN_ONCE === "") {
-  env.RUN_ONCE = "true";
-}
+if (!env.RUN_ONCE) env.RUN_ONCE = "true";
 
 if (sourceArg !== "all") {
   env.SOURCE = sourceArg;

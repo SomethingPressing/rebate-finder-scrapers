@@ -174,16 +174,16 @@ RUN_ONCE=true ./bin/scraper --source energy_star
 
 | Command | Equivalent go command |
 |---------|----------------------|
-| `npm run run` | `RUN_ONCE=true go run ./cmd/scraper` |
+| `npm run run` | `RUN_ONCE=true go run ./cmd/scraper` (all sources) |
 | `npm run run:dsireusa` | `RUN_ONCE=true SOURCE=dsireusa go run …` |
 | `npm run run:rewiring_america` | same for Rewiring America |
 | `npm run run:energy_star` | same for Energy Star |
-| `npm run serve` | `go run ./cmd/scraper` (cron, all sources) |
-| `npm run serve:dsireusa` | `SOURCE=dsireusa go run ./cmd/scraper` |
 | `npm run pdf` | `go run ./cmd/pdf-scraper` |
 | `npm run go:deps` | `go mod download` |
 | `npm run go:tidy` | `go mod tidy` |
 | `npm run go:verify` | `go mod verify` |
+
+> For the long-running scheduled mode (`RUN_ONCE=false`), use **PM2** or **systemd** — see [Deployment](#deployment). These npm scripts are one-shot helpers for manual runs and development only.
 
 ---
 
