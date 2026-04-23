@@ -45,16 +45,18 @@ func Connect(dsn, logLevel string) (*DB, error) {
 		return nil, fmt.Errorf("db: open: %w", err)
 	}
 
-	// Run hand-written migrations that AutoMigrate cannot handle (e.g. adding a
-	// NOT NULL column to a table that already has rows).
-	if err := runPreMigrations(gormDB); err != nil {
-		return nil, fmt.Errorf("db: pre-migrations: %w", err)
-	}
-
-	// Auto-migrate creates or updates managed tables.
-	// It is safe to run on every startup — GORM only adds missing columns.
+	// Auto-migrate first — creates the tables if they don't exist yet.
+	// Must run before pre-migrations because pre-migrations ALTER existing tables
+	// and will fail with "relation does not exist" on a fresh database.
 	if err := gormDB.AutoMigrate(&models.StagedRebate{}, &models.PDFScrapeRaw{}); err != nil {
 		return nil, fmt.Errorf("db: automigrate: %w", err)
+	}
+
+	// Run hand-written migrations after AutoMigrate has ensured the tables exist.
+	// These handle changes AutoMigrate cannot do safely (e.g. adding a NOT NULL
+	// column to a table that already has rows).
+	if err := runPreMigrations(gormDB); err != nil {
+		return nil, fmt.Errorf("db: pre-migrations: %w", err)
 	}
 
 	return &DB{gorm: gormDB}, nil

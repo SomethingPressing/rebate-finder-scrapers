@@ -20,8 +20,21 @@ func runPreMigrations(db *gorm.DB) error {
 
 // migrateLegacySourceIDNullable makes the old source_id column (pre-stg_ rename)
 // nullable so that GORM inserts — which only populate stg_source_id — don't fail.
-// This is idempotent: dropping NOT NULL on a nullable column is a no-op.
+// On a fresh database this column never exists, so the migration is a no-op.
 func migrateLegacySourceIDNullable(db *gorm.DB) error {
+	var count int64
+	if err := db.Raw(`
+		SELECT COUNT(*)
+		FROM   information_schema.columns
+		WHERE  table_schema = CURRENT_SCHEMA()
+		AND    table_name   = 'rebates_staging'
+		AND    column_name  = 'source_id'
+	`).Scan(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil // column doesn't exist — nothing to do
+	}
 	return db.Exec(`
 		ALTER TABLE rebates_staging ALTER COLUMN source_id DROP NOT NULL
 	`).Error
