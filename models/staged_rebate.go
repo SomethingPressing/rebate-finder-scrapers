@@ -100,6 +100,11 @@ type StagedRebate struct {
 	//
 	// Indexed for fast reverse lookups.
 	RebateID *string `gorm:"column:stg_rebate_id;index"`
+
+	// stg_program_hash: SHA-256 of normalize(program_name|utility_company|source).
+	// Zipcode-agnostic dedup key.  Pre-computed by the scraper so the promoter
+	// can use it directly (and fall back to computing on-the-fly for older rows).
+	ProgramHash string `gorm:"column:stg_program_hash"`
 }
 
 // TableName tells GORM to use rebates_staging instead of the default "staged_rebates".
@@ -111,6 +116,7 @@ func FromIncentive(inc Incentive) StagedRebate {
 		SourceID:             inc.ID,
 		ProgramName:          inc.ProgramName,
 		UtilityCompany:       inc.UtilityCompany,
+		ProgramHash:          ComputeProgramHash(inc.ProgramName, inc.UtilityCompany, inc.Source),
 		IncentiveDescription: inc.IncentiveDescription,
 		IncentiveAmount:      inc.IncentiveAmount,
 		MaximumAmount:        inc.MaximumAmount,

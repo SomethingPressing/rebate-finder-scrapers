@@ -1,6 +1,9 @@
 package models
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +28,8 @@ import (
 //	IncentiveFormat     → incentive_format      (incentive_format_type enum)
 //	UnitType            → unit_type             (incentive_unit_type enum)
 //	State               → state                 (text)
-//	ZipCode             → zip_code              (text)
+//	ProgramHash         → stg_program_hash      (text — SHA-256 of normalize(name|utility|source))
+//	ZipCode             → zip_code              (text — staging only; becomes RebateZipcode on promotion)
 //	ServiceTerritory    → service_territory     (text)
 //	AvailableNationwide → available_nationwide  (bool)
 //	CategoryTag         → category_tag          (text[])
@@ -64,6 +68,10 @@ type Incentive struct {
 	PerUnitAmount        *float64
 	IncentiveFormat      *string
 	UnitType             *string
+	// ProgramHash is the zipcode-agnostic dedup key — SHA-256 hex of
+	// normalize(ProgramName)|normalize(UtilityCompany)|normalize(Source).
+	// Pre-computed here so the promoter can rely on it without recomputing.
+	ProgramHash          string
 	State                *string
 	ZipCode              *string
 	ServiceTerritory     *string
@@ -116,6 +124,28 @@ func NewIncentive(source, version string) Incentive {
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+}
+
+// normalizePart lowercases, collapses whitespace, and trims s so minor
+// formatting differences don't produce phantom duplicates.
+func normalizePart(s string) string {
+	return strings.TrimSpace(strings.Join(strings.Fields(strings.ToLower(s)), " "))
+}
+
+// ComputeProgramHash returns the SHA-256 hex of
+//
+//	normalize(programName) | normalize(utilityCompany)
+//
+// Source is intentionally excluded — the same program offered by the same
+// utility may be scraped by multiple sources; excluding source lets those rows
+// merge into a single rebate.
+//
+// This is the zipcode-agnostic dedup key written to stg_program_hash /
+// rebates.program_hash.  Must match the identical algorithm in the TypeScript
+// promoter (prisma/scripts/promote-staging.ts: computeProgramHash).
+func ComputeProgramHash(programName, utilityCompany string) string {
+	key := normalizePart(programName) + "|" + normalizePart(utilityCompany)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 }
 
 // DeterministicID returns a UUID v5 string derived from a namespace prefix and
