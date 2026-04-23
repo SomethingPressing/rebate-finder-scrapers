@@ -1,8 +1,27 @@
 # Incenva Scraper Service
 
-A standalone Go service that fetches incentive programs from three sources (plus
-local PDFs) and stages them in a PostgreSQL table for human review before they go
-live in the consumer application.
+A standalone Go service that fetches incentive programs from multiple sources and stages
+them in a PostgreSQL table for human review before they go live in the consumer application.
+
+**Related:** [incenva-rebate-finder](https://github.com/smythos/incenva-rebate-finder) — the consumer app that promotes staged rows to the live catalog.
+
+---
+
+## Table of Contents
+
+1. [Architecture](#architecture)
+2. [Prerequisites](#prerequisites)
+3. [Quick Start](#quick-start)
+4. [Configuration](#configuration)
+5. [Running the Scraper](#running-the-scraper)
+6. [PDF Scrapers](#pdf-scrapers)
+7. [Reviewing Staged Data](#reviewing-staged-data)
+8. [Promoting Staged Data](#promoting-staged-data-consumer-app)
+9. [Deployment](#deployment)
+10. [Docker](#docker)
+11. [Data Sources](#data-sources)
+12. [Design Decisions](#design-decisions)
+13. [Project Structure](#project-structure)
 
 ---
 
@@ -15,6 +34,9 @@ live in the consumer application.
 │  DSIREUSA ──┐                                            │
 │  Rewiring   ├─► scrapers.RunAll ─► rebates_staging       │
 │  EnergyStar ┘          (GORM upsert, stg_status=pending) │
+│                                                          │
+│  cmd/pdf-scraper  (Go — stages from local PDF files)     │
+│  Consumers Energy ──► rebates_staging (stg_status=pending│
 └──────────────────────────────────────────────────────────┘
                                 │
                                 │  review in psql / Prisma Studio
@@ -26,16 +48,12 @@ live in the consumer application.
 │        │                                                 │
 │        ├─ prisma.rebate.upsert()  ──► rebates (draft)    │
 │        └─ prisma.$executeRaw      ──► stg_status=promoted│
-│                                       stg_rebate_id=UUID │
-│                                                          │
-│  Admin-set statuses (approved/published) are NEVER       │
-│  overwritten — status is excluded from the update clause.│
 └──────────────────────────────────────────────────────────┘
 ```
 
-> **Note:** The promoter (`promote-staging.ts`) is a TypeScript/Prisma script
-> that lives in the **consumer application**, not in this repo.  This service
-> is responsible only for scraping and staging.
+> **Note:** This repo is responsible only for **scraping and staging**.
+> Promotion (moving staged rows to the live `rebates` table) is handled by
+> `prisma/scripts/promote-staging.ts` in the consumer application.
 
 ### Why a staging table?
 
@@ -43,7 +61,7 @@ live in the consumer application.
 |---------|----------|
 | Bad scrape run corrupts live data | Scraper writes to `rebates_staging` only |
 | Re-scraping resets admin-approved status | Status column excluded from DO UPDATE |
-| Want to preview/transform before publish | Inspect staging rows before promoting |
+| Want to preview before publish | Inspect staging rows before promoting |
 | Easy rollback | `DELETE FROM rebates_staging WHERE stg_promotion_status = 'pending'` |
 
 ---
@@ -52,92 +70,72 @@ live in the consumer application.
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Go   | 1.22+   | https://go.dev/dl |
-| PostgreSQL | 14+ | shared with the consumer application |
-| Node.js | 18+ | optional — only needed for the `npm run …` helper scripts |
+| Go | 1.22+ | https://go.dev/dl |
+| PostgreSQL | 14+ | Shared with the consumer application |
+| Node.js | 18+ | Optional — only needed for `npm run …` helper scripts |
 
 ---
 
 ## Quick Start
 
-### 1. Clone and configure
-
 ```bash
-git clone <this-repo>
-cd scraper-service
+git clone <repository-url>
+cd incenva-scraper-service
 
+# Copy and configure environment
 cp .env.example .env
-# Edit .env — set DATABASE_URL and REWIRING_AMERICA_API_KEY at minimum
-```
+# Edit .env: set DATABASE_URL and REWIRING_AMERICA_API_KEY at minimum
 
-### 2. Install Go dependencies
-
-```bash
+# Install Go dependencies
 go mod download
-```
 
-Or via npm helper:
-
-```bash
-npm run go:deps
-```
-
-### 3. Run the scraper (one-shot)
-
-```bash
+# Run all scrapers once
 RUN_ONCE=true go run ./cmd/scraper
-```
-
-Or via npm helper:
-
-```bash
-npm run run
 ```
 
 ---
 
 ## Configuration
 
-All configuration is read from environment variables.  Copy `.env.example` to
-`.env` and fill in your values — the service walks up the directory tree looking
-for a `go.mod + .env` pair and loads whichever it finds first.
+All configuration is read from environment variables. Copy `.env.example` to `.env` and
+fill in your values. The service walks up the directory tree looking for a `go.mod + .env`
+pair and loads whichever it finds first.
 
-To force a specific file:
-
+To use a specific file:
 ```bash
 DOTENV_PATH=/etc/incenva/scraper.env go run ./cmd/scraper
 ```
 
 ### Full variable reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | _(required)_ | PostgreSQL DSN |
-| `RUN_ONCE` | `false` | `true` = run once and exit; `false` = cron mode |
-| `SCRAPER_INTERVAL` | `@every 6h` | robfig/cron schedule string |
-| `SCRAPER_VERSION` | `1.0` | Written to `scraper_version` on every upsert |
-| `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
-| `LOG_FORMAT` | `json` | `json` \| `console` |
-| `DSIREUSA_BASE_URL` | _(see .env.example)_ | DSIRE API base URL |
-| `REWIRING_AMERICA_API_KEY` | _(required for RA)_ | Rewiring America API key |
-| `REWIRING_AMERICA_BASE_URL` | _(see .env.example)_ | Rewiring America API base URL |
-| `ENERGY_STAR_BASE_URL` | _(see .env.example)_ | Energy Star page URL |
-| `CONSUMERS_ENERGY_CATALOG_PDF` | — | Path to Consumers Energy catalog PDF |
-| `CONSUMERS_ENERGY_APPLICATION_PDF` | — | Path to Consumers Energy application PDF |
-| `SOURCE` | — | Restrict to one scraper: `dsireusa` \| `rewiring_america` \| `energy_star` |
-| `DOTENV_PATH` | — | Absolute path to an explicit `.env` file |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | ✅ | — | PostgreSQL DSN |
+| `RUN_ONCE` | | `false` | `true` = run once and exit; `false` = cron mode |
+| `SCRAPER_INTERVAL` | | `@every 6h` | robfig/cron schedule string |
+| `SCRAPER_VERSION` | | `1.0` | Written to `scraper_version` on every upsert |
+| `LOG_LEVEL` | | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `LOG_FORMAT` | | `json` | `json` \| `console` (human-readable) |
+| `DSIREUSA_BASE_URL` | | _(see .env.example)_ | DSIRE API base URL |
+| `REWIRING_AMERICA_API_KEY` | ✅ for RA | — | Rewiring America API key |
+| `REWIRING_AMERICA_BASE_URL` | | _(see .env.example)_ | Rewiring America API base URL |
+| `ENERGY_STAR_BASE_URL` | | _(see .env.example)_ | Energy Star page URL |
+| `CONSUMERS_ENERGY_CATALOG_PDF` | | — | Path to Consumers Energy catalog PDF |
+| `CONSUMERS_ENERGY_APPLICATION_PDF` | | — | Path to Consumers Energy application PDF |
+| `SOURCE` | | — | Restrict to one scraper: `dsireusa` \| `rewiring_america` \| `energy_star` |
+| `DOTENV_PATH` | | — | Absolute path to a specific `.env` file |
 
 ---
 
 ## Running the Scraper
 
-### Option A — One-shot, all scrapers (fetch → stage → exit)
+### One-shot — all scrapers
 
 ```bash
 RUN_ONCE=true go run ./cmd/scraper
 ```
 
-### Option B — One-shot, single scraper
+### One-shot — single scraper
 
 ```bash
 RUN_ONCE=true go run ./cmd/scraper --source dsireusa
@@ -145,13 +143,12 @@ RUN_ONCE=true go run ./cmd/scraper --source rewiring_america
 RUN_ONCE=true go run ./cmd/scraper --source energy_star
 ```
 
-Or via `SOURCE` env var (equivalent, preferred for Docker/CI):
-
+Equivalent via `SOURCE` env var (preferred for Docker/CI):
 ```bash
 RUN_ONCE=true SOURCE=dsireusa go run ./cmd/scraper
 ```
 
-### Option C — Continuous (cron schedule)
+### Continuous (cron schedule)
 
 ```bash
 # All scrapers — runs immediately, then every SCRAPER_INTERVAL
@@ -161,60 +158,51 @@ go run ./cmd/scraper
 SOURCE=dsireusa go run ./cmd/scraper
 ```
 
-Stop with `Ctrl+C` — the process finishes the current run gracefully.
+Stop with `Ctrl+C` — the process drains the current run before exiting.
 
-### Option D — Build and run binary
+### Build and run binary
 
 ```bash
 go build -o bin/scraper ./cmd/scraper
 
-# One-shot
 RUN_ONCE=true ./bin/scraper
-
-# Single source
 RUN_ONCE=true ./bin/scraper --source energy_star
-
-# Scheduled
-./bin/scraper
+./bin/scraper   # scheduled mode
 ```
 
-### npm helper scripts (optional)
+### npm helper scripts (optional, requires Node 18+)
 
-If you have Node.js installed, the `package.json` wrappers save some typing:
-
-| Command | Equivalent |
-|---------|-----------|
+| Command | Equivalent go command |
+|---------|----------------------|
 | `npm run run` | `RUN_ONCE=true go run ./cmd/scraper` |
 | `npm run run:dsireusa` | `RUN_ONCE=true SOURCE=dsireusa go run …` |
-| `npm run run:rewiring_america` | … |
-| `npm run run:energy_star` | … |
-| `npm run serve` | `go run ./cmd/scraper` (cron, all) |
+| `npm run run:rewiring_america` | same for Rewiring America |
+| `npm run run:energy_star` | same for Energy Star |
+| `npm run serve` | `go run ./cmd/scraper` (cron, all sources) |
 | `npm run serve:dsireusa` | `SOURCE=dsireusa go run ./cmd/scraper` |
-| `npm run pdf:consumers` | `go run ./cmd/pdf-scraper` |
+| `npm run pdf` | `go run ./cmd/pdf-scraper` |
 | `npm run go:deps` | `go mod download` |
 | `npm run go:tidy` | `go mod tidy` |
 | `npm run go:verify` | `go mod verify` |
-
-Override via env prefix: `LOG_FORMAT=console npm run run:dsireusa`
 
 ---
 
 ## PDF Scrapers
 
-PDF scrapers extract incentive data from **local PDF files** and stage them in
-`rebates_staging`.
+PDF scrapers extract incentive data from **local PDF files** and stage them in `rebates_staging`.
 
-### cmd/pdf-scraper — Consumers Energy
+### cmd/pdf-scraper — PDF incentive extractor
 
-Extracts incentives for three measures from two Consumers Energy PDFs.
+Runs against any supported PDF source. Currently supports **Consumers Energy 2026**
+(3 measures, 2 PDFs).
 
 **PDF file resolution (highest priority first):**
 
 ```bash
-# 1. CLI flags
+# 1. CLI flags — explicit paths
 go run ./cmd/pdf-scraper \
-  --catalog     /path/to/Consumers_Energy_Incentive_Catalog_1.pdf \
-  --application /path/to/Incentive-Application.pdf
+  --catalog     /path/to/catalog.pdf \
+  --application /path/to/application.pdf
 
 # 2. Environment variables
 CONSUMERS_ENERGY_CATALOG_PDF=/path/to/catalog.pdf \
@@ -225,33 +213,48 @@ go run ./cmd/pdf-scraper
 go run ./cmd/pdf-scraper
 ```
 
-**Human-readable output:**
-
+**Human-readable console output:**
 ```bash
 LOG_FORMAT=console go run ./cmd/pdf-scraper
 ```
 
 **Verbose (includes full PDF text extract):**
-
 ```bash
 LOG_LEVEL=debug LOG_FORMAT=console go run ./cmd/pdf-scraper
 ```
 
-### Consumers Energy 2026 — Target measures
+**Via npm helper:**
+```bash
+npm run pdf
 
-| # | Measure | Measure IDs | Catalog PDF pages | Application PDF pages |
-|---|---------|-------------|------------------|-----------------------|
+# With explicit paths
+LOG_FORMAT=console npm run pdf -- \
+  --catalog     ~/Downloads/Consumers_Energy_Incentive_Catalog.pdf \
+  --application ~/Downloads/Incentive-Application.pdf
+```
+
+### Consumers Energy 2026 — target measures
+
+| # | Measure | IDs | Catalog pages | Application pages |
+|---|---------|-----|---------------|-------------------|
 | 1 | Air Conditioning — Split & Unitary | HV101a–HV101j | p.50 | p.23 |
 | 2 | Interior Linear LED Tube Retrofits | LT101–LT126, LT207–LT209 | p.13–14 | p.10–11 |
 | 3 | Refrigeration Compressors — Discus/Scroll | RL101, RL102 | p.85 | p.36 |
 
 PDF page note: catalog uses `PDF page = printed page + 2`; application uses `PDF page = printed page`.
 
+### Adding a new PDF scraper
+
+1. Read the PDFs and note exact PDF page numbers for each measure.
+2. Add a new `ceIncentiveSpec` entry in `scrapers/consumers_energy.go` (or create a new file for a different utility) with `CatalogPages`, `AppPages`, and `IncentiveRates`.
+3. Test: `LOG_FORMAT=console go run ./cmd/pdf-scraper` — verify all rates appear and PDF text is non-empty.
+4. Use the consumer app's promoter to push staged rows to the live catalog.
+
 ---
 
 ## Reviewing Staged Data
 
-After a scrape run, data lands in `rebates_staging` with `stg_promotion_status = 'pending'`.
+After a scrape, data lands in `rebates_staging` with `stg_promotion_status = 'pending'`.
 
 ```sql
 -- How many rows are waiting?
@@ -265,42 +268,142 @@ LIMIT 20;
 
 -- Skip a bad row (it will not be promoted)
 UPDATE rebates_staging SET stg_promotion_status = 'skipped' WHERE stg_source_id = '...';
+
+-- Reset a row back to pending (re-try after fixing an issue)
+UPDATE rebates_staging
+SET stg_promotion_status = 'pending', stg_promoted_at = NULL, stg_rebate_id = NULL
+WHERE stg_source_id = '...';
 ```
 
 ### Staging column reference
 
 | Column | Type | Meaning |
 |--------|------|---------|
-| `stg_source_id` | `text UNIQUE` | Deterministic UUID from the scraper — stable upsert key |
+| `stg_source_id` | `text UNIQUE` | Deterministic UUID — stable upsert key |
 | `stg_promotion_status` | `text` | `pending` → `promoted` or `skipped` |
-| `stg_promoted_at` | `timestamptz` | When promoted — `NULL` while pending/skipped |
+| `stg_promoted_at` | `timestamptz` | Promotion timestamp — `NULL` while pending/skipped |
 | `stg_rebate_id` | `text` | UUID of the live `rebates` row — `NULL` until promoted |
 
 ---
 
 ## Promoting Staged Data (consumer app)
 
-Promotion is handled by `prisma/scripts/promote-staging.ts` in the **consumer
-application** — it uses Prisma so every column in `prisma/schema.prisma` is
-automatically included. Run it from the consumer app's root:
+Promotion is handled by **`prisma/scripts/promote-staging.ts`** in the consumer application.
+Run these commands from the consumer app's root:
 
 ```bash
-# Dry run — previews what would be promoted, writes nothing
-npm run scraper:promote:dry
+# Preview what would be promoted (writes nothing)
+pnpm scraper:promote:dry
 
-# Live promotion to local DB
-npm run scraper:promote
+# Promote pending rows → live rebates table (status = draft)
+pnpm scraper:promote
 
-# Live promotion + push to Supabase
-npm run scraper:promote:supabase
+# Promote + push to Supabase rebate_source_raw
+pnpm scraper:promote:supabase
 
-# Dry run with Supabase preview
-npm run scraper:promote:supabase:dry
+# Preview Supabase push without writing
+pnpm scraper:promote:supabase:dry
 ```
 
-**Idempotency:** Re-running the promoter is safe — each upsert is keyed by
-`source_id`, and only `pending` staging rows are processed. After a successful
-run they become `promoted`, so a second run is a no-op.
+**Idempotency:** Re-running is safe. Each upsert is keyed on `source_id`; only `pending`
+rows are processed. A second run is a no-op unless new scrapes added more rows.
+
+---
+
+## Deployment
+
+### Option A — PM2 on a VPS (recommended for production)
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Clone and configure
+git clone <repository-url> incenva-scraper-service
+cd incenva-scraper-service
+cp .env.example .env
+# Edit .env: DATABASE_URL, REWIRING_AMERICA_API_KEY, RUN_ONCE=false, SCRAPER_INTERVAL, etc.
+
+# Install Go modules and build binary
+go mod download
+go build -o bin/scraper ./cmd/scraper
+
+# Start as a persistent PM2 process (reads env from .env automatically)
+pm2 start bin/scraper --name "Incenva Scraper" --interpreter none
+
+pm2 save
+pm2 startup   # copy and run the command it prints to enable auto-start on reboot
+```
+
+Check status and logs:
+```bash
+pm2 status
+pm2 logs "Incenva Scraper"
+```
+
+Restart after update:
+```bash
+git pull
+go build -o bin/scraper ./cmd/scraper
+pm2 restart "Incenva Scraper"
+```
+
+### Option B — systemd service (Ubuntu/Debian)
+
+Create `/etc/systemd/system/incenva-scraper.service`:
+
+```ini
+[Unit]
+Description=Incenva Scraper Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/incenva-scraper-service
+ExecStart=/var/www/incenva-scraper-service/bin/scraper
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/var/www/incenva-scraper-service/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Build and enable:
+```bash
+go build -o bin/scraper ./cmd/scraper
+
+sudo systemctl daemon-reload
+sudo systemctl enable incenva-scraper
+sudo systemctl start incenva-scraper
+sudo systemctl status incenva-scraper
+```
+
+View live logs:
+```bash
+journalctl -u incenva-scraper -f
+```
+
+Restart after update:
+```bash
+go build -o bin/scraper ./cmd/scraper
+sudo systemctl restart incenva-scraper
+```
+
+### Option C — cron job (one-shot periodic runs)
+
+Set `RUN_ONCE=true` in `.env` and add a crontab entry:
+
+```bash
+crontab -e
+```
+
+```cron
+# Run all scrapers every 6 hours
+0 */6 * * * cd /var/www/incenva-scraper-service && ./bin/scraper >> /var/log/incenva-scraper.log 2>&1
+```
 
 ---
 
@@ -310,11 +413,14 @@ run they become `promoted`, so a second run is a no-op.
 # Build
 docker build --target scraper -t incenva-scraper .
 
-# Run one-shot
+# Run one-shot (all sources)
 docker run --env-file .env -e RUN_ONCE=true incenva-scraper
 
 # Run on schedule
 docker run --env-file .env incenva-scraper
+
+# Single source
+docker run --env-file .env -e RUN_ONCE=true -e SOURCE=dsireusa incenva-scraper
 ```
 
 ### docker-compose example
@@ -327,6 +433,7 @@ services:
       target: scraper
     env_file: .env
     environment:
+      RUN_ONCE: "false"
       SCRAPER_INTERVAL: "@every 6h"
     restart: unless-stopped
     depends_on:
@@ -345,16 +452,19 @@ volumes:
   pgdata:
 ```
 
+> If the consumer app has its own `docker-compose.yml`, add the scraper service there
+> and point both at the same database container via `DATABASE_URL`.
+
 ---
 
 ## Data Sources
 
-| Source | Type | Key |
-|--------|------|-----|
-| [DSIRE USA](https://programs.dsireusa.org) | REST JSON API | No key needed |
-| [Rewiring America](https://www.rewiringamerica.org) | REST JSON API | API key required |
-| [Energy Star](https://www.energystar.gov/about/federal_tax_credits) | HTML (Colly) | No key needed |
-| Consumers Energy | Local PDF files | No key needed |
+| Source | Type | Key required |
+|--------|------|-------------|
+| [DSIRE USA](https://programs.dsireusa.org) | REST JSON API | No |
+| [Rewiring America](https://www.rewiringamerica.org) | REST JSON API | Yes — free at rewiringamerica.org/api |
+| [Energy Star](https://www.energystar.gov/about/federal_tax_credits) | HTML (Colly) | No |
+| Consumers Energy | Local PDF files | No |
 
 ---
 
@@ -362,15 +472,14 @@ volumes:
 
 ### Deterministic IDs
 
-Every scraper generates a UUID v5 from `(source_name, external_id)`. Re-scraping
-the same program always produces the same UUID:
-- No duplicate rows accumulate over time.
-- `ON CONFLICT (source_id) DO UPDATE` refreshes data without creating new rows.
+Every scraper generates a UUID v5 from `(source_name, external_id)`. Re-scraping the same
+program always produces the same UUID — no duplicates accumulate, and `ON CONFLICT (source_id)
+DO UPDATE` refreshes data without creating new rows.
 
 ### Status preservation
 
-The `status` column in `rebates` is **excluded** from the `ON CONFLICT DO UPDATE`
-clause. A new scrape never resets an admin-approved program back to `draft`.
+The `status` column in `rebates` is **excluded** from `ON CONFLICT DO UPDATE`. A new scrape
+never resets an admin-approved program back to `draft`.
 
 ### Rate limiting
 
@@ -382,12 +491,12 @@ clause. A new scrape never resets an admin-approved program back to `draft`.
 ## Project Structure
 
 ```
-scraper-service/
+incenva-scraper-service/
 ├── cmd/
-│   ├── scraper/main.go         ← fetch + stage entry point (Go)
-│   └── pdf-scraper/main.go     ← Consumers Energy PDF extractor
+│   ├── scraper/main.go         ← fetch + stage entry point
+│   └── pdf-scraper/main.go     ← PDF incentive extractor
 ├── config/
-│   └── config.go               ← env config loader (walks up for go.mod + .env)
+│   └── config.go               ← env config loader
 ├── db/
 │   ├── client.go               ← GORM connection + AutoMigrate
 │   └── upsert.go               ← batch upsert to rebates_staging
