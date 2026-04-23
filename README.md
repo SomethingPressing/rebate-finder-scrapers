@@ -312,97 +312,40 @@ rows are processed. A second run is a no-op unless new scrapes added more rows.
 
 ## Deployment
 
-### Option A — PM2 on a VPS (recommended for production)
+Full deployment instructions (Ubuntu 22.04, `rf` system user, PM2, systemd, Nginx, SSL) are
+in the consumer application's deployment guide:
+
+**➜ [incenva-rebate-finder / docs/deployment.md](https://github.com/smythos/incenva-rebate-finder/blob/main/docs/deployment.md)**
+
+That guide covers end-to-end server setup for both apps together (they share the same
+PostgreSQL database). The scraper-specific steps start at **§ 5 Deploy the scraper service**.
+
+### Quick reference (assuming server is already provisioned)
 
 ```bash
-# Install PM2 globally
-npm install -g pm2
-
-# Clone and configure
-git clone <repository-url> incenva-scraper-service
+# As the rf user
+cd /home/rf/apps
+git clone <this-repo-url> incenva-scraper-service
 cd incenva-scraper-service
+
 cp .env.example .env
-# Edit .env: DATABASE_URL, REWIRING_AMERICA_API_KEY, RUN_ONCE=false, SCRAPER_INTERVAL, etc.
+nano .env   # set DATABASE_URL, REWIRING_AMERICA_API_KEY, SCRAPER_INTERVAL
 
-# Install Go modules and build binary
 go mod download
-go build -o bin/scraper ./cmd/scraper
+go build -ldflags="-w -s" -o bin/scraper ./cmd/scraper
 
-# Start as a persistent PM2 process (reads env from .env automatically)
-pm2 start bin/scraper --name "Incenva Scraper" --interpreter none
-
+pm2 start bin/scraper \
+  --name "Incenva Scraper" \
+  --interpreter none \
+  --cwd /home/rf/apps/incenva-scraper-service
 pm2 save
-pm2 startup   # copy and run the command it prints to enable auto-start on reboot
 ```
 
-Check status and logs:
-```bash
-pm2 status
-pm2 logs "Incenva Scraper"
-```
-
-Restart after update:
-```bash
-git pull
-go build -o bin/scraper ./cmd/scraper
-pm2 restart "Incenva Scraper"
-```
-
-### Option B — systemd service (Ubuntu/Debian)
-
-Create `/etc/systemd/system/incenva-scraper.service`:
-
-```ini
-[Unit]
-Description=Incenva Scraper Service
-After=network.target postgresql.service
-Wants=postgresql.service
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/var/www/incenva-scraper-service
-ExecStart=/var/www/incenva-scraper-service/bin/scraper
-Restart=on-failure
-RestartSec=10
-EnvironmentFile=/var/www/incenva-scraper-service/.env
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Build and enable:
-```bash
-go build -o bin/scraper ./cmd/scraper
-
-sudo systemctl daemon-reload
-sudo systemctl enable incenva-scraper
-sudo systemctl start incenva-scraper
-sudo systemctl status incenva-scraper
-```
-
-View live logs:
-```bash
-journalctl -u incenva-scraper -f
-```
-
-Restart after update:
-```bash
-go build -o bin/scraper ./cmd/scraper
-sudo systemctl restart incenva-scraper
-```
-
-### Option C — cron job (one-shot periodic runs)
-
-Set `RUN_ONCE=true` in `.env` and add a crontab entry:
+### Deploying updates
 
 ```bash
-crontab -e
-```
-
-```cron
-# Run all scrapers every 6 hours
-0 */6 * * * cd /var/www/incenva-scraper-service && ./bin/scraper >> /var/log/incenva-scraper.log 2>&1
+cd /home/rf/apps/incenva-scraper-service
+git pull && go build -ldflags="-w -s" -o bin/scraper ./cmd/scraper && pm2 restart "Incenva Scraper"
 ```
 
 ---
