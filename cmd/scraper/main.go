@@ -33,7 +33,6 @@ import (
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/logutil"
-	"github.com/incenva/rebate-scraper/internal/zipdata"
 	"github.com/incenva/rebate-scraper/models"
 	"github.com/incenva/rebate-scraper/scrapers"
 	"github.com/robfig/cron/v3"
@@ -81,39 +80,6 @@ func main() {
 	}
 	logger.Info("database connected and staging table migrated")
 
-	// ── ZIP CSV ───────────────────────────────────────────────────────────────
-	// Load the full US ZIP list once and share across scrapers that need it.
-	// A missing CSV is non-fatal: scrapers fall back to their built-in lists.
-	stateZIPs, csvErr := zipdata.LoadPath(cfg.ZipCSVPath)
-	if csvErr != nil {
-		logger.Warn("uszips.csv not loaded — scrapers will use built-in ZIP lists",
-			zap.Error(csvErr),
-		)
-	} else {
-		logger.Info("uszips.csv loaded",
-			zap.Int("states", len(stateZIPs)),
-		)
-	}
-
-	// Build the DSIRE ZIP list: N per state from CSV, or nil (uses built-in 50-ZIP list).
-	var dsireZIPs []string
-	if stateZIPs != nil {
-		dsireZIPs = zipdata.Sample(stateZIPs, cfg.DSIREZipsPerState)
-		logger.Info("dsireusa: using ZIPs from CSV",
-			zap.Int("zip_count", len(dsireZIPs)),
-			zap.Int("per_state", cfg.DSIREZipsPerState),
-		)
-	}
-
-	// Build the Energy Star ZIP list from the CSV.
-	var energyStarZIPs []string
-	if stateZIPs != nil {
-		energyStarZIPs = zipdata.Sample(stateZIPs, cfg.EnergyStarZipsPerState)
-		logger.Info("energy_star: using ZIPs from CSV",
-			zap.Int("zip_count", len(energyStarZIPs)),
-		)
-	}
-
 	// ── Registry ──────────────────────────────────────────────────────────────
 	reg := scrapers.NewRegistry()
 
@@ -121,7 +87,6 @@ func main() {
 		BaseURL:        cfg.DSIREBaseURL,
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
-		ZIPs:           dsireZIPs, // nil = use built-in representative list
 	})
 
 	reg.Register(&scrapers.RewiringAmericaScraper{
@@ -133,7 +98,6 @@ func main() {
 
 	reg.Register(&scrapers.EnergyStarScraper{
 		BaseURL:        cfg.EnergyStarAPIBaseURL,
-		ZipCodes:       energyStarZIPs,
 		PageDelay:      cfg.PageDelay,
 		MaxConcurrency: cfg.MaxConcurrency,
 		ScraperVersion: cfg.ScraperVersion,

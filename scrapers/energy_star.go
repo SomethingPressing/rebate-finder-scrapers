@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/incenva/rebate-scraper/models"
@@ -26,20 +25,21 @@ const energyStarAPIPath = "/productfinder/api/imp_rebate_results/search"
 
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
-// EnergyStarScraper queries the Energy Star rebate-finder REST API for each
-// configured ZIP code and returns the deduplicated set of incentives.
+// EnergyStarScraper queries the Energy Star rebate-finder REST API without any
+// geographic filter and paginates through the full result set (~2 900 records).
 //
 // API: https://www.energystar.gov/productfinder/api/imp_rebate_results/search
+//
+// No ZIP or state filter is needed — the endpoint returns all active rebates
+// nationwide when queried without a zip_code_filter parameter.
 type EnergyStarScraper struct {
 	// BaseURL is the scheme+host, e.g. "https://www.energystar.gov".
 	BaseURL string
-	// ZipCodes is the list of ZIP codes to query.  At least one is required.
-	ZipCodes []string
-	// PageDelay is the sleep duration between successive page requests for the
-	// same ZIP code.  Defaults to 500 ms.
+	// PageDelay is the sleep duration between successive page requests.
+	// Defaults to 500 ms.
 	PageDelay time.Duration
-	// MaxConcurrency limits how many page-fetch goroutines run in parallel per
-	// ZIP code.  Defaults to 3.
+	// MaxConcurrency limits how many page-fetch goroutines run in parallel.
+	// Defaults to 3.
 	MaxConcurrency int
 	// ScraperVersion is written to the scraper_version column.
 	ScraperVersion string
@@ -52,108 +52,45 @@ type EnergyStarScraper struct {
 func (s *EnergyStarScraper) Name() string { return "energy_star" }
 
 // Scrape implements Scraper.
+// It fetches all Energy Star rebates by paginating the full result set without
+// any geographic filter.
 func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
-	if len(s.ZipCodes) == 0 {
-		s.Logger.Warn("energy_star: no ZIP codes available — skipping (is data/uszips.csv present?)")
-		return nil, nil
-	}
+	s.Logger.Info("energy_star scrape starting — fetching all programs without ZIP filter")
 
-	seen := make(map[string]bool) // dedup by incentive_id
-	var (
-		mu  sync.Mutex
-		all []models.Incentive
-	)
-
-	s.Logger.Info("energy_star scrape starting",
-		zap.Int("zip_count", len(s.ZipCodes)),
-	)
-
-	for _, zip := range s.ZipCodes {
-		select {
-		case <-ctx.Done():
-			return all, ctx.Err()
-		default:
-		}
-
-		before := len(all)
-
-		rows, err := s.scrapeZIP(ctx, zip)
-		if err != nil {
-			// Non-fatal: log and continue.
-			s.Logger.Warn("energy_star zip error",
-				zap.String("zip", zip),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		mu.Lock()
-		for _, inc := range rows {
-			key := inc.ID
-			if !seen[key] {
-				seen[key] = true
-				all = append(all, inc)
-			}
-		}
-		after := len(all)
-		mu.Unlock()
-
-		s.Logger.Info("energy_star zip progress",
-			zap.String("zip", zip),
-			zap.Int("rows_this_zip", len(rows)),
-			zap.Int("new_unique_this_zip", after-before),
-			zap.Int("unique_total", after),
-		)
-	}
-
-	s.Logger.Info("energy_star scrape complete",
-		zap.Int("unique_incentives", len(all)),
-		zap.Int("zips_queried", len(s.ZipCodes)),
-	)
-
-	return all, nil
-}
-
-// scrapeZIP fetches all pages for a single ZIP code and maps them to
-// []models.Incentive.
-func (s *EnergyStarScraper) scrapeZIP(ctx context.Context, zip string) ([]models.Incentive, error) {
-	// ── Phase 1: pagination probe ─────────────────────────────────────────────
-	probe, err := s.fetchPage(ctx, zip, 0)
+	// ── Phase 1: probe page 0 to get total count ──────────────────────────────
+	probe, err := s.fetchPage(ctx, 0)
 	if err != nil {
-		return nil, fmt.Errorf("energy_star: probe page 0 for zip %s: %w", zip, err)
+		return nil, fmt.Errorf("energy_star: probe page 0: %w", err)
 	}
 
 	if probe.ResultsCount == 0 || probe.PageSize == 0 {
-		return nil, nil // 0 results is valid — not an error
+		s.Logger.Warn("energy_star: empty result set")
+		return nil, nil
 	}
 
 	totalPages := int(math.Ceil(float64(probe.ResultsCount) / float64(probe.PageSize)))
 
-	s.Logger.Info("energy_star zip pages",
-		zap.String("zip", zip),
+	s.Logger.Info("energy_star pages",
 		zap.Int("total_results", probe.ResultsCount),
 		zap.Int("page_size", probe.PageSize),
 		zap.Int("total_pages", totalPages),
 	)
 
 	// ── Phase 2: full fetch (bounded concurrency) ─────────────────────────────
-	// Page 0 already fetched — start remaining pages.
 	rawPages := make([][]models.EnergyStarRawResult, totalPages)
 	rawPages[0] = probe.Results
 
 	if totalPages > 1 {
 		conc := s.maxConcurrency()
 		sem := make(chan struct{}, conc)
-
 		g, gctx := errgroup.WithContext(ctx)
 
 		for page := 1; page < totalPages; page++ {
-			page := page // capture loop var
+			page := page
 			sem <- struct{}{}
 			g.Go(func() error {
 				defer func() { <-sem }()
 
-				// Polite delay between requests.
 				if s.pageDelay() > 0 {
 					select {
 					case <-gctx.Done():
@@ -162,9 +99,9 @@ func (s *EnergyStarScraper) scrapeZIP(ctx context.Context, zip string) ([]models
 					}
 				}
 
-				resp, err := s.fetchPage(gctx, zip, page)
+				resp, err := s.fetchPage(gctx, page)
 				if err != nil {
-					return fmt.Errorf("page %d zip %s: %w", page, zip, err)
+					return fmt.Errorf("page %d: %w", page, err)
 				}
 				rawPages[page] = resp.Results
 				return nil
@@ -172,7 +109,7 @@ func (s *EnergyStarScraper) scrapeZIP(ctx context.Context, zip string) ([]models
 		}
 
 		if err := g.Wait(); err != nil {
-			return nil, fmt.Errorf("energy_star: fetch pages for zip %s: %w", zip, err)
+			return nil, fmt.Errorf("energy_star: fetch pages: %w", err)
 		}
 	}
 
@@ -185,7 +122,7 @@ func (s *EnergyStarScraper) scrapeZIP(ctx context.Context, zip string) ([]models
 	var incentives []models.Incentive
 	for _, page := range rawPages {
 		for _, result := range page {
-			inc, ok := mapEnergyStarRecord(result, zip, version, s.Logger)
+			inc, ok := mapEnergyStarRecord(result, version, s.Logger)
 			if !ok {
 				continue
 			}
@@ -193,11 +130,17 @@ func (s *EnergyStarScraper) scrapeZIP(ctx context.Context, zip string) ([]models
 		}
 	}
 
+	s.Logger.Info("energy_star scrape complete",
+		zap.Int("unique_incentives", len(incentives)),
+		zap.Int("pages_fetched", totalPages),
+	)
+
 	return incentives, nil
 }
 
-// fetchPage calls the Energy Star search API for the given zip and page number.
-func (s *EnergyStarScraper) fetchPage(ctx context.Context, zip string, page int) (*models.EnergyStarSearchResponse, error) {
+// fetchPage calls the Energy Star search API for the given page number.
+// No geographic filter is applied — the API returns all active rebates.
+func (s *EnergyStarScraper) fetchPage(ctx context.Context, page int) (*models.EnergyStarSearchResponse, error) {
 	baseURL := strings.TrimRight(s.BaseURL, "/")
 
 	u, err := url.Parse(baseURL + energyStarAPIPath)
@@ -206,7 +149,6 @@ func (s *EnergyStarScraper) fetchPage(ctx context.Context, zip string, page int)
 	}
 
 	q := url.Values{}
-	q.Set("zip_code_filter", zip)
 	q.Set("page_number", strconv.Itoa(page))
 	q.Set("sort_by", "utility")
 	q.Set("sort_direction", "asc")
@@ -233,12 +175,12 @@ func (s *EnergyStarScraper) fetchPage(ctx context.Context, zip string, page int)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("energy_star: HTTP %d for zip %s page %d", resp.StatusCode, zip, page)
+		return nil, fmt.Errorf("energy_star: HTTP %d page %d", resp.StatusCode, page)
 	}
 
 	var result models.EnergyStarSearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("energy_star: decode zip %s page %d: %w", zip, page, err)
+		return nil, fmt.Errorf("energy_star: decode page %d: %w", page, err)
 	}
 
 	return &result, nil
@@ -273,7 +215,6 @@ func (s *EnergyStarScraper) maxConcurrency() int {
 // (zero, false) if the record should be skipped.
 func mapEnergyStarRecord(
 	result models.EnergyStarRawResult,
-	zipCode string,
 	scraperVersion string,
 	log *zap.Logger,
 ) (models.Incentive, bool) {
@@ -295,8 +236,7 @@ func mapEnergyStarRecord(
 	inc.ID = models.DeterministicID("energy_star", result.IncentiveID)
 
 	// ── Geography ──────────────────────────────────────────────────────────
-	inc.ZipCode = models.PtrString(zipCode)
-
+	// No zip_code — queried without a ZIP filter; state comes from service territory.
 	if idata.ServiceTerritory != nil {
 		if idata.ServiceTerritory.StateCode != "" {
 			inc.State = models.PtrString(idata.ServiceTerritory.StateCode)

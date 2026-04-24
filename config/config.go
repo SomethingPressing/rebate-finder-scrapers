@@ -28,9 +28,6 @@ type Config struct {
 
 	// Energy Star
 	EnergyStarAPIBaseURL string
-	// EnergyStarZipsPerState is the number of ZIPs per state to sample from the
-	// ZIP CSV file.  0 = no limit (all ZIPs). Default: 0.
-	EnergyStarZipsPerState int
 	// PageDelay is the sleep between successive HTTP requests within a scraper
 	// (e.g. between page fetches per ZIP in Energy Star).
 	PageDelay time.Duration
@@ -38,15 +35,6 @@ type Config struct {
 	// concurrent fetching (e.g. Energy Star page fetches per ZIP).
 	MaxConcurrency int
 
-	// ZipCSVPath is the path to uszips.csv.  When empty the loader auto-detects
-	// the file in standard locations (data/uszips.csv relative to the binary).
-	// Set ZIP_CSV_PATH to an absolute path if needed.
-	ZipCSVPath string
-
-	// DSIREZipsPerState is the number of ZIPs per state to sample from the ZIP
-	// CSV file for DSIRE queries.  Default: 1 (DSIRE deduplicates by program ID
-	// so one ZIP per state discovers all state/federal programs).
-	DSIREZipsPerState int
 
 	// ScraperVersion is written to the scraper_version column on every upsert.
 	ScraperVersion string
@@ -86,7 +74,6 @@ func Load() (*Config, error) {
 		RewiringAmericaAPIKey:  getEnv("REWIRING_AMERICA_API_KEY", ""),
 		RewiringAmericaBaseURL: getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
-		EnergyStarZipsPerState: getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 0), // 0 = all ZIPs
 		PageDelay:              getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
 		MaxConcurrency:         getIntEnv("MAX_CONCURRENCY", 3),
 		ZipCSVPath:               getEnv("ZIP_CSV_PATH", ""),
