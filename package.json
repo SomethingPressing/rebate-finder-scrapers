@@ -15,7 +15,9 @@
     "run:rewiring_america": "node scripts/run.mjs rewiring_america",
     "run:energy_star":      "node scripts/run.mjs energy_star",
 
-    "pdf": "node scripts/run-pdf.mjs"
+    "pdf": "node scripts/run-pdf.mjs",
+
+    "staging:stats": "node scripts/run-staging-stats.mjs"
   },
   "engines": {
     "node": ">=18"
