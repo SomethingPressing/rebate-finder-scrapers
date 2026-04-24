@@ -89,11 +89,11 @@ func Load() (*Config, error) {
 		RewiringAmericaBaseURL: getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
 		EnergyStarZipCodes:       getCSVEnv("ENERGY_STAR_ZIP_CODES", nil),
-		EnergyStarZipsPerState:   getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 1),
+		EnergyStarZipsPerState:   getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 0), // 0 = all ZIPs
 		EnergyStarPageDelay:      getDurationMsEnv("ENERGY_STAR_PAGE_DELAY_MS", 500*time.Millisecond),
 		EnergyStarMaxConcurrency: getIntEnv("ENERGY_STAR_MAX_CONCURRENCY", 3),
 		ZipCSVPath:               getEnv("ZIP_CSV_PATH", ""),
-		DSIREZipsPerState:        getIntEnv("DSIRE_ZIPS_PER_STATE", 1),
+		DSIREZipsPerState:        getIntEnv("DSIRE_ZIPS_PER_STATE", 0), // 0 = all ZIPs
 		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		LogFormat:              getEnv("LOG_FORMAT", "json"),

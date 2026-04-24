@@ -86,10 +86,9 @@ func LoadPath(csvPath string) (StateZIPs, error) {
 // States are iterated in alphabetical order for deterministic output.
 // ZIPs within each state are already sorted by descending population, so
 // Sample(n=1) returns the most populous ZIP per state.
+//
+// n=0 means no limit — all ZIPs for every state are returned.
 func Sample(stateZIPs StateZIPs, n int) []string {
-	if n <= 0 {
-		n = 1
-	}
 	states := make([]string, 0, len(stateZIPs))
 	for s := range stateZIPs {
 		states = append(states, s)
@@ -99,11 +98,16 @@ func Sample(stateZIPs StateZIPs, n int) []string {
 	var out []string
 	for _, state := range states {
 		zips := stateZIPs[state]
-		take := n
-		if take > len(zips) {
-			take = len(zips)
+		if n == 0 {
+			// n=0 → no limit, take all ZIPs for this state.
+			out = append(out, zips...)
+		} else {
+			take := n
+			if take > len(zips) {
+				take = len(zips)
+			}
+			out = append(out, zips[:take]...)
 		}
-		out = append(out, zips[:take]...)
 	}
 	return out
 }
