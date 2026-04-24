@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -26,7 +27,28 @@ type Config struct {
 	RewiringAmericaBaseURL string
 
 	// Energy Star
-	EnergyStarBaseURL string
+	EnergyStarAPIBaseURL string
+	// EnergyStarZipCodes is an explicit list of ZIP codes to query (from
+	// ENERGY_STAR_ZIP_CODES, comma-separated).  When empty, ZIPs are loaded
+	// from ZipCSVPath using EnergyStarZipsPerState ZIPs per state.
+	EnergyStarZipCodes []string
+	// EnergyStarZipsPerState is the number of ZIPs per state to sample from the
+	// ZIP CSV file when ENERGY_STAR_ZIP_CODES is not set.  Default: 1.
+	EnergyStarZipsPerState int
+	// EnergyStarPageDelay is the sleep between successive page requests per ZIP.
+	EnergyStarPageDelay time.Duration
+	// EnergyStarMaxConcurrency limits parallel page-fetch goroutines per ZIP.
+	EnergyStarMaxConcurrency int
+
+	// ZipCSVPath is the path to uszips.csv.  When empty the loader auto-detects
+	// the file in standard locations (data/uszips.csv relative to the binary).
+	// Set ZIP_CSV_PATH to an absolute path if needed.
+	ZipCSVPath string
+
+	// DSIREZipsPerState is the number of ZIPs per state to sample from the ZIP
+	// CSV file for DSIRE queries.  Default: 1 (DSIRE deduplicates by program ID
+	// so one ZIP per state discovers all state/federal programs).
+	DSIREZipsPerState int
 
 	// ScraperVersion is written to the scraper_version column on every upsert.
 	ScraperVersion string
@@ -65,7 +87,13 @@ func Load() (*Config, error) {
 		DSIREBaseURL:           getEnv("DSIREUSA_BASE_URL", "https://programs.dsireusa.org/api/v1/programs"),
 		RewiringAmericaAPIKey:  getEnv("REWIRING_AMERICA_API_KEY", ""),
 		RewiringAmericaBaseURL: getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
-		EnergyStarBaseURL:      getEnv("ENERGY_STAR_BASE_URL", "https://www.energystar.gov/about/federal_tax_credits"),
+		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
+		EnergyStarZipCodes:       getCSVEnv("ENERGY_STAR_ZIP_CODES", nil),
+		EnergyStarZipsPerState:   getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 1),
+		EnergyStarPageDelay:      getDurationMsEnv("ENERGY_STAR_PAGE_DELAY_MS", 500*time.Millisecond),
+		EnergyStarMaxConcurrency: getIntEnv("ENERGY_STAR_MAX_CONCURRENCY", 3),
+		ZipCSVPath:               getEnv("ZIP_CSV_PATH", ""),
+		DSIREZipsPerState:        getIntEnv("DSIRE_ZIPS_PER_STATE", 1),
 		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		LogFormat:              getEnv("LOG_FORMAT", "json"),
@@ -136,4 +164,52 @@ func getBoolEnv(key string, defaultVal bool) bool {
 		return defaultVal
 	}
 	return b
+}
+
+// getCSVEnv parses a comma-separated env var into a []string, trimming spaces.
+// Returns defaultVal if the env var is not set or blank.
+func getCSVEnv(key string, defaultVal []string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return defaultVal
+	}
+	return out
+}
+
+// getIntEnv parses an integer env var, returning defaultVal on missing/error.
+func getIntEnv(key string, defaultVal int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultVal
+	}
+	return n
+}
+
+// getDurationMsEnv parses a millisecond integer env var into a time.Duration.
+// Returns defaultVal on missing/error.
+func getDurationMsEnv(key string, defaultVal time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	ms, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || ms < 0 {
+		return defaultVal
+	}
+	return time.Duration(ms) * time.Millisecond
 }
