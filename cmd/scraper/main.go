@@ -33,6 +33,7 @@ import (
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/logutil"
+	"github.com/incenva/rebate-scraper/internal/zipdata"
 	"github.com/incenva/rebate-scraper/models"
 	"github.com/incenva/rebate-scraper/scrapers"
 	"github.com/robfig/cron/v3"
@@ -80,12 +81,28 @@ func main() {
 	}
 	logger.Info("database connected and staging table migrated")
 
+	// ── ZIP data (state → ZIPs lookup) ───────────────────────────────────────
+	// Load once, shared across all scrapers that need ZIP coverage per state.
+	// Non-fatal — scrapers still run without it; ZipCodes field will be empty.
+	stateZIPs, zipErr := zipdata.LoadPath(cfg.ZipCSVPath)
+	if zipErr != nil {
+		logger.Warn("uszips.csv not loaded — ZipCodes field will be empty",
+			zap.Error(zipErr),
+		)
+	} else {
+		logger.Info("uszips.csv loaded",
+			zap.Int("states", len(stateZIPs)),
+		)
+	}
+
 	// ── Registry ──────────────────────────────────────────────────────────────
 	reg := scrapers.NewRegistry()
 
 	reg.Register(&scrapers.DSIREScraper{
 		BaseURL:        cfg.DSIREBaseURL,
 		ScraperVersion: cfg.ScraperVersion,
+		PageDelay:      cfg.PageDelay,
+		StateZIPs:      stateZIPs,
 		Logger:         logger,
 	})
 
@@ -101,6 +118,7 @@ func main() {
 		PageDelay:      cfg.PageDelay,
 		MaxConcurrency: cfg.MaxConcurrency,
 		ScraperVersion: cfg.ScraperVersion,
+		StateZIPs:      stateZIPs,
 		Logger:         logger,
 	})
 

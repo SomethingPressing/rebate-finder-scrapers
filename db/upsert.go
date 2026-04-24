@@ -39,7 +39,7 @@ func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 	updateCols := []string{
 		"program_name", "utility_company", "incentive_description",
 		"incentive_amount", "maximum_amount", "percent_value", "per_unit_amount",
-		"incentive_format", "unit_type", "state", "zip_code", "service_territory",
+		"incentive_format", "unit_type", "state", "zip_code", "zip_codes", "service_territory",
 		"available_nationwide", "category_tag", "segment", "portfolio",
 		"customer_type", "product_category", "administrator", "source",
 		"start_date", "end_date", "while_funds_last",

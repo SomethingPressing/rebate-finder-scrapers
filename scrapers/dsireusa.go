@@ -98,14 +98,24 @@ type dsireDetail struct {
 
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
-// DSIREScraper fetches all incentive programs from the DSIRE USA v1 API in a
-// single request — no ZIP or state filter needed.
+// usStateAbbrs is the canonical list of 50 US states + DC used for per-state
+// DSIRE queries.  Ordered alphabetically so log output is predictable.
+var usStateAbbrs = []string{
+	"AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL",
+	"GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME",
+	"MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH",
+	"NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI",
+	"SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+}
+
+// DSIREScraper fetches incentive programs from the DSIRE USA v1 API,
+// issuing one request per US state + DC:
 //
 //	GET https://programs.dsireusa.org/api/v1/programs
-//	    ?category[]=1&draw=1&start=0&length=-1
+//	    ?state[]={abbr}&category[]=1&draw=1&start=0&length=-1
 //
-// length=-1 instructs the API to return the complete result set at once
-// (~1 800 programs as of 2025).  No pagination or per-ZIP iteration required.
+// Programs are deduplicated by DSIRE ID across states so that federal and
+// multi-state programs are not stored twice.
 //
 // When ScrapeDetails is true (default false), each program's detail page is
 // also scraped via Colly to extract contact info, equipment requirements, etc.
@@ -118,6 +128,13 @@ type DSIREScraper struct {
 	// ScrapeDetails enables per-program detail page scraping via Colly.
 	// Richer data but significantly slower (one HTTP request per program).
 	ScrapeDetails bool
+	// PageDelay is the polite delay between per-state requests. Defaults to 300 ms.
+	PageDelay time.Duration
+	// StateZIPs maps state abbreviation → ordered list of ZIP codes.
+	// When set, each incentive's ZipCodes field is populated with the ZIPs for
+	// its state so downstream systems can associate the program with specific areas.
+	// Load from data/uszips.csv via the zipdata package.
+	StateZIPs map[string][]string
 }
 
 // Name implements Scraper.
@@ -125,43 +142,85 @@ func (s *DSIREScraper) Name() string { return "dsireusa" }
 
 // Scrape implements Scraper.
 func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
-	s.Logger.Info("dsireusa scrape starting — fetching all programs in one request",
+	client := s.httpClient()
+	seen := make(map[int]bool)
+	var all []models.Incentive
+	total := len(usStateAbbrs)
+
+	s.Logger.Info("dsireusa scrape starting",
+		zap.Int("states", total),
 		zap.Bool("scrape_details", s.ScrapeDetails),
 	)
 
-	programs, err := s.fetchAll(ctx, s.httpClient())
-	if err != nil {
-		return nil, fmt.Errorf("dsireusa: fetch all: %w", err)
-	}
-
-	var all []models.Incentive
-	for _, prog := range programs {
-		inc := s.toIncentive(prog)
-
-		if s.ScrapeDetails {
-			detail := s.scrapeDetail(ctx, prog.ID)
-			s.applyDetail(&inc, detail)
+	for i, state := range usStateAbbrs {
+		select {
+		case <-ctx.Done():
+			return all, ctx.Err()
+		default:
 		}
 
-		all = append(all, inc)
+		programs, err := s.fetchState(ctx, client, state)
+		if err != nil {
+			s.Logger.Warn("dsireusa state error",
+				zap.String("state", state),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		before := len(all)
+		for _, prog := range programs {
+			if seen[prog.ID] {
+				continue
+			}
+			seen[prog.ID] = true
+
+			stateZIPs := s.StateZIPs[state]
+			inc := s.toIncentive(prog, stateZIPs)
+			if s.ScrapeDetails {
+				detail := s.scrapeDetail(ctx, prog.ID)
+				s.applyDetail(&inc, detail)
+			}
+			all = append(all, inc)
+		}
+
+		s.Logger.Info("dsireusa state progress",
+			zap.Int("state_index", i+1),
+			zap.Int("state_total", total),
+			zap.String("state", state),
+			zap.Int("programs_in_response", len(programs)),
+			zap.Int("new_this_state", len(all)-before),
+			zap.Int("unique_total", len(all)),
+		)
+
+		time.Sleep(s.pageDelay())
 	}
 
 	s.Logger.Info("dsireusa scrape complete",
-		zap.Int("programs", len(all)),
+		zap.Int("unique_programs", len(all)),
+		zap.Int("states_queried", total),
 	)
 
 	return all, nil
 }
 
-// fetchAll calls the v1 API with no geographic filter and returns every program.
-// length=-1 instructs the server to return the complete result set at once.
-func (s *DSIREScraper) fetchAll(
+func (s *DSIREScraper) pageDelay() time.Duration {
+	if s.PageDelay > 0 {
+		return s.PageDelay
+	}
+	return 300 * time.Millisecond
+}
+
+// fetchState calls the v1 API for a single state abbreviation and returns all
+// matching programs.  length=-1 returns the full result set in one response.
+func (s *DSIREScraper) fetchState(
 	ctx context.Context,
 	client *http.Client,
+	state string,
 ) ([]dsireProgram, error) {
 	baseURL := strings.TrimRight(s.BaseURL, "/")
 
-	u := fmt.Sprintf("%s?category[]=1&draw=1&start=0&length=-1", baseURL)
+	u := fmt.Sprintf("%s?state[]=%s&category[]=1&draw=1&start=0&length=-1", baseURL, state)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -181,19 +240,21 @@ func (s *DSIREScraper) fetchAll(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d for state %s", resp.StatusCode, state)
 	}
 
 	var page dsireV1Response
 	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, fmt.Errorf("decode state %s: %w", state, err)
 	}
 
 	return page.Data, nil
 }
 
 // toIncentive maps a dsireProgram → models.Incentive.
-func (s *DSIREScraper) toIncentive(p dsireProgram) models.Incentive {
+// stateZIPs is the full list of ZIP codes for the program's state — stored in
+// ZipCodes so downstream systems can associate the incentive with specific areas.
+func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.Incentive {
 	inc := models.NewIncentive(s.Name(), s.ScraperVersion)
 	inc.ID = models.DeterministicID(s.Name(), strconv.Itoa(p.ID))
 
@@ -220,7 +281,10 @@ func (s *DSIREScraper) toIncentive(p dsireProgram) models.Incentive {
 	if p.StateObj.Abbreviation != "" {
 		inc.State = models.PtrString(p.StateObj.Abbreviation)
 	}
-	// ZipCode is not set — DSIRE programs are state/utility scoped, not ZIP-specific.
+	// ZipCodes: full list of ZIPs for this program's state (from uszips.csv).
+	if len(stateZIPs) > 0 {
+		inc.ZipCodes = stateZIPs
+	}
 
 	// service_territory
 	territory := serviceTerritory(p)

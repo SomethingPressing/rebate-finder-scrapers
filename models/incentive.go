@@ -74,7 +74,8 @@ type Incentive struct {
 	// Pre-computed here so the promoter can rely on it without recomputing.
 	ProgramHash          string
 	State                *string
-	ZipCode              *string
+	ZipCode              *string   // primary / discovery ZIP (single, legacy)
+	ZipCodes             []string  // full list of ZIPs this incentive covers
 	ServiceTerritory     *string
 	AvailableNationwide  *bool
 	CategoryTag          []string
@@ -120,6 +121,7 @@ func NewIncentive(source, version string) Incentive {
 		CategoryTag:    []string{},
 		Segment:        []string{},
 		Portfolio:      []string{},
+		ZipCodes:       []string{},
 		ImageURLs:      []string{},
 		RateTiers:      []RateTier{},
 		CreatedAt:      now,

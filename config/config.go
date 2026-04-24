@@ -35,6 +35,10 @@ type Config struct {
 	// concurrent fetching (e.g. Energy Star page fetches per ZIP).
 	MaxConcurrency int
 
+	// ZipCSVPath is the path to uszips.csv used to populate the zip_codes field
+	// per incentive.  Auto-detected at data/uszips.csv if left empty.
+	ZipCSVPath string
+
 
 	// ScraperVersion is written to the scraper_version column on every upsert.
 	ScraperVersion string
@@ -76,6 +80,7 @@ func Load() (*Config, error) {
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
 		PageDelay:              getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
 		MaxConcurrency:         getIntEnv("MAX_CONCURRENCY", 3),
+		ZipCSVPath:             getEnv("ZIP_CSV_PATH", ""),
 		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		LogFormat:              getEnv("LOG_FORMAT", "json"),

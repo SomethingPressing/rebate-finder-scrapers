@@ -43,6 +43,10 @@ type EnergyStarScraper struct {
 	MaxConcurrency int
 	// ScraperVersion is written to the scraper_version column.
 	ScraperVersion string
+	// StateZIPs maps state abbreviation → ordered list of ZIP codes.
+	// When set, each incentive's ZipCodes field is populated from the program's
+	// service territory state so downstream systems can resolve ZIP coverage.
+	StateZIPs map[string][]string
 
 	Logger     *zap.Logger
 	HTTPClient *http.Client
@@ -122,7 +126,7 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	var incentives []models.Incentive
 	for _, page := range rawPages {
 		for _, result := range page {
-			inc, ok := mapEnergyStarRecord(result, version, s.Logger)
+			inc, ok := mapEnergyStarRecord(result, version, s.StateZIPs, s.Logger)
 			if !ok {
 				continue
 			}
@@ -216,6 +220,7 @@ func (s *EnergyStarScraper) maxConcurrency() int {
 func mapEnergyStarRecord(
 	result models.EnergyStarRawResult,
 	scraperVersion string,
+	stateZIPs map[string][]string,
 	log *zap.Logger,
 ) (models.Incentive, bool) {
 	// Parse the nested incentivedata JSON blob.
@@ -239,7 +244,12 @@ func mapEnergyStarRecord(
 	// No zip_code — queried without a ZIP filter; state comes from service territory.
 	if idata.ServiceTerritory != nil {
 		if idata.ServiceTerritory.StateCode != "" {
-			inc.State = models.PtrString(idata.ServiceTerritory.StateCode)
+			stateCode := strings.ToUpper(idata.ServiceTerritory.StateCode)
+			inc.State = models.PtrString(stateCode)
+			// Populate ZipCodes with every ZIP in the program's state.
+			if zips := stateZIPs[stateCode]; len(zips) > 0 {
+				inc.ZipCodes = zips
+			}
 		}
 		svcName := idata.ServiceTerritory.Name
 		if svcName == "" {

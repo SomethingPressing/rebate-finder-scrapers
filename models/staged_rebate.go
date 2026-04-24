@@ -46,6 +46,9 @@ type StagedRebate struct {
 	UnitType             *string     `gorm:"column:unit_type"`
 	State                *string     `gorm:"column:state"`
 	ZipCode              *string     `gorm:"column:zip_code"`
+	// ZipCodes holds all ZIP codes this incentive covers (state-wide programs
+	// get every ZIP in the state; utility programs get the utility's ZIP list).
+	ZipCodes             StringSlice `gorm:"column:zip_codes;type:text[]"`
 	ServiceTerritory     *string     `gorm:"column:service_territory"`
 	AvailableNationwide  *bool       `gorm:"column:available_nationwide"`
 	CategoryTag          StringSlice `gorm:"column:category_tag;type:text[]"`
@@ -126,6 +129,7 @@ func FromIncentive(inc Incentive) StagedRebate {
 		UnitType:             inc.UnitType,
 		State:                inc.State,
 		ZipCode:              inc.ZipCode,
+		ZipCodes:             StringSlice(inc.ZipCodes),
 		ServiceTerritory:     inc.ServiceTerritory,
 		AvailableNationwide:  inc.AvailableNationwide,
 		CategoryTag:          StringSlice(inc.CategoryTag),
