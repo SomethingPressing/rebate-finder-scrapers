@@ -12,12 +12,56 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 )
+
+// ── US states list (loaded from data/us_states.json) ─────────────────────────
+
+type usState struct {
+	Abbr string `json:"abbr"`
+	Name string `json:"name"`
+}
+
+// loadUSStates reads data/us_states.json, searching upward from the binary
+// and from the source file location so it works both when installed and in
+// development (go run ./cmd/staging-stats).
+func loadUSStates() ([]usState, error) {
+	candidates := []string{
+		"data/us_states.json",
+		"../data/us_states.json",
+		"../../data/us_states.json",
+	}
+	// Also try relative to this source file (works with go run in sub-packages).
+	_, thisFile, _, ok := runtime.Caller(0)
+	if ok {
+		dir := filepath.Dir(thisFile)
+		for i := 0; i < 4; i++ {
+			candidates = append(candidates, filepath.Join(dir, "data/us_states.json"))
+			dir = filepath.Dir(dir)
+		}
+	}
+
+	for _, c := range candidates {
+		f, err := os.Open(c)
+		if err != nil {
+			continue
+		}
+		defer f.Close()
+		var states []usState
+		if err := json.NewDecoder(f).Decode(&states); err != nil {
+			return nil, fmt.Errorf("staging-stats: parse %s: %w", c, err)
+		}
+		return states, nil
+	}
+	return nil, fmt.Errorf("staging-stats: data/us_states.json not found")
+}
 
 // ── Query result structs ──────────────────────────────────────────────────────
 
@@ -27,12 +71,12 @@ type statusRow struct {
 }
 
 type sourceRow struct {
-	Source    string  `gorm:"column:source"`
-	Total     int64   `gorm:"column:total"`
-	Pending   int64   `gorm:"column:pending"`
-	Promoted  int64   `gorm:"column:promoted"`
-	Skipped   int64   `gorm:"column:skipped"`
-	PctProm   float64 `gorm:"column:pct_promoted"`
+	Source   string  `gorm:"column:source"`
+	Total    int64   `gorm:"column:total"`
+	Pending  int64   `gorm:"column:pending"`
+	Promoted int64   `gorm:"column:promoted"`
+	Skipped  int64   `gorm:"column:skipped"`
+	PctProm  float64 `gorm:"column:pct_promoted"`
 }
 
 type formatRow struct {
@@ -40,17 +84,19 @@ type formatRow struct {
 	Count  int64  `gorm:"column:count"`
 }
 
-type stateRow struct {
-	State string `gorm:"column:state"`
-	Count int64  `gorm:"column:count"`
+// StateCount pairs a state entry from the hardcoded list with its DB count.
+type StateCount struct {
+	Abbr  string `json:"abbr"`
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
 }
 
 type qualityRow struct {
-	NoDescription  int64 `gorm:"column:no_description"`
-	NoAmount       int64 `gorm:"column:no_amount"`
-	NoState        int64 `gorm:"column:no_state"`
-	NoURL          int64 `gorm:"column:no_url"`
-	NoServiceArea  int64 `gorm:"column:no_service_area"`
+	NoDescription int64 `gorm:"column:no_description"`
+	NoAmount      int64 `gorm:"column:no_amount"`
+	NoState       int64 `gorm:"column:no_state"`
+	NoURL         int64 `gorm:"column:no_url"`
+	NoServiceArea int64 `gorm:"column:no_service_area"`
 }
 
 type activityRow struct {
@@ -59,24 +105,24 @@ type activityRow struct {
 	Updated int64  `gorm:"column:updated"`
 }
 
-type recentRunRow struct {
-	Source    string    `gorm:"column:source"`
-	LastSeen  time.Time `gorm:"column:last_seen"`
-	NewRows   int64     `gorm:"column:new_rows"`
+// dbStateRow is used only to scan the GROUP BY result from the DB.
+type dbStateRow struct {
+	State string `gorm:"column:state"`
+	Count int64  `gorm:"column:count"`
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
 type Report struct {
-	GeneratedAt  string                `json:"generated_at"`
-	Total        int64                 `json:"total"`
-	ByStatus     []statusRow           `json:"by_status"`
-	BySource     []sourceRow           `json:"by_source"`
-	ByFormat     []formatRow           `json:"by_format"`
-	TopStates    []stateRow            `json:"top_states"`
-	Quality      qualityRow            `json:"quality"`
-	Last24h      activityRow           `json:"last_24h"`
-	Last7d       activityRow           `json:"last_7d"`
+	GeneratedAt string       `json:"generated_at"`
+	Total       int64        `json:"total"`
+	ByStatus    []statusRow  `json:"by_status"`
+	BySource    []sourceRow  `json:"by_source"`
+	ByFormat    []formatRow  `json:"by_format"`
+	States      []StateCount `json:"states"`
+	Quality     qualityRow   `json:"quality"`
+	Last24h     activityRow  `json:"last_24h"`
+	Last7d      activityRow  `json:"last_7d"`
 }
 
 func main() {
@@ -89,6 +135,12 @@ func main() {
 	}
 	if cfg.DatabaseURL == "" {
 		fatalf("DATABASE_URL is not set")
+	}
+
+	// Load the hardcoded US states list.
+	usStates, err := loadUSStates()
+	if err != nil {
+		fatalf("%v", err)
 	}
 
 	database, err := db.Connect(cfg.DatabaseURL, "error")
@@ -104,7 +156,7 @@ func main() {
 	g.Raw(`SELECT COUNT(*) FROM rebates_staging WHERE deleted_at IS NULL`).
 		Scan(&report.Total)
 
-	// ── 2. By promotion status ─────────────────────────────────────────────
+	// ── 2. By promotion status ────────────────────────────────────────────────
 	g.Raw(`
 		SELECT stg_promotion_status AS status, COUNT(*) AS count
 		FROM   rebates_staging
@@ -113,7 +165,7 @@ func main() {
 		ORDER  BY count DESC
 	`).Scan(&report.ByStatus)
 
-	// ── 3. By source ──────────────────────────────────────────────────────
+	// ── 3. By source ──────────────────────────────────────────────────────────
 	g.Raw(`
 		SELECT
 			source,
@@ -131,7 +183,7 @@ func main() {
 		ORDER  BY total DESC
 	`).Scan(&report.BySource)
 
-	// ── 4. By incentive format ────────────────────────────────────────────
+	// ── 4. By incentive format ────────────────────────────────────────────────
 	g.Raw(`
 		SELECT
 			COALESCE(incentive_format, 'unknown') AS format,
@@ -142,19 +194,35 @@ func main() {
 		ORDER  BY count DESC
 	`).Scan(&report.ByFormat)
 
-	// ── 5. Top 15 states ──────────────────────────────────────────────────
+	// ── 5. States — all 51 from hardcoded list, counts from DB ───────────────
+	// Query counts once, build a lookup map, then merge with the static list.
+	var dbStates []dbStateRow
 	g.Raw(`
-		SELECT
-			COALESCE(state, '(none)') AS state,
-			COUNT(*) AS count
+		SELECT state, COUNT(*) AS count
 		FROM   rebates_staging
-		WHERE  deleted_at IS NULL
+		WHERE  deleted_at IS NULL AND state IS NOT NULL
 		GROUP  BY state
-		ORDER  BY count DESC
-		LIMIT  15
-	`).Scan(&report.TopStates)
+	`).Scan(&dbStates)
 
-	// ── 6. Data quality ───────────────────────────────────────────────────
+	countByAbbr := make(map[string]int64, len(dbStates))
+	for _, r := range dbStates {
+		countByAbbr[strings.ToUpper(r.State)] = r.Count
+	}
+
+	report.States = make([]StateCount, len(usStates))
+	for i, s := range usStates {
+		report.States[i] = StateCount{
+			Abbr:  s.Abbr,
+			Name:  s.Name,
+			Count: countByAbbr[s.Abbr], // 0 if no programs found
+		}
+	}
+	// Sort by count desc for the terminal view (JSON keeps alphabetical order above).
+	sorted := make([]StateCount, len(report.States))
+	copy(sorted, report.States)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Count > sorted[j].Count })
+
+	// ── 6. Data quality ───────────────────────────────────────────────────────
 	g.Raw(`
 		SELECT
 			COUNT(*) FILTER (WHERE incentive_description IS NULL OR incentive_description = '') AS no_description,
@@ -167,7 +235,7 @@ func main() {
 		WHERE deleted_at IS NULL
 	`).Scan(&report.Quality)
 
-	// ── 7. Recent activity ────────────────────────────────────────────────
+	// ── 7. Recent activity ────────────────────────────────────────────────────
 	g.Raw(`
 		SELECT
 			'last_24h' AS period,
@@ -188,7 +256,7 @@ func main() {
 		WHERE deleted_at IS NULL
 	`).Scan(&report.Last7d)
 
-	// ── Output ────────────────────────────────────────────────────────────
+	// ── Output ────────────────────────────────────────────────────────────────
 	if *jsonMode {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -196,7 +264,7 @@ func main() {
 		return
 	}
 
-	printReport(report)
+	printReport(report, sorted)
 }
 
 // ── Human-readable printer ────────────────────────────────────────────────────
@@ -211,19 +279,19 @@ const (
 	dim    = "\033[2m"
 )
 
-func hr() { fmt.Println(dim + strings.Repeat("─", 56) + reset) }
+func hr() { fmt.Println(dim + strings.Repeat("─", 60) + reset) }
 
 func header(s string) {
 	fmt.Printf("\n%s%s%s\n", bold+cyan, s, reset)
 	hr()
 }
 
-func printReport(r Report) {
+func printReport(r Report, statesSorted []StateCount) {
 	fmt.Printf("\n%s%s%s\n", bold, "  rebates_staging — Analytics Report", reset)
 	fmt.Printf("  %sGenerated:%s %s\n", dim, reset, r.GeneratedAt)
 	hr()
 
-	// ── Overview ─────────────────────────────────────────────────────────
+	// ── Overview ──────────────────────────────────────────────────────────────
 	header("  OVERVIEW")
 	fmt.Printf("  %-24s %s%d%s\n", "Total rows:", bold, r.Total, reset)
 	for _, s := range r.ByStatus {
@@ -233,7 +301,7 @@ func printReport(r Report) {
 			"  "+s.Status+":", color+bold, s.Count, reset, dim, pct, reset)
 	}
 
-	// ── By source ─────────────────────────────────────────────────────────
+	// ── By source ─────────────────────────────────────────────────────────────
 	header("  BY SOURCE")
 	fmt.Printf("  %-22s %7s %9s %9s %9s %8s\n",
 		"Source", "Total", "Pending", "Promoted", "Skipped", "Prom%")
@@ -243,29 +311,38 @@ func printReport(r Report) {
 			s.Source, s.Total, s.Pending, s.Promoted, s.Skipped, s.PctProm)
 	}
 
-	// ── Incentive formats ─────────────────────────────────────────────────
+	// ── Incentive formats ──────────────────────────────────────────────────────
 	header("  INCENTIVE FORMATS")
 	for _, f := range r.ByFormat {
 		bar := barChart(f.Count, r.Total, 20)
 		fmt.Printf("  %-18s %s %s%d%s\n", f.Format, bar, dim, f.Count, reset)
 	}
 
-	// ── Top states ────────────────────────────────────────────────────────
-	header("  TOP 15 STATES")
-	for i, s := range r.TopStates {
-		bar := barChart(s.Count, r.Total, 20)
-		fmt.Printf("  %2d. %-8s %s %s%d%s\n", i+1, s.State, bar, dim, s.Count, reset)
+	// ── All states (from hardcoded list, sorted by count) ─────────────────────
+	header(fmt.Sprintf("  ALL STATES  (%d states, sorted by count)", len(statesSorted)))
+	maxCount := int64(0)
+	if len(statesSorted) > 0 {
+		maxCount = statesSorted[0].Count
+	}
+	for _, s := range statesSorted {
+		bar := barChart(s.Count, maxCount, 24)
+		covered := dim + "─" + reset
+		if s.Count > 0 {
+			covered = green + "✔" + reset
+		}
+		fmt.Printf("  %s %-4s %-22s %s %s%d%s\n",
+			covered, s.Abbr, s.Name, bar, dim, s.Count, reset)
 	}
 
-	// ── Data quality ──────────────────────────────────────────────────────
+	// ── Data quality ──────────────────────────────────────────────────────────
 	header("  DATA QUALITY  (rows missing key fields)")
-	printQuality("No description",   r.Quality.NoDescription,  r.Total)
-	printQuality("No amount",        r.Quality.NoAmount,        r.Total)
-	printQuality("No state",         r.Quality.NoState,         r.Total)
-	printQuality("No URL",           r.Quality.NoURL,           r.Total)
-	printQuality("No service area",  r.Quality.NoServiceArea,   r.Total)
+	printQuality("No description", r.Quality.NoDescription, r.Total)
+	printQuality("No amount", r.Quality.NoAmount, r.Total)
+	printQuality("No state", r.Quality.NoState, r.Total)
+	printQuality("No URL", r.Quality.NoURL, r.Total)
+	printQuality("No service area", r.Quality.NoServiceArea, r.Total)
 
-	// ── Recent activity ───────────────────────────────────────────────────
+	// ── Recent activity ────────────────────────────────────────────────────────
 	header("  RECENT ACTIVITY")
 	printActivity("Last 24 h", r.Last24h)
 	printActivity("Last 7 d ", r.Last7d)
@@ -318,7 +395,7 @@ func pctOf(n, total int64) float64 {
 
 func barChart(n, total int64, width int) string {
 	if total == 0 {
-		return strings.Repeat("░", width)
+		return dim + strings.Repeat("░", width) + reset
 	}
 	filled := int(float64(n) / float64(total) * float64(width))
 	if filled > width {
