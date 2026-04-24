@@ -76,8 +76,6 @@ func Load() (*Config, error) {
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
 		PageDelay:              getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
 		MaxConcurrency:         getIntEnv("MAX_CONCURRENCY", 3),
-		ZipCSVPath:               getEnv("ZIP_CSV_PATH", ""),
-		DSIREZipsPerState:        getIntEnv("DSIRE_ZIPS_PER_STATE", 0), // 0 = all ZIPs
 		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		LogFormat:              getEnv("LOG_FORMAT", "json"),
