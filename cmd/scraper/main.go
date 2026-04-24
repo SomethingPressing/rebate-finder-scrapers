@@ -105,14 +105,12 @@ func main() {
 		)
 	}
 
-	// Build the Energy Star ZIP list.
-	// Priority: explicit ENERGY_STAR_ZIP_CODES env var > CSV sample > no ZIPs (scraper skips).
-	energyStarZIPs := cfg.EnergyStarZipCodes
-	if len(energyStarZIPs) == 0 && stateZIPs != nil {
+	// Build the Energy Star ZIP list from the CSV.
+	var energyStarZIPs []string
+	if stateZIPs != nil {
 		energyStarZIPs = zipdata.Sample(stateZIPs, cfg.EnergyStarZipsPerState)
 		logger.Info("energy_star: using ZIPs from CSV",
 			zap.Int("zip_count", len(energyStarZIPs)),
-			zap.Int("per_state", cfg.EnergyStarZipsPerState),
 		)
 	}
 
