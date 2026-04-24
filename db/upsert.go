@@ -13,6 +13,12 @@ type UpsertResult struct {
 	Upserted int // rows inserted or updated in rebates_staging
 }
 
+// upsertBatchSize is the maximum number of rows per INSERT statement.
+// PostgreSQL limits prepared-statement parameters to 65 535; with ~40 columns
+// per StagedRebate row that gives a safe ceiling of 65535/40 ≈ 1638.
+// We use 500 to stay well within the limit with room for future column growth.
+const upsertBatchSize = 500
+
 // UpsertToStaging writes all items into the rebates_staging table.
 //
 // On conflict (same source_id) every column except promotion_status and
@@ -22,6 +28,9 @@ type UpsertResult struct {
 //
 // Items that are already "promoted" stay promoted; only their data columns
 // are refreshed so the promoter can optionally re-promote changed records.
+//
+// Large batches are automatically split to stay within PostgreSQL's 65 535
+// parameter limit.
 func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 	if len(items) == 0 {
 		return UpsertResult{}, nil
@@ -50,18 +59,28 @@ func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 		"rate_tiers", "scraper_version", "stg_program_hash", "updated_at",
 	}
 
-	result := d.gorm.
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "stg_source_id"}},
-			DoUpdates: clause.AssignmentColumns(updateCols),
-		}).
-		Create(&rows)
+	total := 0
+	for start := 0; start < len(rows); start += upsertBatchSize {
+		end := start + upsertBatchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[start:end]
 
-	if result.Error != nil {
-		return UpsertResult{}, fmt.Errorf("upsert staging: %w", result.Error)
+		result := d.gorm.
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "stg_source_id"}},
+				DoUpdates: clause.AssignmentColumns(updateCols),
+			}).
+			Create(&batch)
+
+		if result.Error != nil {
+			return UpsertResult{Upserted: total}, fmt.Errorf("upsert staging (batch %d-%d): %w", start, end, result.Error)
+		}
+		total += int(result.RowsAffected)
 	}
 
-	return UpsertResult{Upserted: int(result.RowsAffected)}, nil
+	return UpsertResult{Upserted: total}, nil
 }
 
 // PendingCount returns the number of rows in rebates_staging that have not yet
