@@ -28,12 +28,8 @@ type Config struct {
 
 	// Energy Star
 	EnergyStarAPIBaseURL string
-	// EnergyStarZipCodes is an explicit list of ZIP codes to query (from
-	// ENERGY_STAR_ZIP_CODES, comma-separated).  When empty, ZIPs are loaded
-	// from ZipCSVPath using EnergyStarZipsPerState ZIPs per state.
-	EnergyStarZipCodes []string
 	// EnergyStarZipsPerState is the number of ZIPs per state to sample from the
-	// ZIP CSV file when ENERGY_STAR_ZIP_CODES is not set.  Default: 1.
+	// ZIP CSV file.  0 = no limit (all ZIPs). Default: 0.
 	EnergyStarZipsPerState int
 	// EnergyStarPageDelay is the sleep between successive page requests per ZIP.
 	EnergyStarPageDelay time.Duration
@@ -88,7 +84,6 @@ func Load() (*Config, error) {
 		RewiringAmericaAPIKey:  getEnv("REWIRING_AMERICA_API_KEY", ""),
 		RewiringAmericaBaseURL: getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
-		EnergyStarZipCodes:       getCSVEnv("ENERGY_STAR_ZIP_CODES", nil),
 		EnergyStarZipsPerState:   getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 0), // 0 = all ZIPs
 		EnergyStarPageDelay:      getDurationMsEnv("ENERGY_STAR_PAGE_DELAY_MS", 500*time.Millisecond),
 		EnergyStarMaxConcurrency: getIntEnv("ENERGY_STAR_MAX_CONCURRENCY", 3),
