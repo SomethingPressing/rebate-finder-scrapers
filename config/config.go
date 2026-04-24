@@ -31,10 +31,12 @@ type Config struct {
 	// EnergyStarZipsPerState is the number of ZIPs per state to sample from the
 	// ZIP CSV file.  0 = no limit (all ZIPs). Default: 0.
 	EnergyStarZipsPerState int
-	// EnergyStarPageDelay is the sleep between successive page requests per ZIP.
-	EnergyStarPageDelay time.Duration
-	// EnergyStarMaxConcurrency limits parallel page-fetch goroutines per ZIP.
-	EnergyStarMaxConcurrency int
+	// PageDelay is the sleep between successive HTTP requests within a scraper
+	// (e.g. between page fetches per ZIP in Energy Star).
+	PageDelay time.Duration
+	// MaxConcurrency limits parallel goroutines across all scrapers that support
+	// concurrent fetching (e.g. Energy Star page fetches per ZIP).
+	MaxConcurrency int
 
 	// ZipCSVPath is the path to uszips.csv.  When empty the loader auto-detects
 	// the file in standard locations (data/uszips.csv relative to the binary).
@@ -84,9 +86,9 @@ func Load() (*Config, error) {
 		RewiringAmericaAPIKey:  getEnv("REWIRING_AMERICA_API_KEY", ""),
 		RewiringAmericaBaseURL: getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
-		EnergyStarZipsPerState:   getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 0), // 0 = all ZIPs
-		EnergyStarPageDelay:      getDurationMsEnv("ENERGY_STAR_PAGE_DELAY_MS", 500*time.Millisecond),
-		EnergyStarMaxConcurrency: getIntEnv("ENERGY_STAR_MAX_CONCURRENCY", 3),
+		EnergyStarZipsPerState: getIntEnv("ENERGY_STAR_ZIPS_PER_STATE", 0), // 0 = all ZIPs
+		PageDelay:              getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
+		MaxConcurrency:         getIntEnv("MAX_CONCURRENCY", 3),
 		ZipCSVPath:               getEnv("ZIP_CSV_PATH", ""),
 		DSIREZipsPerState:        getIntEnv("DSIRE_ZIPS_PER_STATE", 0), // 0 = all ZIPs
 		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),

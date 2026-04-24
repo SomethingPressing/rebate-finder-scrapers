@@ -134,8 +134,8 @@ func main() {
 	reg.Register(&scrapers.EnergyStarScraper{
 		BaseURL:        cfg.EnergyStarAPIBaseURL,
 		ZipCodes:       energyStarZIPs,
-		PageDelay:      cfg.EnergyStarPageDelay,
-		MaxConcurrency: cfg.EnergyStarMaxConcurrency,
+		PageDelay:      cfg.PageDelay,
+		MaxConcurrency: cfg.MaxConcurrency,
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
 	})

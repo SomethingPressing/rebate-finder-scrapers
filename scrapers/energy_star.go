@@ -54,7 +54,7 @@ func (s *EnergyStarScraper) Name() string { return "energy_star" }
 // Scrape implements Scraper.
 func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	if len(s.ZipCodes) == 0 {
-		s.Logger.Warn("energy_star: ENERGY_STAR_ZIP_CODES not set — skipping")
+		s.Logger.Warn("energy_star: no ZIP codes available — skipping (is data/uszips.csv present?)")
 		return nil, nil
 	}
 
