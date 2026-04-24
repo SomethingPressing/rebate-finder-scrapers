@@ -9,7 +9,6 @@ vendor/
 
 # Compiled PDF scraper binary (built locally outside Docker)
 pdf-scraper
-cmd/pdf-scraper/pdf-scraper
 
 # Environment — copy .env.example → .env and fill in your values
 .env
