@@ -1,6 +1,36 @@
 package models
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// FlexString unmarshals a JSON value that may be either a quoted string or a
+// bare number (e.g. a Unix-ms timestamp). In both cases it stores the raw
+// value as a plain Go string so downstream code is unaffected.
+type FlexString string
+
+func (f *FlexString) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+	// Quoted string — strip the quotes via standard unmarshalling.
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*f = FlexString(s)
+		return nil
+	}
+	// Bare number (or null) — store the raw bytes as a string.
+	if string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	*f = FlexString(fmt.Sprintf("%s", b))
+	return nil
+}
 
 // EnergyStarSearchResponse is the top-level response from the Energy Star
 // rebate-finder search API.
@@ -24,8 +54,8 @@ type EnergyStarRawResult struct {
 	ProductGeneral       string `json:"product_general"`
 	Product              string `json:"product"` // subcategory / "All"
 	IncentiveAmount      string `json:"incentiveamount"`
-	IncentiveStartDate   string `json:"incentive_start_date"` // Unix ms timestamp string
-	IncentiveEndDate     string `json:"incentive_end_date"`   // Unix ms timestamp string
+	IncentiveStartDate   FlexString `json:"incentive_start_date"` // Unix ms — may arrive as string or number
+	IncentiveEndDate     FlexString `json:"incentive_end_date"`   // Unix ms — may arrive as string or number
 	IncentiveData        string `json:"incentivedata"`        // stringified JSON
 }
 
@@ -44,8 +74,8 @@ type EnergyStarIncentiveData struct {
 	ContactEmail            string                 `json:"contactemail"`
 	ContactPhone            string                 `json:"contactphonenumber"`
 	IncentiveStatus         *ESTIncentiveStatus    `json:"incentivestatus"`
-	StartDate               string                 `json:"incentivestartedate"` // Unix ms
-	EndDate                 string                 `json:"incentiveenddate"`   // Unix ms
+	StartDate               FlexString             `json:"incentivestartedate"` // Unix ms — may arrive as string or number
+	EndDate                 FlexString             `json:"incentiveenddate"`    // Unix ms — may arrive as string or number
 	ProductSubcategory      *ESTProductSubcategory `json:"incentiveproductsubcategory"`
 	WebsiteVisibility       *ESTNamedEntity        `json:"websitevisibility"`
 	IncentiveComments       json.RawMessage        `json:"incentivecomments"`

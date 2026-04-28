@@ -123,6 +123,7 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		version = energyStarScraperVersion
 	}
 
+	seen := make(map[string]bool)
 	var incentives []models.Incentive
 	for _, page := range rawPages {
 		for _, result := range page {
@@ -130,6 +131,10 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 			if !ok {
 				continue
 			}
+			if seen[inc.ID] {
+				continue
+			}
+			seen[inc.ID] = true
 			incentives = append(incentives, inc)
 		}
 	}
@@ -137,6 +142,7 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	s.Logger.Info("energy_star scrape complete",
 		zap.Int("unique_incentives", len(incentives)),
 		zap.Int("pages_fetched", totalPages),
+		zap.Int("duplicates_skipped", probe.ResultsCount-len(incentives)),
 	)
 
 	return incentives, nil
@@ -386,13 +392,13 @@ func mapEnergyStarRecord(
 
 	// ── Dates ─────────────────────────────────────────────────────────────────
 	// Prefer outer result dates; fall back to inner idata dates.
-	startMS := result.IncentiveStartDate
+	startMS := string(result.IncentiveStartDate)
 	if startMS == "" {
-		startMS = idata.StartDate
+		startMS = string(idata.StartDate)
 	}
-	endMS := result.IncentiveEndDate
+	endMS := string(result.IncentiveEndDate)
 	if endMS == "" {
-		endMS = idata.EndDate
+		endMS = string(idata.EndDate)
 	}
 
 	if d := parseUnixMillisToDate(startMS); d != "" {
