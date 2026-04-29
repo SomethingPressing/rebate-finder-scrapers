@@ -164,6 +164,8 @@ type RewiringAmericaScraper struct {
 func (s *RewiringAmericaScraper) Name() string { return "rewiring_america" }
 
 // Scrape implements Scraper.
+// All ZIPs from uszips.csv are queried concurrently (REWIRING_AMERICA_CONCURRENCY,
+// default 3) to capture every utility-territory program across the US.
 func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	if s.APIKey == "" {
 		s.Logger.Warn("rewiring_america: REWIRING_AMERICA_API_KEY not set — skipping")
@@ -171,71 +173,114 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 	}
 
 	// ZIP selection priority:
-	//   1. s.ZIPs  — explicit override (tests / CLI)
-	//   2. s.StateZIPs Sample(1) — most-populous ZIP per US state (US-only, same
-	//      dataset used by DSIRE and Energy Star)
+	//   1. s.ZIPs      — explicit override (tests / CLI)
+	//   2. s.StateZIPs — all US ZIPs from uszips.csv (Sample n=0 = no limit)
 	//   3. representativeZIPs — built-in fallback if uszips.csv wasn't loaded
 	var zips []string
 	switch {
 	case len(s.ZIPs) > 0:
 		zips = s.ZIPs
 	case len(s.StateZIPs) > 0:
-		zips = zipdata.Sample(s.StateZIPs, 1)
+		zips = zipdata.Sample(s.StateZIPs, 0) // 0 = all ZIPs, no limit
 	default:
 		zips = representativeZIPs
 	}
 
-	client := s.httpClient()
-	seen := make(map[string]bool) // dedup by deterministic ID
-	var all []models.Incentive
+	concurrency := s.Concurrency
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+
 	nZip := len(zips)
+	s.Logger.Info("rewiring_america scrape starting",
+		zap.Int("zip_count", nZip),
+		zap.Int("concurrency", concurrency),
+	)
 
-	s.Logger.Info("rewiring_america scrape starting", zap.Int("zip_count", nZip))
+	client := s.httpClient()
 
-	for i, zip := range zips {
-		select {
-		case <-ctx.Done():
-			return all, ctx.Err()
-		default:
-		}
+	// Worker pool — feed ZIPs through a channel, collect results.
+	type result struct {
+		zip        string
+		incentives []models.Incentive
+		err        error
+	}
 
-		before := len(all)
-		result, err := s.fetchZIP(ctx, client, zip)
-		if err != nil {
-			// Non-fatal: log and continue with next ZIP.
+	zipCh := make(chan string, nZip)
+	for _, z := range zips {
+		zipCh <- z
+	}
+	close(zipCh)
+
+	resultCh := make(chan result, concurrency*2)
+
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for zip := range zipCh {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				resp, err := s.fetchZIP(ctx, client, zip)
+				if err != nil {
+					resultCh <- result{zip: zip, err: err}
+					continue
+				}
+				resultCh <- result{zip: zip, incentives: s.toIncentives(resp, zip)}
+			}
+		}()
+	}
+
+	// Close resultCh once all workers are done.
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	// Collect results, dedup by deterministic ID.
+	seen := make(map[string]bool)
+	var all []models.Incentive
+	done := 0
+	errors := 0
+
+	for r := range resultCh {
+		done++
+		if r.err != nil {
+			errors++
 			s.Logger.Warn("rewiring_america zip error",
-				zap.String("zip", zip),
-				zap.Int("zip_index", i+1),
-				zap.Int("zip_total", nZip),
-				zap.Error(err),
+				zap.String("zip", r.zip),
+				zap.Int("completed", done),
+				zap.Int("total", nZip),
+				zap.Error(r.err),
 			)
 			continue
 		}
-
-		incentives := s.toIncentives(result, zip)
-		for _, inc := range incentives {
+		newThisZip := 0
+		for _, inc := range r.incentives {
 			if !seen[inc.ID] {
 				seen[inc.ID] = true
 				all = append(all, inc)
+				newThisZip++
 			}
 		}
-
-		s.Logger.Info("rewiring_america zip progress",
-			zap.Int("zip_index", i+1),
-			zap.Int("zip_total", nZip),
-			zap.String("zip", zip),
-			zap.Int("incentive_rows_this_zip", len(incentives)),
-			zap.Int("new_unique_this_zip", len(all)-before),
-			zap.Int("unique_incentives_total", len(all)),
-		)
-
-		// Polite delay between ZIP requests.
-		time.Sleep(200 * time.Millisecond)
+		if done%500 == 0 || done == nZip {
+			s.Logger.Info("rewiring_america zip progress",
+				zap.Int("completed", done),
+				zap.Int("total", nZip),
+				zap.Int("unique_incentives_total", len(all)),
+				zap.Int("errors", errors),
+			)
+		}
 	}
 
 	s.Logger.Info("rewiring_america scrape complete",
 		zap.Int("unique_incentives", len(all)),
 		zap.Int("zips_queried", nZip),
+		zap.Int("errors", errors),
 	)
 
 	return all, nil
