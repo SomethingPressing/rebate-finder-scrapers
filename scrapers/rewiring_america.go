@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/incenva/rebate-scraper/internal/zipdata"
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
 )
@@ -148,7 +149,11 @@ type RewiringAmericaScraper struct {
 	ScraperVersion string
 	Logger         *zap.Logger
 	HTTPClient     *http.Client
-	// ZIPs overrides the built-in representative ZIP list (useful for testing).
+	// StateZIPs is the US ZIP dataset (50 states + DC, no territories).
+	// When set, the scraper uses the most-populous ZIP per state — giving
+	// deterministic US-only coverage identical to DSIRE and Energy Star.
+	StateZIPs zipdata.StateZIPs
+	// ZIPs overrides StateZIPs and the built-in list (useful for testing).
 	ZIPs []string
 }
 
@@ -162,8 +167,18 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 		return nil, nil
 	}
 
-	zips := s.ZIPs
-	if len(zips) == 0 {
+	// ZIP selection priority:
+	//   1. s.ZIPs  — explicit override (tests / CLI)
+	//   2. s.StateZIPs Sample(1) — most-populous ZIP per US state (US-only, same
+	//      dataset used by DSIRE and Energy Star)
+	//   3. representativeZIPs — built-in fallback if uszips.csv wasn't loaded
+	var zips []string
+	switch {
+	case len(s.ZIPs) > 0:
+		zips = s.ZIPs
+	case len(s.StateZIPs) > 0:
+		zips = zipdata.Sample(s.StateZIPs, 1)
+	default:
 		zips = representativeZIPs
 	}
 

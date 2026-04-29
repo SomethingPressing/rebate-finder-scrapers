@@ -110,6 +110,7 @@ func main() {
 		BaseURL:        cfg.RewiringAmericaBaseURL,
 		APIKey:         cfg.RewiringAmericaAPIKey,
 		ScraperVersion: cfg.ScraperVersion,
+		StateZIPs:      stateZIPs,
 		Logger:         logger,
 	})
 
