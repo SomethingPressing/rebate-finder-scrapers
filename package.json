@@ -5,19 +5,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "go:deps":    "node scripts/go-mod.mjs download",
-    "go:tidy":    "node scripts/go-mod.mjs tidy",
-    "go:verify":  "node scripts/go-mod.mjs verify",
-
-    "run":                  "node scripts/run.mjs",
-    "run:all":              "node scripts/run.mjs all",
-    "run:dsireusa":         "node scripts/run.mjs dsireusa",
+    "go:deps": "node scripts/go-mod.mjs download",
+    "go:tidy": "node scripts/go-mod.mjs tidy",
+    "go:verify": "node scripts/go-mod.mjs verify",
+    "run": "node scripts/run.mjs",
+    "run:all": "node scripts/run.mjs all",
+    "run:dsireusa": "node scripts/run.mjs dsireusa",
     "run:rewiring_america": "node scripts/run.mjs rewiring_america",
-    "run:energy_star":      "node scripts/run.mjs energy_star",
-
+    "run:energy_star": "node scripts/run.mjs energy_star",
     "pdf": "node scripts/run-pdf.mjs",
-
-    "staging:stats": "node scripts/run-staging-stats.mjs"
+    "staging:stats": "node scripts/run-staging-stats.mjs",
+    "scraper:promote": "node scripts/run-promoter.mjs",
+    "scraper:promote:dry": "node scripts/run-promoter.mjs --dry-run"
   },
   "engines": {
     "node": ">=18"
