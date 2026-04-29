@@ -255,45 +255,61 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		hashToID[r.ProgramHash] = r.ID
 	}
 
-	// ── Phase 6: bulk-upsert zipcodes + rebate_zipcodes ──────────────────────
+	// ── Phase 6: bulk-upsert zipcodes, rebate_zipcodes, rebate_zipcode_sources ──
+	//
+	// For each (rebate, zip) pair we write:
+	//   • rebate_zipcodes        — one row, stagingSourceId = highest-priority source
+	//   • rebate_zipcode_sources — one row PER source that covers this zip
+
 	type zipEntry struct {
 		rebateID string
 		zip      string
-		sourceID string
+		// All sources that cover this zip for this rebate, in priority order.
+		// Each entry: (scraper name, stg_source_id)
+		sources []struct{ name, stagingID string }
 	}
 
-	var allZipEntries []zipEntry
+	// Build a map keyed by (rebateID, zip) so we can accumulate sources.
+	type zipKey struct{ rebateID, zip string }
+	zipMap := make(map[zipKey]*zipEntry)
+	zipOrder := make([]zipKey, 0)
+
 	for _, meta := range metas {
 		rebateID, ok := hashToID[meta.hash]
 		if !ok {
 			continue
 		}
-		for _, zip := range meta.allZips {
-			srcID := ""
-			for _, row := range meta.rows {
-				if row.ZipCode != nil && *row.ZipCode == zip {
-					srcID = row.SourceID
-					break
-				}
-				for _, z := range row.ZipCodes {
-					if z == zip {
-						srcID = row.SourceID
-						break
-					}
-				}
-				if srcID != "" {
-					break
-				}
+		// meta.rows is already sorted by source priority (highest first).
+		for _, row := range meta.rows {
+			zips := meta.allZips
+			// Collect only the zips this specific row contributed.
+			rowZips := make(map[string]struct{})
+			if row.ZipCode != nil && *row.ZipCode != "" {
+				rowZips[*row.ZipCode] = struct{}{}
 			}
-			allZipEntries = append(allZipEntries, zipEntry{rebateID: rebateID, zip: zip, sourceID: srcID})
+			for _, z := range row.ZipCodes {
+				rowZips[z] = struct{}{}
+			}
+			_ = zips
+			for z := range rowZips {
+				k := zipKey{rebateID, z}
+				if _, exists := zipMap[k]; !exists {
+					zipMap[k] = &zipEntry{rebateID: rebateID, zip: z}
+					zipOrder = append(zipOrder, k)
+				}
+				zipMap[k].sources = append(zipMap[k].sources, struct{ name, stagingID string }{
+					name:      row.Source,
+					stagingID: row.SourceID,
+				})
+			}
 		}
 	}
 
-	if len(allZipEntries) > 0 {
-		// 6a. Upsert unique zip codes.
-		uniqueZips := make(map[string]struct{}, len(allZipEntries))
-		for _, e := range allZipEntries {
-			uniqueZips[e.zip] = struct{}{}
+	if len(zipOrder) > 0 {
+		// 6a. Upsert unique zip codes into public.zipcodes.
+		uniqueZips := make(map[string]struct{}, len(zipOrder))
+		for _, k := range zipOrder {
+			uniqueZips[k.zip] = struct{}{}
 		}
 		zipcodeRows := make([]models.LiveZipcode, 0, len(uniqueZips))
 		for z := range uniqueZips {
@@ -306,12 +322,14 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		}
 		result.ZipsWritten = len(uniqueZips)
 
-		// 6b. Insert rebate↔zipcode links.
-		linkRows := make([]models.LiveRebateZipcode, 0, len(allZipEntries))
-		for _, e := range allZipEntries {
+		// 6b. Insert rebate_zipcodes — one row per (rebate, zip).
+		// stagingSourceId = highest-priority source (first in the sources slice).
+		linkRows := make([]models.LiveRebateZipcode, 0, len(zipOrder))
+		for _, k := range zipOrder {
+			e := zipMap[k]
 			link := models.LiveRebateZipcode{RebateID: e.rebateID, ZipcodeCode: e.zip}
-			if e.sourceID != "" {
-				link.StagingSourceID = ptrStr(e.sourceID)
+			if len(e.sources) > 0 && e.sources[0].stagingID != "" {
+				link.StagingSourceID = ptrStr(e.sources[0].stagingID)
 			}
 			linkRows = append(linkRows, link)
 		}
@@ -321,6 +339,29 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			return result, fmt.Errorf("promote: insert rebate_zipcodes: %w", err)
 		}
 		result.LinksWritten = len(linkRows)
+
+		// 6c. Insert rebate_zipcode_sources — one row per (rebate, zip, source).
+		// ON CONFLICT (rebateId, zipcodeCode, source) DO NOTHING — safe to re-run.
+		sourceRows := make([]models.LiveRebateZipcodeSource, 0, len(zipOrder)*2)
+		for _, k := range zipOrder {
+			e := zipMap[k]
+			for _, src := range e.sources {
+				row := models.LiveRebateZipcodeSource{
+					RebateID:    e.rebateID,
+					ZipcodeCode: e.zip,
+					Source:      src.name,
+				}
+				if src.stagingID != "" {
+					row.StagingSourceID = ptrStr(src.stagingID)
+				}
+				sourceRows = append(sourceRows, row)
+			}
+		}
+		if err := d.gorm.
+			Clauses(clause.OnConflict{DoNothing: true}).
+			CreateInBatches(sourceRows, 5000).Error; err != nil {
+			return result, fmt.Errorf("promote: insert rebate_zipcode_sources: %w", err)
+		}
 	}
 
 	// ── Phase 7: mark staging rows as promoted ────────────────────────────────
