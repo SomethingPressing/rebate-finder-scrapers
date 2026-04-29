@@ -20,6 +20,7 @@ import (
 
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
+	"github.com/incenva/rebate-scraper/models"
 )
 
 // ── US states list (loaded from data/us_states.json) ─────────────────────────
@@ -143,23 +144,27 @@ func main() {
 		fatalf("%v", err)
 	}
 
-	database, err := db.Connect(cfg.DatabaseURL, "error")
+	database, err := db.Connect(cfg.DatabaseURL, "error", cfg.ScraperDBSchema)
 	if err != nil {
 		fatalf("db connect: %v", err)
 	}
 	defer database.Close() //nolint:errcheck
 
+	// stg is the fully-qualified staging table name, e.g. "scraper.rebates_staging".
+	// It comes from SCRAPER_DB_SCHEMA (set by db.Connect via models.ScraperSchema).
+	stg := models.ScraperSchema + ".rebates_staging"
+
 	g := database.GORM()
 	report := Report{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 
 	// ── 1. Total ──────────────────────────────────────────────────────────────
-	g.Raw(`SELECT COUNT(*) FROM rebates_staging WHERE deleted_at IS NULL`).
+	g.Raw(`SELECT COUNT(*) FROM ` + stg + ` WHERE deleted_at IS NULL`).
 		Scan(&report.Total)
 
 	// ── 2. By promotion status ────────────────────────────────────────────────
 	g.Raw(`
 		SELECT stg_promotion_status AS status, COUNT(*) AS count
-		FROM   rebates_staging
+		FROM   ` + stg + `
 		WHERE  deleted_at IS NULL
 		GROUP  BY stg_promotion_status
 		ORDER  BY count DESC
@@ -177,7 +182,7 @@ func main() {
 				100.0 * COUNT(*) FILTER (WHERE stg_promotion_status = 'promoted')
 				/ NULLIF(COUNT(*), 0), 1
 			)                                                         AS pct_promoted
-		FROM   rebates_staging
+		FROM   ` + stg + `
 		WHERE  deleted_at IS NULL
 		GROUP  BY source
 		ORDER  BY total DESC
@@ -188,7 +193,7 @@ func main() {
 		SELECT
 			COALESCE(incentive_format, 'unknown') AS format,
 			COUNT(*) AS count
-		FROM   rebates_staging
+		FROM   ` + stg + `
 		WHERE  deleted_at IS NULL
 		GROUP  BY incentive_format
 		ORDER  BY count DESC
@@ -199,7 +204,7 @@ func main() {
 	var dbStates []dbStateRow
 	g.Raw(`
 		SELECT state, COUNT(*) AS count
-		FROM   rebates_staging
+		FROM   ` + stg + `
 		WHERE  deleted_at IS NULL AND state IS NOT NULL
 		GROUP  BY state
 	`).Scan(&dbStates)
@@ -231,7 +236,7 @@ func main() {
 			COUNT(*) FILTER (WHERE state IS NULL)                                              AS no_state,
 			COUNT(*) FILTER (WHERE program_url IS NULL AND application_url IS NULL)            AS no_url,
 			COUNT(*) FILTER (WHERE service_territory IS NULL)                                  AS no_service_area
-		FROM rebates_staging
+		FROM ` + stg + `
 		WHERE deleted_at IS NULL
 	`).Scan(&report.Quality)
 
@@ -242,7 +247,7 @@ func main() {
 			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS added,
 			COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours'
 			                   AND created_at <  NOW() - INTERVAL '24 hours') AS updated
-		FROM rebates_staging
+		FROM ` + stg + `
 		WHERE deleted_at IS NULL
 	`).Scan(&report.Last24h)
 
@@ -252,7 +257,7 @@ func main() {
 			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS added,
 			COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days'
 			                   AND created_at <  NOW() - INTERVAL '7 days') AS updated
-		FROM rebates_staging
+		FROM ` + stg + `
 		WHERE deleted_at IS NULL
 	`).Scan(&report.Last7d)
 

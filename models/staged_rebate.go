@@ -110,8 +110,10 @@ type StagedRebate struct {
 	ProgramHash string `gorm:"column:stg_program_hash"`
 }
 
-// TableName tells GORM to use rebates_staging instead of the default "staged_rebates".
-func (StagedRebate) TableName() string { return "rebates_staging" }
+// TableName tells GORM which table to use.  The schema prefix comes from
+// ScraperSchema (set at startup from SCRAPER_DB_SCHEMA env var, default "scraper")
+// so the table lives in the Go-owned schema and is invisible to Prisma.
+func (StagedRebate) TableName() string { return ScraperSchema + ".rebates_staging" }
 
 // FromIncentive converts an Incentive (scraper output) into a StagedRebate.
 func FromIncentive(inc Incentive) StagedRebate {

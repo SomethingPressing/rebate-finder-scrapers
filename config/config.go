@@ -60,6 +60,18 @@ type Config struct {
 	// Takes precedence over the --source CLI flag (env var wins if both are set).
 	Source string
 
+	// ScraperDBSchema is the PostgreSQL schema that holds all Go-owned tables
+	// (rebates_staging, pdf_scrape_raw).  Prisma only manages the public schema,
+	// so this schema is invisible to `prisma db push`.
+	// Env var: SCRAPER_DB_SCHEMA — default: "scraper".
+	ScraperDBSchema string
+
+	// PromoterSourcePriority is an ordered list of scraper names used by the
+	// promoter when merging rows from multiple sources for the same program.
+	// The first name has the highest priority for scalar field selection.
+	// Env var: PROMOTER_SOURCE_PRIORITY (comma-separated)
+	// Default: "rewiring_america,dsireusa,energy_star".
+	PromoterSourcePriority []string
 }
 
 // Load reads configuration from the environment.
@@ -88,8 +100,10 @@ func Load() (*Config, error) {
 		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		LogFormat:              getEnv("LOG_FORMAT", "json"),
-		RunOnce: getBoolEnv("RUN_ONCE", false),
-		Source:  getEnv("SOURCE", ""),
+		RunOnce:                getBoolEnv("RUN_ONCE", false),
+		Source:                 getEnv("SOURCE", ""),
+		ScraperDBSchema:        getEnv("SCRAPER_DB_SCHEMA", "scraper"),
+		PromoterSourcePriority: getCSVEnv("PROMOTER_SOURCE_PRIORITY", []string{"rewiring_america", "dsireusa", "energy_star"}),
 	}
 
 	return cfg, nil

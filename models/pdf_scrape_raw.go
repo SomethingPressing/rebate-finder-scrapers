@@ -38,5 +38,7 @@ type PDFScrapeRaw struct {
 	ScrapedAt time.Time `gorm:"column:scraped_at;not null"`
 }
 
-// TableName tells GORM to use pdf_scrape_raw instead of the default.
-func (PDFScrapeRaw) TableName() string { return "pdf_scrape_raw" }
+// TableName tells GORM which table to use.  The schema prefix comes from
+// ScraperSchema (set at startup from SCRAPER_DB_SCHEMA env var, default "scraper")
+// so the table lives in the Go-owned schema and is invisible to Prisma.
+func (PDFScrapeRaw) TableName() string { return ScraperSchema + ".pdf_scrape_raw" }

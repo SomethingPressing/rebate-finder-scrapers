@@ -59,7 +59,7 @@ func main() {
 	// ── Config ────────────────────────────────────────────────────────────────
 	cfg, _ := config.Load() // best-effort
 
-	logLevel, logFormat, dbURL, scraperVersion := "info", "json", "", "1.0"
+	logLevel, logFormat, dbURL, scraperVersion, scraperSchema := "info", "json", "", "1.0", "scraper"
 	if cfg != nil {
 		if cfg.LogLevel != "" {
 			logLevel = cfg.LogLevel
@@ -72,6 +72,9 @@ func main() {
 		}
 		if cfg.ScraperVersion != "" {
 			scraperVersion = cfg.ScraperVersion
+		}
+		if cfg.ScraperDBSchema != "" {
+			scraperSchema = cfg.ScraperDBSchema
 		}
 	}
 
@@ -90,7 +93,7 @@ func main() {
 	if dbURL == "" {
 		log.Fatal("pdf-scraper: DATABASE_URL is required — set it in scraper-service/.env or the environment")
 	}
-	database, err := db.Connect(dbURL, logLevel)
+	database, err := db.Connect(dbURL, logLevel, scraperSchema)
 	if err != nil {
 		log.Fatal("pdf-scraper: db connect failed", zap.Error(err))
 	}

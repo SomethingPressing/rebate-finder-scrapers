@@ -70,7 +70,7 @@ func main() {
 	)
 
 	// ── Database (GORM) ───────────────────────────────────────────────────────
-	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel)
+	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
 	if err != nil {
 		logger.Fatal("db connect failed", zap.Error(err))
 	}
