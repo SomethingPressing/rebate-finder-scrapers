@@ -23,8 +23,11 @@ type Config struct {
 	DSIREBaseURL string
 
 	// Rewiring America
-	RewiringAmericaAPIKey  string
-	RewiringAmericaBaseURL string
+	RewiringAmericaAPIKey     string
+	RewiringAmericaBaseURL    string
+	// RewiringAmericaConcurrency controls how many ZIP requests are in-flight at
+	// once.  Higher values finish faster but may trigger rate limiting.
+	RewiringAmericaConcurrency int
 
 	// Energy Star
 	EnergyStarAPIBaseURL string
@@ -75,8 +78,9 @@ func Load() (*Config, error) {
 		DatabaseURL:            getEnv("DATABASE_URL", ""),
 		ScraperInterval:        getEnv("SCRAPER_INTERVAL", "@every 6h"),
 		DSIREBaseURL:           getEnv("DSIREUSA_BASE_URL", "https://programs.dsireusa.org/api/v1/programs"),
-		RewiringAmericaAPIKey:  getEnv("REWIRING_AMERICA_API_KEY", ""),
-		RewiringAmericaBaseURL: getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
+		RewiringAmericaAPIKey:        getEnv("REWIRING_AMERICA_API_KEY", ""),
+		RewiringAmericaBaseURL:       getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
+		RewiringAmericaConcurrency:   getIntEnv("REWIRING_AMERICA_CONCURRENCY", 3),
 		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
 		PageDelay:              getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
 		MaxConcurrency:         getIntEnv("MAX_CONCURRENCY", 3),

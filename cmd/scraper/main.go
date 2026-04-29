@@ -111,6 +111,7 @@ func main() {
 		APIKey:         cfg.RewiringAmericaAPIKey,
 		ScraperVersion: cfg.ScraperVersion,
 		StateZIPs:      stateZIPs,
+		Concurrency:    cfg.RewiringAmericaConcurrency,
 		Logger:         logger,
 	})
 

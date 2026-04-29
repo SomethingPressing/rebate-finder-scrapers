@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/incenva/rebate-scraper/internal/zipdata"
@@ -140,7 +141,7 @@ var representativeZIPs = []string{
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
 // RewiringAmericaScraper queries the Rewiring America IRA calculator API for
-// each representative ZIP code and returns the deduplicated set of incentives.
+// every ZIP code in the US and returns the deduplicated set of incentives.
 //
 // API: https://api.rewiringamerica.org  (requires API key)
 type RewiringAmericaScraper struct {
@@ -150,9 +151,11 @@ type RewiringAmericaScraper struct {
 	Logger         *zap.Logger
 	HTTPClient     *http.Client
 	// StateZIPs is the US ZIP dataset (50 states + DC, no territories).
-	// When set, the scraper uses the most-populous ZIP per state — giving
-	// deterministic US-only coverage identical to DSIRE and Energy Star.
+	// All ZIPs are queried to capture every utility-territory program.
 	StateZIPs zipdata.StateZIPs
+	// Concurrency controls how many ZIP requests run in parallel.
+	// Configured via REWIRING_AMERICA_CONCURRENCY (default 3).
+	Concurrency int
 	// ZIPs overrides StateZIPs and the built-in list (useful for testing).
 	ZIPs []string
 }
