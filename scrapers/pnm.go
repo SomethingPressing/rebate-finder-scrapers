@@ -221,9 +221,19 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 
 	s.Logger.Info("pnm: scraping URLs", zap.Int("count", len(urls)))
 
-	// Step 2: visit each page and extract incentive data.
+	// Step 2: split PDF vs HTML URLs, then scrape each.
 	seen := make(map[string]bool)
 	var all []models.Incentive
+
+	pdfOpts := PDFIncentiveOpts{
+		Source:         pnmSourceName,
+		ScraperVersion: s.ScraperVersion,
+		UtilityCompany: pnmUtility,
+		State:          pnmState,
+		ZipCode:        pnmZIP,
+		Territory:      pnmTerritory,
+		DefaultApply:   pnmDefaultApply,
+	}
 
 	c := s.newCollector("www.pnm.com", "pnm.clearesult.com")
 
@@ -245,6 +255,19 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
+		}
+		if IsPDFURL(u) {
+			text, err := ExtractPDFPages(u, nil)
+			if err != nil {
+				s.Logger.Warn("pnm: pdf extract failed", zap.String("url", u), zap.Error(err))
+				continue
+			}
+			inc := ExtractIncentiveFromPDFText(text, u, pdfOpts)
+			if inc != nil && !seen[inc.ID] {
+				seen[inc.ID] = true
+				all = append(all, *inc)
+			}
+			continue
 		}
 		if err := c.Visit(u); err != nil {
 			s.Logger.Warn("pnm: visit failed",

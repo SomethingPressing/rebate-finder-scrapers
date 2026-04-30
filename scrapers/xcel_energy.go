@@ -352,6 +352,15 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	seen := make(map[string]bool)
 	var all []models.Incentive
 
+	pdfOpts := PDFIncentiveOpts{
+		Source:         xcelSourceName,
+		ScraperVersion: s.ScraperVersion,
+		UtilityCompany: xcelUtility,
+		DefaultApply:   xcelDefaultApply,
+		// State/ZipCode/Territory omitted — Xcel is multi-state; HTML path
+		// infers these from page content.  For PDFs we leave them blank.
+	}
+
 	c := s.newCollector("www.xcelenergy.com")
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
@@ -372,6 +381,19 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
+		}
+		if IsPDFURL(u) {
+			text, err := ExtractPDFPages(u, nil)
+			if err != nil {
+				s.Logger.Warn("xcel_energy: pdf extract failed", zap.String("url", u), zap.Error(err))
+				continue
+			}
+			inc := ExtractIncentiveFromPDFText(text, u, pdfOpts)
+			if inc != nil && !seen[inc.ID] {
+				seen[inc.ID] = true
+				all = append(all, *inc)
+			}
+			continue
 		}
 		if err := c.Visit(u); err != nil {
 			s.Logger.Warn("xcel_energy: visit failed",

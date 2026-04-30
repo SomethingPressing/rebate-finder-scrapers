@@ -2,11 +2,16 @@
 //
 // All helpers are derived directly from the field extraction rules in the
 // SmythOS rf-scraper-pnm-srp-coned-xcel-peninsul LLM prompt schema.
+//
+// Also contains ExtractIncentiveFromPDFText — the shared PDF extraction path
+// mirroring the SmythOS scraper agent's is_pdf_url → LLM Attachment branch.
 package scrapers
 
 import (
 	"regexp"
 	"strings"
+
+	"github.com/incenva/rebate-scraper/models"
 )
 
 // ── Regex patterns ────────────────────────────────────────────────────────────
@@ -222,4 +227,162 @@ func inferCategories(text string) []string {
 		cats = []string{"Energy Efficiency"}
 	}
 	return cats
+}
+
+// ── PDF extraction path ───────────────────────────────────────────────────────
+//
+// ExtractIncentiveFromPDFText mirrors the SmythOS scraper agent's
+// is_pdf_url → LLM Attachment branch.  Instead of passing the PDF binary to
+// an LLM, we extract plain text with pdf_extractor.go and apply the same
+// deterministic helpers used for HTML pages.
+//
+// Parameters match the per-scraper defaults (source, utility, territory, etc.)
+// so each utility scraper can call this with its own constants.
+
+// PDFIncentiveOpts carries the per-source defaults needed to populate fixed fields.
+type PDFIncentiveOpts struct {
+	Source         string
+	ScraperVersion string
+	UtilityCompany string
+	State          string // 2-letter code, "" for multi-state
+	ZipCode        string // representative ZIP, "" if unknown
+	Territory      string // service territory label
+	DefaultApply   string // fallback application_process text
+}
+
+// ExtractIncentiveFromPDFText creates a models.Incentive from raw PDF text
+// extracted from pageURL.  Returns nil if the text doesn't look like a
+// meaningful incentive program (e.g. no title found, error/404 content).
+func ExtractIncentiveFromPDFText(text, pageURL string, opts PDFIncentiveOpts) *models.Incentive {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	// ── Program name ─────────────────────────────────────────────────────────
+	// Try the first non-blank line that is long enough to be a title.
+	programName := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) >= 5 && len(line) <= 200 {
+			programName = line
+			break
+		}
+	}
+	// Fall back to filename extracted from URL.
+	if programName == "" {
+		parts := strings.Split(pageURL, "/")
+		if len(parts) > 0 {
+			last := parts[len(parts)-1]
+			last = strings.TrimSuffix(strings.ToLower(last), ".pdf")
+			last = strings.NewReplacer("-", " ", "_", " ").Replace(last)
+			programName = strings.Title(strings.TrimSpace(last)) //nolint:staticcheck
+		}
+	}
+	if programName == "" || len(programName) < 5 {
+		return nil
+	}
+
+	// Skip error pages.
+	titleLower := strings.ToLower(programName)
+	for _, p := range []string{"page not found", "404", "error", "access denied"} {
+		if strings.Contains(titleLower, p) {
+			return nil
+		}
+	}
+
+	// ── Description ──────────────────────────────────────────────────────────
+	// First paragraph that is longer than 40 characters.
+	description := ""
+	for _, para := range strings.Split(text, "\n") {
+		para = strings.TrimSpace(para)
+		if len(para) > 40 {
+			description = para
+			break
+		}
+	}
+	if description == "" {
+		description = programName
+	}
+	if len(description) > 500 {
+		description = description[:497] + "..."
+	}
+
+	// ── Amount ───────────────────────────────────────────────────────────────
+	format, amount := ParseAmount(text)
+	if format == "" {
+		format = "narrative"
+	}
+
+	// ── Contact ───────────────────────────────────────────────────────────────
+	contactPhone := extractPhone(text)
+	contactEmail := extractEmail(text)
+
+	// ── Boolean / structured fields ──────────────────────────────────────────
+	contractorRequired := extractContractorRequired(text)
+	energyAuditRequired := extractEnergyAuditRequired(text)
+	customerType := extractCustomerType(pageURL + " " + programName)
+	startDate := extractStartDate(text)
+	endDate := extractEndDate(text)
+
+	// ── Categories ───────────────────────────────────────────────────────────
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(text[:min(500, len(text))]))
+
+	// ── Build incentive ───────────────────────────────────────────────────────
+	id := models.DeterministicID(opts.Source, pageURL)
+
+	inc := models.NewIncentive(opts.Source, opts.ScraperVersion)
+	inc.ID = id
+	inc.ProgramName = programName
+	inc.UtilityCompany = opts.UtilityCompany
+	inc.IncentiveDescription = models.PtrString(description)
+	inc.IncentiveFormat = models.PtrString(format)
+	inc.ApplicationProcess = models.PtrString(opts.DefaultApply)
+	inc.ProgramURL = models.PtrString(pageURL)
+	inc.AvailableNationwide = models.PtrBool(false)
+	inc.CategoryTag = categories
+	inc.ProgramHash = models.ComputeProgramHash(programName, opts.UtilityCompany)
+
+	if opts.State != "" {
+		inc.State = models.PtrString(opts.State)
+	}
+	if opts.ZipCode != "" {
+		inc.ZipCode = models.PtrString(opts.ZipCode)
+	}
+	if opts.Territory != "" {
+		inc.ServiceTerritory = models.PtrString(opts.Territory)
+	}
+	if amount != nil {
+		inc.IncentiveAmount = amount
+	}
+	if contactPhone != "" {
+		inc.ContactPhone = models.PtrString(contactPhone)
+	}
+	if contactEmail != "" {
+		inc.ContactEmail = models.PtrString(contactEmail)
+	}
+	if contractorRequired != nil {
+		inc.ContractorRequired = contractorRequired
+	}
+	if energyAuditRequired != nil {
+		inc.EnergyAuditRequired = energyAuditRequired
+	}
+	if customerType != "" {
+		inc.CustomerType = models.PtrString(customerType)
+	}
+	if startDate != "" {
+		inc.StartDate = models.PtrString(startDate)
+	}
+	if endDate != "" {
+		inc.EndDate = models.PtrString(endDate)
+	}
+
+	return &inc
+}
+
+// min returns the smaller of a and b.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

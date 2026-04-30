@@ -2,7 +2,7 @@
 
 **Source file:** `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth`  
 **Scraper source file:** `rf-scraper-pnm-srp-coned-xcel-peninsul-mobyqg49ph.smyth`  
-**Status:** ✅ Complete — 95% (5/5 scrapers implemented; staging verification pending)  
+**Status:** ✅ Complete — 98% (5/5 scrapers + PDF branch implemented; staging verification pending)  
 **Estimated Complexity:** Large
 
 ---
@@ -46,13 +46,14 @@ For each utility:
      └─ Path-depth check (hub page detection via MinPathSegments)
      └─ Inclusion check (must match ≥1 keyword)
 
-  3. Page Scrape (Colly)
-     └─ Visit each candidate URL
-     └─ Extract: program name, description, amount, apply URL, etc.
-     └─ Boolean fields via html_helpers: contractor_required, energy_audit_required,
-        customer_type, start_date, end_date
-     └─ Categories via inferCategories(url + title)
-     └─ Build models.Incentive
+  3. Page Scrape
+     ├─ PDF branch (IsPDFURL): ExtractPDFPages → ExtractIncentiveFromPDFText
+     └─ HTML branch (Colly): Visit each candidate URL
+        └─ Extract: program name, description, amount, apply URL, etc.
+        └─ Boolean fields via html_helpers: contractor_required, energy_audit_required,
+           customer_type, start_date, end_date
+        └─ Categories via inferCategories(url + title)
+        └─ Build models.Incentive
 
   4. Stage
      └─ db.UpsertToStaging(incentives)
@@ -352,15 +353,15 @@ reg.Register(&scrapers.PeninsulaCleanEnergyScraper{...})
 ## Implementation Checklist
 
 ### Shared Infrastructure
-- [x] `scrapers/sitemap.go` — `FetchSitemapURLs` (index + urlset, 3-level recursion, HTML error detection) + `FilterSitemapURLs(FilterConfig)` with exclusion-first logic + `pathDepth` hub detection
-- [x] `scrapers/html_helpers.go` — all extraction helpers (phone, email, categories, contractor_required, energy_audit_required, currently_active, low_income_eligible, customer_type, recipient, start_date, end_date)
+- [x] `scrapers/sitemap.go` — `FetchSitemapURLs` (index + urlset, 3-level recursion, HTML error detection) + `FilterSitemapURLs(FilterConfig)` with exclusion-first logic + `pathDepth` hub detection + `IsPDFURL`
+- [x] `scrapers/html_helpers.go` — all extraction helpers (phone, email, categories, contractor_required, energy_audit_required, currently_active, low_income_eligible, customer_type, recipient, start_date, end_date) + `PDFIncentiveOpts` + `ExtractIncentiveFromPDFText`
 
-### Utility Scrapers (3 implemented)
-- [x] `scrapers/con_edison.go` — proper `FilterConfig` with ConEd-specific exclusions/inclusions; all html_helpers fields populated
-- [x] `scrapers/pnm.go` — proper `FilterConfig`; clearesult.com domain allowed; all html_helpers fields populated
-- [x] `scrapers/xcel_energy.go` — correct sitemap URL `xcelenergy.com/staticfiles/...`; absolute corporate exclusions + pattern exclusions; `MinPathSegments=3`; state auto-detected from page text
-- [x] `scrapers/srp.go` — SRP scraper; srpFilterCfg with AZ-specific exclusions; all html_helpers fields populated
-- [x] `scrapers/peninsula_clean_energy.go` — PCE scraper; pceFilterCfg; iterates all 4 sitemaps; San Mateo County / Los Banos territory
+### Utility Scrapers (5/5 implemented — all with PDF branch)
+- [x] `scrapers/con_edison.go` — proper `FilterConfig` with ConEd-specific exclusions/inclusions; all html_helpers fields populated; PDF branch added
+- [x] `scrapers/pnm.go` — proper `FilterConfig`; clearesult.com domain allowed; all html_helpers fields populated; PDF branch added
+- [x] `scrapers/xcel_energy.go` — correct sitemap URL `xcelenergy.com/staticfiles/...`; absolute corporate exclusions + pattern exclusions; `MinPathSegments=3`; state auto-detected from page text; PDF branch added (state/ZIP left blank for multi-state)
+- [x] `scrapers/srp.go` — SRP scraper; srpFilterCfg with AZ-specific exclusions; all html_helpers fields populated; PDF branch added
+- [x] `scrapers/peninsula_clean_energy.go` — PCE scraper; pceFilterCfg; iterates all 4 sitemaps; San Mateo County / Los Banos territory; PDF branch added
 
 ### Existing Scraper Field Fixes
 - [x] `scrapers/rewiring_america.go` — ServiceTerritory, ProductCategory, Portfolio level, Segment fixed
@@ -388,6 +389,7 @@ reg.Register(&scrapers.PeninsulaCleanEnergyScraper{...})
 - SmythOS uses an LLM to classify sitemap URLs. Go implementation replaces this with a deterministic `FilterConfig` (exclusion-first keyword list). The decision framework is derived from the same rules the LLM prompts encode.
 - SmythOS visits listing pages then follows internal links to sub-program pages ("two-phase enrichment"). Go implementation currently only visits URLs discovered directly from the sitemap. See the **Two-Phase Enrichment** section below.
 - Xcel Energy: SmythOS used per-state subdomains (`co.my.xcelenergy.com`, `mn.my.xcelenergy.com`, etc.). Go implementation uses the single corporate sitemap (`xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml`) with state auto-detected from page text.
+- SmythOS PDF branch: `rf-scraper` agent's Classifier routes `is_pdf_url` output to a GenAILLM Attachment for extraction. Go implementation uses `IsPDFURL` + `ExtractPDFPages` + `ExtractIncentiveFromPDFText` — deterministic extraction instead of LLM, same field coverage.
 
 ---
 

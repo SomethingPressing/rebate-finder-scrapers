@@ -241,6 +241,16 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 	seen := make(map[string]bool)
 	var all []models.Incentive
 
+	pdfOpts := PDFIncentiveOpts{
+		Source:         pceSourceName,
+		ScraperVersion: s.ScraperVersion,
+		UtilityCompany: pceUtility,
+		State:          pceState,
+		ZipCode:        pceZIP,
+		Territory:      pceTerritory,
+		DefaultApply:   pceDefaultApply,
+	}
+
 	c := s.newCollector(pceDomain)
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
@@ -261,6 +271,19 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
+		}
+		if IsPDFURL(u) {
+			text, err := ExtractPDFPages(u, nil)
+			if err != nil {
+				s.Logger.Warn("peninsula_clean_energy: pdf extract failed", zap.String("url", u), zap.Error(err))
+				continue
+			}
+			inc := ExtractIncentiveFromPDFText(text, u, pdfOpts)
+			if inc != nil && !seen[inc.ID] {
+				seen[inc.ID] = true
+				all = append(all, *inc)
+			}
+			continue
 		}
 		if err := c.Visit(u); err != nil {
 			s.Logger.Warn("peninsula_clean_energy: visit failed",

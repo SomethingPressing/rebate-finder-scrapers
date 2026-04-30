@@ -110,13 +110,6 @@ func fetchSitemapURLsDepth(ctx context.Context, client *http.Client, u string, d
 	return out, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // ── URL filtering ─────────────────────────────────────────────────────────────
 
 // FilterConfig mirrors the two-pass filtering logic from the SmythOS crawler
@@ -184,6 +177,18 @@ func FilterSitemapURLs(urls []string, cfg FilterConfig) []string {
 }
 
 // pathDepth counts the number of non-empty path segments in a URL.
+// IsPDFURL returns true when the URL path ends with ".pdf" (case-insensitive).
+// Used by utility scrapers to route PDF links to the text-extraction path
+// instead of the Colly HTML-scraping path.
+func IsPDFURL(u string) bool {
+	lower := strings.ToLower(u)
+	// Strip query string before checking extension.
+	if i := strings.Index(lower, "?"); i >= 0 {
+		lower = lower[:i]
+	}
+	return strings.HasSuffix(lower, ".pdf")
+}
+
 // "https://example.com/a/b/c" → 3
 func pathDepth(u string) int {
 	// Strip scheme + host.

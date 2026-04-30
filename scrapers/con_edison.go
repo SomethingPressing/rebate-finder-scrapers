@@ -208,9 +208,19 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 
 	s.Logger.Info("con_edison: scraping URLs", zap.Int("count", len(urls)))
 
-	// Step 2: visit each page and extract incentive data.
+	// Step 2: split PDF vs HTML URLs, then scrape each.
 	seen := make(map[string]bool)
 	var all []models.Incentive
+
+	pdfOpts := PDFIncentiveOpts{
+		Source:         conEdisonSourceName,
+		ScraperVersion: s.ScraperVersion,
+		UtilityCompany: conEdisonUtility,
+		State:          conEdisonState,
+		ZipCode:        conEdisonZIP,
+		Territory:      conEdisonTerritory,
+		DefaultApply:   conEdisonDefaultApply,
+	}
 
 	c := s.newCollector("www.coned.com")
 
@@ -232,6 +242,19 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
+		}
+		if IsPDFURL(u) {
+			text, err := ExtractPDFPages(u, nil)
+			if err != nil {
+				s.Logger.Warn("con_edison: pdf extract failed", zap.String("url", u), zap.Error(err))
+				continue
+			}
+			inc := ExtractIncentiveFromPDFText(text, u, pdfOpts)
+			if inc != nil && !seen[inc.ID] {
+				seen[inc.ID] = true
+				all = append(all, *inc)
+			}
+			continue
 		}
 		if err := c.Visit(u); err != nil {
 			s.Logger.Warn("con_edison: visit failed",

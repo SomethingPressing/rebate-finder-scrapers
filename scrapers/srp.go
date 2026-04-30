@@ -224,6 +224,16 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	seen := make(map[string]bool)
 	var all []models.Incentive
 
+	pdfOpts := PDFIncentiveOpts{
+		Source:         srpSourceName,
+		ScraperVersion: s.ScraperVersion,
+		UtilityCompany: srpUtility,
+		State:          srpState,
+		ZipCode:        srpZIP,
+		Territory:      srpTerritory,
+		DefaultApply:   srpDefaultApply,
+	}
+
 	c := s.newCollector("www.srpnet.com")
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
@@ -244,6 +254,19 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
+		}
+		if IsPDFURL(u) {
+			text, err := ExtractPDFPages(u, nil)
+			if err != nil {
+				s.Logger.Warn("srp: pdf extract failed", zap.String("url", u), zap.Error(err))
+				continue
+			}
+			inc := ExtractIncentiveFromPDFText(text, u, pdfOpts)
+			if inc != nil && !seen[inc.ID] {
+				seen[inc.ID] = true
+				all = append(all, *inc)
+			}
+			continue
 		}
 		if err := c.Visit(u); err != nil {
 			s.Logger.Warn("srp: visit failed",
