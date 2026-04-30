@@ -2,7 +2,7 @@
 
 **Source file:** `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth`  
 **Scraper source file:** `rf-scraper-pnm-srp-coned-xcel-peninsul-mobyqg49ph.smyth`  
-**Status:** ✅ Con Edison, PNM, Xcel Energy fully implemented; SRP and Peninsula Clean Energy pending  
+**Status:** ✅ All five scrapers fully implemented (Con Edison, PNM, Xcel Energy, SRP, Peninsula Clean Energy)  
 **Estimated Complexity:** Large
 
 ---
@@ -26,8 +26,8 @@ The Go implementation replaces the LLM-based URL filter with a deterministic key
 | Con Edison | `con_edison` | NY | ✅ Complete | `https://www.coned.com/sitemap.xml` |
 | PNM | `pnm` | NM | ✅ Complete | `https://www.pnm.com/sitemap.xml` (index) |
 | Xcel Energy | `xcel_energy` | CO, MN, WI, ND, SD, NM | ✅ Complete | `https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml` |
-| SRP (Salt River Project) | `srp` | AZ | ⬜ Pending | `https://www.srpnet.com/sitemap.xml` |
-| Peninsula Clean Energy | `peninsula_clean_energy` | CA | ⬜ Pending | Three sitemaps (see below) |
+| SRP (Salt River Project) | `srp` | AZ | ✅ Complete | `https://www.srpnet.com/sitemap.xml` |
+| Peninsula Clean Energy | `peninsula_clean_energy` | CA | ✅ Complete | Four sitemaps (page, post, news-releases, articles) |
 
 ---
 
@@ -64,15 +64,17 @@ For each utility:
 
 ```
 scrapers/
-├── sitemap.go          ← FetchSitemapURLs + FilterSitemapURLs(FilterConfig)
-├── html_helpers.go     ← extractPhone, extractEmail, inferCategories (50+ keywords),
-│                          extractContractorRequired, extractEnergyAuditRequired,
-│                          extractCurrentlyActive, extractLowIncomeEligible,
-│                          extractCustomerType, extractRecipient,
-│                          extractStartDate, extractEndDate
-├── con_edison.go       ← Con Edison scraper (conEdisonFilterCfg)
-├── pnm.go              ← PNM scraper (pnmFilterCfg)
-└── xcel_energy.go      ← Xcel Energy scraper (xcelFilterCfg, MinPathSegments=3)
+├── sitemap.go                  ← FetchSitemapURLs + FilterSitemapURLs(FilterConfig)
+├── html_helpers.go             ← extractPhone, extractEmail, inferCategories (50+ keywords),
+│                                  extractContractorRequired, extractEnergyAuditRequired,
+│                                  extractCurrentlyActive, extractLowIncomeEligible,
+│                                  extractCustomerType, extractRecipient,
+│                                  extractStartDate, extractEndDate
+├── con_edison.go               ← Con Edison scraper (conEdisonFilterCfg)
+├── pnm.go                      ← PNM scraper (pnmFilterCfg)
+├── xcel_energy.go              ← Xcel Energy scraper (xcelFilterCfg, MinPathSegments=3)
+├── srp.go                      ← SRP scraper (srpFilterCfg)
+└── peninsula_clean_energy.go   ← PCE scraper (pceFilterCfg, 4 sitemaps)
 ```
 
 ---
@@ -206,32 +208,60 @@ All extraction functions used by the three utility scrapers:
 
 ---
 
-### 4. SRP ⬜ (Pending)
+### 4. SRP ✅
 
 **Source ID:** `srp`  
 **Utility Company:** `"Salt River Project"`  
 **State:** `AZ` | **ZIP:** `85001`  
-**Sitemap:** `https://www.srpnet.com/sitemap.xml`
+**Sitemap:** `https://www.srpnet.com/sitemap.xml`  
+**File:** `scrapers/srp.go`
 
-**LLM prompt key rules:**
-- Include: `/energy-savings-rebates/`, direct financial benefits, equipment programs
-- Exclude: `/doing-business/`, `/about-srp/`, `/water-`, `/account/`, educational/informational only pages, workshops/audits
+**URL Filter (`srpFilterCfg`):**
+
+*Exclusions (checked first):*
+- Business/trade: `/doing-business/`, `/trade-ally/`, `/trade-allies/`
+- Corporate: `/about/`, `/about-srp/`, `/careers/`, `/governance/`, `/leadership/`, `/news/`, `/investor/`
+- Account/auth: `/account/`, `/my-account/`, `/login/`
+- Contact/support: `/contact-us`, `/customer-service/`
+- Infrastructure: `/grid-water-management/`, `/water-`, `/irrigation/`, `/transmission/`, `/outages/`, `/tariff/`
+- Content patterns: `-workshop`, `-audit`, `-assessment`, `-faq`, `/savings-tools`, `/diy-`, `/how-to-`, `/tips/`, `/blog/`
+
+*Inclusions (must match at least one):*
+- `/rebates/`, `/rebate/`, `/incentive/`, `/energy-savings-rebates/`, `/financial-assistance`, `assistance`, `economy`, `discount`, `demand-response`, `heat-pump`, `thermostat`, `solar`, `battery`, `electric-vehicle`, `efficiency`, `upgrade`, `save`, `credit`, `saver`, `time-of-use`, `peak`
+
+**Fields extracted per page:** Same as Con Edison above.
 
 ---
 
-### 5. Peninsula Clean Energy ⬜ (Pending)
+### 5. Peninsula Clean Energy ✅
 
 **Source ID:** `peninsula_clean_energy`  
 **Utility Company:** `"Peninsula Clean Energy"`  
-**State:** `CA` | **Territory:** `"San Mateo County and Los Banos"`  
-**Sitemaps (3):**
+**State:** `CA` | **ZIP:** `94025` | **Territory:** `"San Mateo County and Los Banos"`  
+**Sitemaps (4):**
 ```
-https://www.peninsulacleanenergy.com/post-sitemap.xml
 https://www.peninsulacleanenergy.com/page-sitemap.xml
-https://www.peninsulacleanenergy.com/news-sitemap.xml
+https://www.peninsulacleanenergy.com/post-sitemap.xml
+https://www.peninsulacleanenergy.com/news-releases-sitemap.xml
+https://www.peninsulacleanenergy.com/articles-sitemap1.xml
 ```
+**File:** `scrapers/peninsula_clean_energy.go`
 
-**Key rule:** Blog/news URLs included only if page text contains dollar amounts or keywords "rebate"/"incentive"/"program".
+**URL Filter (`pceFilterCfg`):**
+
+*Exclusions (checked first):*
+- Corporate/governance: `/about-us/`, `/careers/`, `/board-of-directors/`, `/regulatory-filings/`, `/staff/`, `/leadership/`
+- Contact/generic: `/contact-us/`, `/faq/`, `/sitemap`, `/privacy`, `/terms`
+- Technical docs (non-program): `/case-studies/`, `/qualifications/`, `/design-guidance-`, `/installation-guidelines/`
+- Solar billing/NEM (informational only): `/solar-rates/`, `/solar-billing-plan/`, `/net-energy-metering/`
+- Non-English locale variants: `/es/`, `/zh-tw/`, `/zh/`, `/fl/`, `/tl/`
+- Procurement/events: `/procurement/`, `/rfp/`, `/events/`, `/press-releases/`
+
+*Inclusions (must match at least one):*
+- Primary hubs: `/rebates-offers/`, `/rebates-offers-business/`, `/home-upgrade-services/`, `/public-organization/`, `/multifamily/`, `/financing/`
+- Generic rebate keywords (for blog/news URLs): `rebate`, `incentive`, `discount`, `credit`, `savings`, `assistance`, `heat-pump`, `electrification`, `solar`, `battery`, `ev`, `electric-vehicle`, `efficiency`, `upgrade`
+
+**Note:** The `Scrape()` method iterates over all four sitemaps and aggregates URLs before filtering. Each sitemap is fetched independently; failures are logged and skipped.
 
 ---
 
@@ -302,8 +332,8 @@ Reviewed all 5 SmythOS agents vs. existing Go scrapers. Gaps and fixes:
 | Con Edison | 600ms | `CollyBase.Delay` |
 | PNM | 600ms | `CollyBase.Delay` |
 | Xcel Energy | 600ms | `CollyBase.Delay` |
-| SRP | ~1s | Pending implementation |
-| Peninsula Clean Energy | ~500ms | Pending implementation |
+| SRP | 600ms | `CollyBase.Delay` |
+| Peninsula Clean Energy | 600ms | `CollyBase.Delay` |
 
 ---
 
@@ -313,9 +343,8 @@ Reviewed all 5 SmythOS agents vs. existing Go scrapers. Gaps and fixes:
 reg.Register(&scrapers.ConEdisonScraper{...})
 reg.Register(&scrapers.PNMScraper{...})
 reg.Register(&scrapers.XcelEnergyScraper{...})
-// Pending:
-// reg.Register(&scrapers.SRPScraper{...})
-// reg.Register(&scrapers.PeninsulaCleanEnergyScraper{...})
+reg.Register(&scrapers.SRPScraper{...})
+reg.Register(&scrapers.PeninsulaCleanEnergyScraper{...})
 ```
 
 ---
@@ -330,18 +359,18 @@ reg.Register(&scrapers.XcelEnergyScraper{...})
 - [x] `scrapers/con_edison.go` — proper `FilterConfig` with ConEd-specific exclusions/inclusions; all html_helpers fields populated
 - [x] `scrapers/pnm.go` — proper `FilterConfig`; clearesult.com domain allowed; all html_helpers fields populated
 - [x] `scrapers/xcel_energy.go` — correct sitemap URL `xcelenergy.com/staticfiles/...`; absolute corporate exclusions + pattern exclusions; `MinPathSegments=3`; state auto-detected from page text
-- [ ] `scrapers/srp.go` — SRP scraper *(pending)*
-- [ ] `scrapers/peninsula_clean_energy.go` — PCE scraper *(pending)*
+- [x] `scrapers/srp.go` — SRP scraper; srpFilterCfg with AZ-specific exclusions; all html_helpers fields populated
+- [x] `scrapers/peninsula_clean_energy.go` — PCE scraper; pceFilterCfg; iterates all 4 sitemaps; San Mateo County / Los Banos territory
 
 ### Existing Scraper Field Fixes
 - [x] `scrapers/rewiring_america.go` — ServiceTerritory, ProductCategory, Portfolio level, Segment fixed
 - [x] `scrapers/dsireusa.go` — Published → Status("active"), ProgramHash added
 
 ### Tooling
-- [x] `cmd/scraper/main.go` — con_edison, pnm, xcel_energy registered
-- [x] `Makefile` — `scrape-coned`, `scrape-pnm`, `scrape-xcel` targets
-- [x] `package.json` — `run:con_edison`, `run:pnm`, `run:xcel_energy` scripts
-- [x] `scripts/run.mjs` — con_edison, pnm, xcel_energy whitelisted
+- [x] `cmd/scraper/main.go` — all five utility scrapers registered (con_edison, pnm, xcel_energy, srp, peninsula_clean_energy)
+- [x] `Makefile` — `scrape-coned`, `scrape-pnm`, `scrape-xcel`, `scrape-srp`, `scrape-pce` targets
+- [x] `package.json` — `run:con_edison`, `run:pnm`, `run:xcel_energy`, `run:srp`, `run:peninsula_clean_energy` scripts
+- [x] `scripts/run.mjs` — all five utility scrapers whitelisted
 - [x] `docs/scrapers.md` — field-by-field documentation for all scrapers
 
 ### Verification (pending first run)

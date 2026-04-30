@@ -43,7 +43,7 @@ import (
 func main() {
 	// ── CLI flags ─────────────────────────────────────────────────────────────
 	// --source can also be set via the SOURCE env var (env takes precedence).
-	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy)")
+	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -135,6 +135,16 @@ func main() {
 	})
 
 	reg.Register(&scrapers.XcelEnergyScraper{
+		ScraperVersion: cfg.ScraperVersion,
+		Logger:         logger,
+	})
+
+	reg.Register(&scrapers.SRPScraper{
+		ScraperVersion: cfg.ScraperVersion,
+		Logger:         logger,
+	})
+
+	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
 	})

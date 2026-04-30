@@ -16,6 +16,8 @@
     "run:con_edison": "node scripts/run.mjs con_edison",
     "run:pnm": "node scripts/run.mjs pnm",
     "run:xcel_energy": "node scripts/run.mjs xcel_energy",
+    "run:srp": "node scripts/run.mjs srp",
+    "run:peninsula_clean_energy": "node scripts/run.mjs peninsula_clean_energy",
     "pdf": "node scripts/run-pdf.mjs",
     "staging:stats": "node scripts/run-staging-stats.mjs",
     "scraper:promote": "node scripts/run-promoter.mjs",

@@ -27,13 +27,15 @@ const allowed = new Set([
   "con_edison",
   "pnm",
   "xcel_energy",
+  "srp",
+  "peninsula_clean_energy",
 ]);
 
 const sourceArg = process.argv[2] ?? "all";
 
 if (!allowed.has(sourceArg)) {
   console.error(
-    `Unknown scraper "${sourceArg}". Use: all | dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy`,
+    `Unknown scraper "${sourceArg}". Use: all | dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy`,
   );
   process.exit(1);
 }
