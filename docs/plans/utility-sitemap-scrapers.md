@@ -2,7 +2,7 @@
 
 **Source file:** `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth`  
 **Scraper source file:** `rf-scraper-pnm-srp-coned-xcel-peninsul-mobyqg49ph.smyth`  
-**Status:** ✅ All five scrapers fully implemented (Con Edison, PNM, Xcel Energy, SRP, Peninsula Clean Energy)  
+**Status:** ✅ Complete — 95% (5/5 scrapers implemented; staging verification pending)  
 **Estimated Complexity:** Large
 
 ---

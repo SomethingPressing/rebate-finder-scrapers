@@ -1,7 +1,11 @@
 # Implementation Plan: Utility Web Scraper (PNM, SRP, ConEd, Xcel, Peninsula Clean Energy)
 
 **Source file:** `rf-scraper-pnm-srp-coned-xcel-peninsul-mobyqg49ph.smyth`
-**Status:** Planning
+**Status:** ⚠️ SUPERSEDED — 0% (replaced by `utility-sitemap-scrapers.md`)
+
+> **This plan is superseded.** The unified `UtilityWebScraper` described here (a single scraper driving all 5 utilities via seed URLs + two-phase LLM-equivalent enrichment) was not implemented. Instead, each utility was implemented as a standalone scraper with XML sitemap discovery. See `docs/plans/utility-sitemap-scrapers.md` for the actual implementation.
+>
+> This file is kept as an archive of the original design intent and the SmythOS agent spec it documents.
 
 ---
 
@@ -395,23 +399,26 @@ reg.Register(scrapers.NewUtilityWebScraper(
 
 ## Implementation Checklist
 
-- [ ] `scrapers/utility_source_defaults.go` — defaults table + `DetectSource`
-- [ ] `scrapers/utility_web_scraper.go` — `UtilityWebScraper` implements `Scraper` interface
-- [ ] `scrapers/utility_extractor.go` — per-source selectors + amount regex + tier splitting
-- [ ] `scrapers/utility_enricher.go` — detail-page fetch + field merge
-- [ ] PDF detection + text extraction working
-- [ ] Source-specific defaults applied after extraction
-- [ ] `incentive_format` derived from amount patterns for all 5 formats
-- [ ] Tier splitting creates separate records with name suffixes
-- [ ] `program_url` vs `source_page` handled correctly
-- [ ] Required fields validated before staging (drop + log invalid records)
-- [ ] Xcel Energy multi-state detection
-- [ ] `DeterministicID` keyed on source + URL + program name
-- [ ] `config/config.go` — 4 new env vars
-- [ ] `.env.example` — seed URLs for all 5 utilities
-- [ ] `cmd/scraper/main.go` — scraper registered
-- [ ] Verified in `rebates_staging` for all 5 sources
-- [ ] `docs/scrapers.md` updated with utility web scraper entry
+> **Not implemented** — this architecture was superseded before any code was written. See `utility-sitemap-scrapers.md` for what was actually built.
+
+- [ ] `scrapers/utility_source_defaults.go` — defaults table + `DetectSource` *(not built)*
+- [ ] `scrapers/utility_web_scraper.go` — `UtilityWebScraper` implements `Scraper` interface *(not built)*
+- [ ] `scrapers/utility_extractor.go` — per-source selectors + amount regex + tier splitting *(not built)*
+- [ ] `scrapers/utility_enricher.go` — detail-page fetch + field merge *(not built)*
+- [ ] PDF detection + text extraction working *(not built)*
+- [ ] Source-specific defaults applied after extraction *(not built)*
+- [ ] `incentive_format` derived from amount patterns for all 5 formats *(not built)*
+- [ ] Tier splitting creates separate records with name suffixes *(not built)*
+- [ ] `program_url` vs `source_page` handled correctly *(not built)*
+- [ ] Required fields validated before staging *(not built)*
+- [ ] Xcel Energy multi-state detection *(superseded — implemented in `xcel_energy.go`)*
+- [ ] `DeterministicID` keyed on source + URL + program name *(superseded — implemented per-scraper)*
+- [ ] `config/config.go` — env vars *(not built)*
+- [ ] `.env.example` — seed URLs *(not built)*
+- [ ] `cmd/scraper/main.go` — scraper registered *(not built)*
+- [ ] Verified in `rebates_staging` for all 5 sources *(covered by per-utility scrapers)*
+
+**Completion: 0% — superseded, no implementation needed.**
 
 ---
 

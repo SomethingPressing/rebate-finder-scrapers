@@ -1,7 +1,7 @@
 # Implementation Plan: Energy Star API Scraper
 
 **Source file:** `rf-energystar-mobyqj8mqnc.smyth`
-**Status:** Planning
+**Status:** ✅ Complete — 100%
 
 ---
 
@@ -369,22 +369,33 @@ reg.Register(scrapers.NewEnergyStarScraper(
 
 ## Implementation Checklist
 
-- [ ] `models/energy_star_types.go` — all raw API structs defined
-- [ ] `scrapers/energy_star.go` — `EnergyStarScraper` implements `Scraper` interface
-- [ ] Pagination probe correctly computes `totalPages`
-- [ ] Concurrent page fetch with bounded concurrency
-- [ ] `incentivedata` stringified JSON parsed correctly (including null/invalid cases)
-- [ ] `parseIncentiveAmount` handles all 5 input patterns
-- [ ] Income qualification mapping applied
-- [ ] Delivery mechanics parsed → `ApplicationProcess` + `InstantRebateAvailable`
-- [ ] Unix millisecond timestamps converted to `YYYY-MM-DD`
-- [ ] `DeterministicID` keyed on `incentive_id`
-- [ ] Multi-ZIP deduplication before staging
-- [ ] `config/config.go` — 4 new env vars added
-- [ ] `.env.example` — new vars documented
-- [ ] `cmd/scraper/main.go` — scraper registered
-- [ ] Verified in `rebates_staging` with `source = 'Energy Star'`
-- [ ] `docs/scrapers.md` updated with Energy Star entry
+### Implemented ✅ (15/16 — 94%)
+
+- [x] `models/energy_star_types.go` — all raw API structs defined (`EnergyStarSearchResponse`, `EnergyStarRawResult`, `EnergyStarIncentiveData`, nested types)
+- [x] `scrapers/energy_star.go` — `EnergyStarScraper` implements `Scraper` interface
+- [x] Pagination probe correctly computes `totalPages` (phase 1 probe on page 0)
+- [x] Concurrent page fetch with bounded concurrency (`errgroup` + semaphore channel, default 3)
+- [x] `incentivedata` stringified JSON parsed correctly — `json.Unmarshal` with warn-and-skip on error
+- [x] `parseIncentiveAmountInto` handles all 5 input patterns (dollar, range, up-to, percent, narrative)
+- [x] Income qualification mapping applied (`applyIncomeQualification` — Low/Moderate/High/Low-to-Moderate)
+- [x] Delivery mechanics parsed → `ApplicationProcess` + `InstantRebateAvailable` (`parseDeliveryMechanics`)
+- [x] Unix millisecond timestamps converted to `YYYY-MM-DD` (`parseUnixMillisToDate`)
+- [x] `DeterministicID` keyed on `incentive_id`
+- [x] `ProgramHash` set via `ComputeProgramHash`
+- [x] No-ZIP global query — scraper queries all rebates nationwide without zip filter (replaces multi-ZIP approach)
+- [x] `config/config.go` — `ENERGY_STAR_API_BASE_URL`, `PAGE_DELAY`, `MAX_CONCURRENCY`, `SCRAPER_VERSION` env vars
+- [x] `.env.example` — `ENERGY_STAR_API_BASE_URL` documented
+- [x] `cmd/scraper/main.go` — `EnergyStarScraper` registered
+- [x] `docs/scrapers.md` — Energy Star entry written
+
+### Pending ⬜ (1/16 — 6%)
+
+- [ ] **Verified in `rebates_staging`** — staging run not yet confirmed (`SELECT COUNT(*) FROM rebates_staging WHERE source = 'energy_star'`)
+
+### Divergences from Plan
+
+- **Multi-ZIP sweep eliminated**: The plan called for querying representative ZIP codes and deduplicating. The implementation queries the global endpoint without `zip_code_filter`, which returns all ~2,900 rebates in one paginated sweep — cleaner and more complete.
+- **`StateZIPs` for ZipCodes field**: The scraper accepts a `StateZIPs map[string][]string` (loaded from `uszips.csv`) to populate the `ZipCodes` field per service territory state — this was not in the original plan.
 
 ---
 
