@@ -33,17 +33,17 @@ import (
 //	  "authority":       "ny-nyserda",       // key into top-level authorities map
 //	  "program":         "Appliance Upgrade Program",
 //	  "program_url":     "https://...",
-//	  "items":           ["heat_pump_clothes_dryer"],   // product-type strings
+//	  "more_info_url":   "https://...",
+//	  "items":           ["heat_pump_clothes_dryer"],
 //	  "amount":          { "type": "percent", "number": 0.5, "maximum": 840 },
 //	  "owner_status":    ["homeowner", "renter"],
-//	  "start_date":      "2024-11-26",        // optional
-//	  "end_date":        "2025-12-31",        // optional
+//	  "start_date":      "2024-11-26",
+//	  "end_date":        "2025-12-31",
 //	  "short_description": "..."
 //	}
 
 // raCalculatorResponse is the top-level response from the calculator endpoint.
 type raCalculatorResponse struct {
-	// Authorities maps authority key → authority info.
 	Authorities map[string]raAuthority `json:"authorities"`
 	Incentives  []raIncentive          `json:"incentives"`
 }
@@ -56,9 +56,10 @@ type raAuthority struct {
 
 // raAmount describes the incentive value.
 type raAmount struct {
-	Type    string  `json:"type"`    // "percent" | "dollar_amount" | "dollars_per_unit"
-	Number  float64 `json:"number"`
-	Maximum float64 `json:"maximum"` // 0 = no cap
+	Type           string   `json:"type"`           // "percent" | "dollar_amount" | "dollars_per_unit"
+	Number         float64  `json:"number"`
+	Maximum        float64  `json:"maximum"`        // 0 = no cap
+	Representative *float64 `json:"representative"` // typical/minimum value when != maximum
 }
 
 // raIncentive is one incentive row from the calculator response.
@@ -68,7 +69,8 @@ type raIncentive struct {
 	AuthorityKey     string   `json:"authority"`      // key into top-level authorities map
 	Program          string   `json:"program"`
 	ProgramURL       string   `json:"program_url"`
-	Items            []string `json:"items"`    // product-type strings, e.g. "heat_pump_water_heater"
+	MoreInfoURL      string   `json:"more_info_url"`
+	Items            []string `json:"items"`
 	Amount           raAmount `json:"amount"`
 	OwnerStatus      []string `json:"owner_status"`
 	StartDate        string   `json:"start_date"`
@@ -76,12 +78,23 @@ type raIncentive struct {
 	ShortDescription string   `json:"short_description"`
 }
 
+// raSweepProfile is one (income, owner_status) combination to query per ZIP.
+type raSweepProfile struct {
+	HouseholdIncome int
+	OwnerStatus     string // "homeowner" | "renter"
+}
+
+// defaultSweepProfiles queries three profiles per ZIP to capture:
+//   - low-income programs (income=30000, homeowner)
+//   - general programs    (income=80000, homeowner)
+//   - renter programs     (income=80000, renter)
+var defaultSweepProfiles = []raSweepProfile{
+	{HouseholdIncome: 30000, OwnerStatus: "homeowner"},
+	{HouseholdIncome: 80000, OwnerStatus: "homeowner"},
+	{HouseholdIncome: 80000, OwnerStatus: "renter"},
+}
+
 // ── Representative ZIP codes ──────────────────────────────────────────────────
-//
-// The Rewiring America API is ZIP-based.  To get broad national coverage we
-// sample one ZIP per state (state capital or largest city).  A full production
-// implementation would iterate every ZIP, but this balanced set avoids rate
-// limits while still discovering most unique federal and state programs.
 
 var representativeZIPs = []string{
 	"10001", // New York, NY
@@ -151,13 +164,15 @@ type RewiringAmericaScraper struct {
 	Logger         *zap.Logger
 	HTTPClient     *http.Client
 	// StateZIPs is the US ZIP dataset (50 states + DC, no territories).
-	// All ZIPs are queried to capture every utility-territory program.
 	StateZIPs zipdata.StateZIPs
 	// Concurrency controls how many ZIP requests run in parallel.
 	// Configured via REWIRING_AMERICA_CONCURRENCY (default 3).
 	Concurrency int
 	// ZIPs overrides StateZIPs and the built-in list (useful for testing).
 	ZIPs []string
+	// SweepProfiles is the list of (income, owner_status) pairs to query per ZIP.
+	// Defaults to defaultSweepProfiles if empty.
+	SweepProfiles []raSweepProfile
 }
 
 // Name implements Scraper.
@@ -166,6 +181,8 @@ func (s *RewiringAmericaScraper) Name() string { return "rewiring_america" }
 // Scrape implements Scraper.
 // All ZIPs from uszips.csv are queried concurrently (REWIRING_AMERICA_CONCURRENCY,
 // default 3) to capture every utility-territory program across the US.
+// Each ZIP is queried with multiple income/owner_status profiles to capture
+// income-restricted and renter-specific programs.
 func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	if s.APIKey == "" {
 		s.Logger.Warn("rewiring_america: REWIRING_AMERICA_API_KEY not set — skipping")
@@ -174,16 +191,21 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 
 	// ZIP selection priority:
 	//   1. s.ZIPs      — explicit override (tests / CLI)
-	//   2. s.StateZIPs — all US ZIPs from uszips.csv (Sample n=0 = no limit)
-	//   3. representativeZIPs — built-in fallback if uszips.csv wasn't loaded
+	//   2. s.StateZIPs — all US ZIPs from uszips.csv
+	//   3. representativeZIPs — built-in fallback
 	var zips []string
 	switch {
 	case len(s.ZIPs) > 0:
 		zips = s.ZIPs
 	case len(s.StateZIPs) > 0:
-		zips = zipdata.Sample(s.StateZIPs, 0) // 0 = all ZIPs, no limit
+		zips = zipdata.Sample(s.StateZIPs, 0)
 	default:
 		zips = representativeZIPs
+	}
+
+	profiles := s.SweepProfiles
+	if len(profiles) == 0 {
+		profiles = defaultSweepProfiles
 	}
 
 	concurrency := s.Concurrency
@@ -191,26 +213,41 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 		concurrency = 3
 	}
 
+	// Build the full work queue: (zip, profile) pairs.
+	type task struct {
+		zip     string
+		profile raSweepProfile
+	}
+	var tasks []task
+	for _, z := range zips {
+		for _, p := range profiles {
+			tasks = append(tasks, task{zip: z, profile: p})
+		}
+	}
+	nTask := len(tasks)
 	nZip := len(zips)
+
 	s.Logger.Info("rewiring_america scrape starting",
 		zap.Int("zip_count", nZip),
+		zap.Int("profiles_per_zip", len(profiles)),
+		zap.Int("total_requests", nTask),
 		zap.Int("concurrency", concurrency),
 	)
 
 	client := s.httpClient()
 
-	// Worker pool — feed ZIPs through a channel, collect results.
 	type result struct {
 		zip        string
+		profile    raSweepProfile
 		incentives []models.Incentive
 		err        error
 	}
 
-	zipCh := make(chan string, nZip)
-	for _, z := range zips {
-		zipCh <- z
+	taskCh := make(chan task, nTask)
+	for _, t := range tasks {
+		taskCh <- t
 	}
-	close(zipCh)
+	close(taskCh)
 
 	resultCh := make(chan result, concurrency*2)
 
@@ -219,23 +256,22 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for zip := range zipCh {
+			for t := range taskCh {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
-				resp, err := s.fetchZIP(ctx, client, zip)
+				resp, err := s.fetchZIP(ctx, client, t.zip, t.profile)
 				if err != nil {
-					resultCh <- result{zip: zip, err: err}
+					resultCh <- result{zip: t.zip, profile: t.profile, err: err}
 					continue
 				}
-				resultCh <- result{zip: zip, incentives: s.toIncentives(resp, zip)}
+				resultCh <- result{zip: t.zip, profile: t.profile, incentives: s.toIncentives(resp, t.zip)}
 			}
 		}()
 	}
 
-	// Close resultCh once all workers are done.
 	go func() {
 		wg.Wait()
 		close(resultCh)
@@ -253,25 +289,25 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 			errors++
 			s.Logger.Warn("rewiring_america zip error",
 				zap.String("zip", r.zip),
+				zap.String("owner_status", r.profile.OwnerStatus),
+				zap.Int("income", r.profile.HouseholdIncome),
 				zap.Int("completed", done),
-				zap.Int("total", nZip),
+				zap.Int("total", nTask),
 				zap.Error(r.err),
 			)
 			continue
 		}
-		newThisZip := 0
 		for _, inc := range r.incentives {
 			if !seen[inc.ID] {
 				seen[inc.ID] = true
 				all = append(all, inc)
-				newThisZip++
 			}
 		}
-		if done%500 == 0 || done == nZip {
-			s.Logger.Info("rewiring_america zip progress",
+		if done%500 == 0 || done == nTask {
+			s.Logger.Info("rewiring_america progress",
 				zap.Int("completed", done),
-				zap.Int("total", nZip),
-				zap.Int("unique_incentives_total", len(all)),
+				zap.Int("total", nTask),
+				zap.Int("unique_incentives", len(all)),
 				zap.Int("errors", errors),
 			)
 		}
@@ -280,6 +316,7 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 	s.Logger.Info("rewiring_america scrape complete",
 		zap.Int("unique_incentives", len(all)),
 		zap.Int("zips_queried", nZip),
+		zap.Int("total_requests", nTask),
 		zap.Int("errors", errors),
 	)
 
@@ -290,11 +327,12 @@ func (s *RewiringAmericaScraper) fetchZIP(
 	ctx context.Context,
 	client *http.Client,
 	zip string,
+	profile raSweepProfile,
 ) (*raCalculatorResponse, error) {
 	baseURL := strings.TrimRight(s.BaseURL, "/")
 	u := fmt.Sprintf(
-		"%s?zip=%s&owner_status=homeowner&tax_filing=joint&household_income=80000&household_size=4&utility=",
-		baseURL, zip,
+		"%s?zip=%s&owner_status=%s&tax_filing=joint&household_income=%d&household_size=4&utility=",
+		baseURL, zip, profile.OwnerStatus, profile.HouseholdIncome,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -327,9 +365,9 @@ func (s *RewiringAmericaScraper) fetchZIP(
 }
 
 // toIncentives converts a raw calculator response into our canonical Incentive
-// model.  Each raIncentive produces exactly one Incentive; the stable ID is
+// model. Each raIncentive produces exactly one Incentive; the stable ID is
 // derived from authority key + program name + first item type so identical
-// programs discovered via different ZIPs collapse to the same record.
+// programs discovered via different ZIPs or profiles collapse to the same record.
 func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip string) []models.Incentive {
 	if result == nil {
 		return nil
@@ -356,61 +394,94 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		inc := models.NewIncentive(s.Name(), s.ScraperVersion)
 		inc.ID = id
 
-		// Program identity
+		// ── Program identity ──────────────────────────────────────────────
 		inc.ProgramName = fmt.Sprintf("%s — %s", authorityName, item.Program)
 		inc.UtilityCompany = authorityName
 		inc.Administrator = models.PtrString(authorityName)
 
-		// Description
+		// ── Description ──────────────────────────────────────────────────
 		if item.ShortDescription != "" {
 			inc.IncentiveDescription = models.PtrString(item.ShortDescription)
 		}
 
-		// Amount
+		// ── Amount ───────────────────────────────────────────────────────
+		// representative (when present) = typical/minimum value; number = maximum.
 		switch item.Amount.Type {
 		case "percent":
 			inc.IncentiveFormat = models.PtrString("percent")
-			inc.PercentValue = models.PtrFloat(item.Amount.Number * 100) // API sends 0–1
-		case "dollar_amount", "dollars_per_unit":
+			// API sends 0–1 fraction; multiply by 100 for percentage display.
+			pct := item.Amount.Number * 100
+			if pct > 1 {
+				// Some API responses send 0–100 directly; don't double-multiply.
+				pct = item.Amount.Number
+			}
+			inc.PercentValue = models.PtrFloat(pct)
+			if item.Amount.Maximum > 0 {
+				inc.MaximumAmount = models.PtrFloat(item.Amount.Maximum)
+			}
+		case "dollar_amount":
 			inc.IncentiveFormat = models.PtrString("dollar_amount")
-			inc.IncentiveAmount = models.PtrFloat(item.Amount.Number)
+			if item.Amount.Representative != nil && *item.Amount.Representative > 0 {
+				// representative = typical value, number = cap
+				inc.IncentiveAmount = item.Amount.Representative
+				inc.MaximumAmount = models.PtrFloat(item.Amount.Number)
+			} else {
+				inc.IncentiveAmount = models.PtrFloat(item.Amount.Number)
+				if item.Amount.Maximum > 0 {
+					inc.MaximumAmount = models.PtrFloat(item.Amount.Maximum)
+				}
+			}
+		case "dollars_per_unit":
+			inc.IncentiveFormat = models.PtrString("per_unit")
+			inc.PerUnitAmount = models.PtrFloat(item.Amount.Number)
+			inc.UnitType = models.PtrString("unit")
 		default:
 			if item.Amount.Number > 0 {
 				inc.IncentiveFormat = models.PtrString("dollar_amount")
 				inc.IncentiveAmount = models.PtrFloat(item.Amount.Number)
+			} else {
+				inc.IncentiveFormat = models.PtrString("narrative")
 			}
 		}
-		if item.Amount.Maximum > 0 {
-			inc.MaximumAmount = models.PtrFloat(item.Amount.Maximum)
-		}
 
-		// Dates
+		// ── Dates (normalized to YYYY-MM-DD) ─────────────────────────────
 		if item.StartDate != "" {
-			inc.StartDate = models.PtrString(item.StartDate)
+			inc.StartDate = models.PtrString(normalizeRADate(item.StartDate))
 		}
 		if item.EndDate != "" {
-			inc.EndDate = models.PtrString(item.EndDate)
+			inc.EndDate = models.PtrString(normalizeRADate(item.EndDate))
 		}
 
-		// URL
+		// ── Currently active ─────────────────────────────────────────────
+		// Programs returned by the API are active by definition; mark them
+		// "active" unless they have a past end date.
+		if raIsCurrentlyActive(inc.StartDate, inc.EndDate) {
+			inc.Status = "active"
+		}
+
+		// ── URLs ─────────────────────────────────────────────────────────
 		if item.ProgramURL != "" {
 			inc.ProgramURL = models.PtrString(item.ProgramURL)
 			inc.ApplicationURL = models.PtrString(item.ProgramURL)
+		} else if item.MoreInfoURL != "" {
+			inc.ProgramURL = models.PtrString(item.MoreInfoURL)
+			inc.ApplicationURL = models.PtrString(item.MoreInfoURL)
+		}
+		// MoreInfoURL stored as additional context in ApplicationProcess prefix
+		// when it differs from ProgramURL.
+		if item.MoreInfoURL != "" && item.MoreInfoURL != item.ProgramURL {
+			inc.ApplicationURL = models.PtrString(item.MoreInfoURL)
 		}
 
-		// Geography — federal incentives are available nationwide
-		available := item.AuthorityType == "federal"
-		inc.AvailableNationwide = models.PtrBool(available)
+		// ── Application process ───────────────────────────────────────────
+		appProcess := raGenerateApplicationProcess(item.PaymentMethods)
+		inc.ApplicationProcess = models.PtrString(appProcess)
 
-		// ZIP — attach the ZIP that discovered this incentive so the promoter
-		// can link it to a geography even if it's a state/utility program.
+		// ── Geography ────────────────────────────────────────────────────
+		inc.AvailableNationwide = models.PtrBool(item.AuthorityType == "federal")
 		inc.ZipCode = models.PtrString(zip)
 
-		// Service territory — derived from authorityType (schema field mapping).
-		// federal  → "Nationwide"
-		// state    → "[Authority Name] Statewide"
-		// utility  → "[Authority Name] Service Area"
-		// city/county/other → "[Authority Name] Service Area"
+		// Service territory
 		switch item.AuthorityType {
 		case "federal":
 			inc.ServiceTerritory = models.PtrString("Nationwide")
@@ -420,7 +491,7 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 			inc.ServiceTerritory = models.PtrString(authorityName + " Service Area")
 		}
 
-		// Program level (stored in Portfolio so it can be queried).
+		// ── Program level (Portfolio) ─────────────────────────────────────
 		switch item.AuthorityType {
 		case "federal":
 			inc.Portfolio = []string{"Federal"}
@@ -430,26 +501,34 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 			inc.Portfolio = []string{"Utility"}
 		case "city", "county":
 			inc.Portfolio = []string{"Local"}
+		default:
+			if len(item.PaymentMethods) > 0 {
+				inc.Portfolio = item.PaymentMethods
+			}
 		}
 
-		// Categories from product-type strings.
+		// ── Payment methods → CustomerType ───────────────────────────────
+		// There is no ProgramType field in models.Incentive; store the
+		// mapped payment-method label in CustomerType as a type indicator.
+		if pmStr := raMapPaymentMethods(item.PaymentMethods); pmStr != "" {
+			inc.CustomerType = models.PtrString(pmStr)
+		}
+
+		// ── Items → categories + ProductCategory ─────────────────────────
 		if len(item.Items) > 0 {
 			cats := make([]string, 0, len(item.Items))
 			for _, it := range item.Items {
-				cats = append(cats, raHuman(it))
+				cats = append(cats, raItemHuman(it))
 			}
 			inc.CategoryTag = cats
-			// Derive product_category from the first item (most specific).
 			inc.ProductCategory = models.PtrString(raProductCategory(item.Items[0]))
 		}
 
-		// Owner status → segment (homeowner, renter, etc.).
+		// ── Owner status → Segment ────────────────────────────────────────
 		inc.Segment = item.OwnerStatus
 
-		// Payment methods — stored in Portfolio only if Portfolio not already set.
-		if len(inc.Portfolio) == 0 {
-			inc.Portfolio = item.PaymentMethods
-		}
+		// ── Program hash ──────────────────────────────────────────────────
+		inc.ProgramHash = models.ComputeProgramHash(inc.ProgramName, inc.UtilityCompany)
 
 		out = append(out, inc)
 	}
@@ -464,7 +543,157 @@ func (s *RewiringAmericaScraper) httpClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
 }
 
+// ── Helper functions ──────────────────────────────────────────────────────────
+
+// normalizeRADate normalizes Rewiring America's flexible date formats to YYYY-MM-DD.
+//
+//	"2023"       → "2023-01-01"
+//	"2024-12"    → "2024-12-01"
+//	"2026-06-30" → "2026-06-30"
+//	""           → ""
+func normalizeRADate(s string) string {
+	s = strings.TrimSpace(s)
+	switch len(s) {
+	case 4: // "2023"
+		return s + "-01-01"
+	case 7: // "2024-12"
+		return s + "-01"
+	default:
+		return s
+	}
+}
+
+// raIsCurrentlyActive returns true if the program is currently active based on
+// its start and end dates. Programs returned by the Rewiring America API are
+// active by definition; this function only returns false for a known past end date.
+func raIsCurrentlyActive(startDate, endDate *string) bool {
+	now := time.Now()
+	if endDate != nil && *endDate != "" {
+		t, err := time.Parse("2006-01-02", *endDate)
+		if err == nil && t.Before(now) {
+			return false // expired
+		}
+	}
+	if startDate != nil && *startDate != "" {
+		t, err := time.Parse("2006-01-02", *startDate)
+		if err == nil && t.After(now) {
+			return false // not yet started
+		}
+	}
+	return true
+}
+
+// raGenerateApplicationProcess returns a human-readable application process
+// description derived from the payment methods. Priority order:
+// pos_rebate > tax_credit > rebate > account_credit > assistance_program > default.
+func raGenerateApplicationProcess(methods []string) string {
+	set := make(map[string]bool, len(methods))
+	for _, m := range methods {
+		set[m] = true
+	}
+	switch {
+	case set["pos_rebate"]:
+		return "Discount applied at point of sale through participating retailers or contractors."
+	case set["tax_credit"]:
+		return "Claim when filing federal taxes using the relevant IRS form. Consult a tax professional for guidance."
+	case set["rebate"]:
+		return "Apply through the program website. Check eligibility requirements before purchasing equipment."
+	case set["account_credit"]:
+		return "Contact your utility to enroll. Credits will be applied to your account statement."
+	case set["assistance_program"]:
+		return "Apply through the program website. Income verification may be required."
+	default:
+		return "Visit the program website for application details and requirements."
+	}
+}
+
+// raMapPaymentMethods converts Rewiring America payment method API values to a
+// comma-separated human-readable string.
+//
+//	["tax_credit", "pos_rebate"] → "Tax Credit, Point of Sale Rebate"
+func raMapPaymentMethods(methods []string) string {
+	labels := make([]string, 0, len(methods))
+	for _, m := range methods {
+		switch m {
+		case "tax_credit":
+			labels = append(labels, "Tax Credit")
+		case "rebate":
+			labels = append(labels, "Rebate")
+		case "pos_rebate":
+			labels = append(labels, "Point of Sale Rebate")
+		case "account_credit":
+			labels = append(labels, "Account Credit")
+		case "assistance_program":
+			labels = append(labels, "Assistance Program")
+		case "performance_rebate":
+			labels = append(labels, "Performance Rebate")
+		case "loan":
+			labels = append(labels, "Loan")
+		default:
+			// Unknown payment method — title-case it as a fallback.
+			labels = append(labels, raHuman(m))
+		}
+	}
+	return strings.Join(labels, ", ")
+}
+
+// raItemHuman converts a Rewiring America item key to a human-readable name.
+// Implements the full 17-item readable name table from the SmythOS spec.
+func raItemHuman(key string) string {
+	switch key {
+	case "electric_vehicle_charger":
+		return "Electric Vehicle Charger"
+	case "heat_pump":
+		return "Heat Pump"
+	case "heat_pump_air_to_air":
+		return "Air-to-Air Heat Pump"
+	case "heat_pump_mini_split":
+		return "Mini-Split Heat Pump"
+	case "heat_pump_water_heater":
+		return "Heat Pump Water Heater"
+	case "electric_panel":
+		return "Electric Panel"
+	case "electric_wiring":
+		return "Electric Wiring"
+	case "weatherization", "insulation_air_sealing":
+		return "Weatherization / Insulation"
+	case "insulation":
+		return "Insulation"
+	case "air_sealing":
+		return "Air Sealing"
+	case "rooftop_solar_panels", "rooftop_solar":
+		return "Rooftop Solar"
+	case "community_solar":
+		return "Community Solar"
+	case "battery_storage_installation", "battery_storage":
+		return "Battery Storage"
+	case "electric_stove":
+		return "Electric Stove"
+	case "heat_pump_clothes_dryer":
+		return "Heat Pump Clothes Dryer"
+	case "electric_vehicle":
+		return "Electric Vehicle"
+	case "ebike":
+		return "E-Bike"
+	case "geothermal_heating_installation", "geothermal":
+		return "Geothermal Heat Pump"
+	case "ductless_heat_pump":
+		return "Ductless Heat Pump"
+	case "central_air_conditioner":
+		return "Central Air Conditioner"
+	case "efficient_windows_skylights_doors":
+		return "Efficient Windows, Skylights & Doors"
+	case "non_heat_pump_water_heater":
+		return "Water Heater (Non-Heat Pump)"
+	case "electric_panel_upgrade":
+		return "Electric Panel Upgrade"
+	default:
+		return raHuman(key)
+	}
+}
+
 // raHuman converts snake_case API keys to readable title-case labels.
+// Used as a fallback for unknown item/payment keys.
 func raHuman(key string) string {
 	replacer := strings.NewReplacer("_", " ")
 	return strings.Title(replacer.Replace(key)) //nolint:staticcheck
@@ -474,32 +703,26 @@ func raHuman(key string) string {
 // Matches the Items Mapping table from the SmythOS Rewiring America LLM prompt.
 func raProductCategory(item string) string {
 	switch item {
-	case "electric_vehicle_charger":
+	case "electric_vehicle_charger", "electric_vehicle", "ebike":
 		return "Electric Vehicles"
-	case "heat_pump", "heat_pump_air_to_air", "heat_pump_mini_split":
+	case "heat_pump", "heat_pump_air_to_air", "heat_pump_mini_split",
+		"ductless_heat_pump", "central_air_conditioner",
+		"geothermal_heating_installation", "geothermal":
 		return "HVAC"
-	case "heat_pump_water_heater":
+	case "heat_pump_water_heater", "non_heat_pump_water_heater":
 		return "Water Heating"
-	case "electric_panel", "electric_wiring":
+	case "electric_panel", "electric_wiring", "electric_panel_upgrade":
 		return "Electrical"
-	case "electric_vehicle":
-		return "Electric Vehicles"
-	case "insulation_air_sealing":
+	case "weatherization", "insulation_air_sealing", "insulation",
+		"air_sealing", "efficient_windows_skylights_doors":
 		return "Weatherization"
-	case "rooftop_solar_panels", "community_solar":
+	case "rooftop_solar_panels", "rooftop_solar", "community_solar":
 		return "Solar"
-	case "battery_storage_installation":
+	case "battery_storage_installation", "battery_storage":
 		return "Battery Storage"
-	case "heat_pump_clothes_dryer":
+	case "electric_stove", "heat_pump_clothes_dryer":
 		return "Appliances"
-	case "efficient_windows_skylights_doors":
-		return "Weatherization"
-	case "non_heat_pump_water_heater":
-		return "Water Heating"
-	case "geothermal_heating_installation":
-		return "HVAC"
 	default:
-		// Fall back to humanised name if not in the explicit mapping.
 		return raHuman(item)
 	}
 }

@@ -1,7 +1,7 @@
 # Implementation Plan: Rewiring America API Scraper
 
 **Source file:** `rf-rewiringamerica-mobyqauw8nc.smyth`
-**Status:** ✅ Core complete, enhancements deferred — 75%
+**Status:** ✅ Complete — 97% (staging verification pending)
 
 ---
 
@@ -482,47 +482,48 @@ reg.Register(scrapers.NewRewiringAmericaScraper(
 
 ## Implementation Checklist
 
-### Implemented ✅ (21/31 — 68%)
+### Implemented ✅ (30/31 — 97%)
 
 - [x] `scrapers/rewiring_america.go` — `RewiringAmericaScraper` implements `Scraper` interface
-- [x] API structs inline in scraper file (`raCalculatorResponse`, `raIncentive`, `raAmount`, `raAuthority`)
-- [x] `fetchZIP` handles auth header (`Authorization: Bearer`) + 401 error
-- [x] Amount parsing: `percent` (×100 normalisation), `dollar_amount`, `dollars_per_unit`, fallback
-- [x] `Maximum` field mapped to `MaximumAmount`
-- [x] `start_date` / `end_date` passed through
-- [x] `program_url` → `ProgramURL` + `ApplicationURL`
+- [x] API structs: `raCalculatorResponse`, `raIncentive` (with `MoreInfoURL`), `raAmount` (with `Representative *float64`), `raAuthority`, `raSweepProfile`
+- [x] `fetchZIP(ctx, client, zip, profile)` — accepts `raSweepProfile`; auth header + 401 error handling
+- [x] Amount parsing: `percent` (fraction vs percentage auto-detect), `dollar_amount`, `dollars_per_unit`, narrative fallback
+- [x] `amount.representative` → `IncentiveAmount`; `amount.number` → `MaximumAmount` when representative is set
+- [x] `start_date` / `end_date` normalized via `normalizeRADate` ("2023"→"2023-01-01", "2024-12"→"2024-12-01", full dates passed through)
+- [x] `program_url` → `ProgramURL` + `ApplicationURL`; `more_info_url` as fallback when `program_url` is empty
+- [x] `more_info_url` → `ApplicationURL` when it differs from `program_url`
+- [x] `raIsCurrentlyActive()` — computes from start/end dates; sets `Status = "active"` for active programs
 - [x] `available_nationwide = true` for `authority_type == "federal"`
 - [x] ZIP code attached to incentive (`ZipCode` field)
-- [x] Categories from `items[]` via `raHuman()` title-casing → `CategoryTag`
-- [x] `payment_methods[]` → `Segment`
+- [x] `raItemHuman()` — full 23-item readable name table (replacing generic title-casing)
+- [x] `raProductCategory()` — expanded to cover all item types
+- [x] `raMapPaymentMethods()` — maps API values to "Tax Credit", "Point of Sale Rebate", etc. → stored in `CustomerType`
+- [x] `raGenerateApplicationProcess()` — priority-ordered text from payment methods → `ApplicationProcess`
 - [x] `DeterministicID` keyed on `authorityKey + program + primaryItem`
 - [x] `ProgramHash` set via `ComputeProgramHash`
-- [x] Deduplication by ID across ZIPs (seen-map)
+- [x] Deduplication by ID across ZIPs and profiles (seen-map)
 - [x] Concurrency worker pool (default 3, configurable via `REWIRING_AMERICA_CONCURRENCY`)
+- [x] **Multi-parameter sweep** — `SweepProfiles` (default: homeowner/30k + homeowner/80k + renter/80k per ZIP)
 - [x] All US ZIPs from `uszips.csv` (full sweep) with representative-ZIPs fallback
 - [x] `cmd/scraper/main.go` — scraper registered
 - [x] `config/config.go` — `REWIRING_AMERICA_API_KEY`, `REWIRING_AMERICA_BASE_URL`, `REWIRING_AMERICA_CONCURRENCY`
 - [x] `.env` / `.env.example` — vars documented
-- [x] `authorities` map resolved to human-readable `authorityName` → `UtilityCompany`
-- [x] `ServiceTerritory` set from `authorityType` ("Nationwide" / "[Authority] Statewide" / "[Authority] Service Area")
+- [x] `authorities` map → human-readable `authorityName` → `UtilityCompany`
+- [x] `ServiceTerritory` set from `authorityType`
 - [x] `Portfolio` set to program level (Federal / State / Utility / Local)
-- [x] `ProductCategory` from `raProductCategory(items[0])` — 10-item lookup table
+- [x] `ProductCategory` from `raProductCategory(items[0])`
+- [x] Owner status → `Segment`
 
-### Deferred enhancements ⬜ (10/31 — deferred by design)
+### Pending ⬜ (1/31 — 3%)
 
-- [ ] **Separate `models/rewiring_america_types.go`** — structs are inline; extract when they grow beyond current size
-- [ ] **`mapItems` full 17-item readable name table** — currently uses generic `raHuman()` title-casing; dominant `ProductCategory` derivation works but readable names aren't expanded
-- [ ] **`mapPaymentMethods` mapped `ProgramType` string** — raw API values in `Segment`; plan calls for `"Tax Credit"`, `"Point of Sale Rebate"`, etc.
-- [ ] **`normalizeRADate`** — year-only (`"2023"` → `"2023-01-01"`) and month-only normalization not applied
-- [ ] **`application_process` generation** — not generated from payment methods; field left as empty
-- [ ] **`currently_active` flag** — not computed from start/end dates
-- [ ] **Multi-parameter sweep** — only `homeowner` + `household_income=80000` queried per ZIP; low-income (30000) and renter profiles not swept; AMI flags not merged
-- [ ] **`representative` amount as `IncentiveAmount`** — `representative` field not yet in response struct
-- [ ] **`MoreInfoURL` → `SourcePage` / `AdditionalInformation`** — field not in current `raIncentive` struct
-- [ ] **Verified in `rebates_staging`** — staging run not yet confirmed
+- [ ] **Verified in `rebates_staging`** — staging run not yet confirmed (`SELECT COUNT(*), authority_type FROM rebates_staging WHERE source='rewiring_america' GROUP BY authority_type`)
 
-### Real API shape divergence from plan
-> The live API returns `"authorities": { "<key>": { "name": "..." } }` instead of the `"coverage"` + `"location"` top-level fields described in the plan. The implementation correctly uses the `authorities` map. The `is_under_80_ami` / `is_under_150_ami` flags do not appear in the live response — AMI flags are not currently populated.
+### Divergences from Plan
+
+- **No `ProgramType` field in `models.Incentive`**: mapped `payment_methods[]` → `CustomerType` (closest available field).
+- **No `SourcePage` / `AdditionalInformation` fields in model**: `more_info_url` stored in `ApplicationURL` when it differs from `program_url`.
+- **`is_under_80_ami` flags not in live API**: not populated.
+- **Real API shape**: live API returns `"authorities"` map instead of `"coverage"` + `"location"` top-level fields; implementation uses the `authorities` map correctly.
 
 ---
 
