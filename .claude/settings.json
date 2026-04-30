@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/hazemhagrass/workspace/smyth/rebate-finder && git diff --name-only HEAD 2>/dev/null | grep -q 'prisma/schema.prisma' && echo '⚠️  schema.prisma changed — run: pnpm prisma generate && pnpm prisma db push' || true"
+            "command": "cd /home/hazemhagrass/workspace/smyth/rebate-finder-scrapers/ && git diff --name-only HEAD 2>/dev/null' || true"
           }
         ]
       }
