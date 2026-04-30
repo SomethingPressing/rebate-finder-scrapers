@@ -43,7 +43,7 @@ import (
 func main() {
 	// ── CLI flags ─────────────────────────────────────────────────────────────
 	// --source can also be set via the SOURCE env var (env takes precedence).
-	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star)")
+	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy)")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -121,6 +121,21 @@ func main() {
 		MaxConcurrency: cfg.MaxConcurrency,
 		ScraperVersion: cfg.ScraperVersion,
 		StateZIPs:      stateZIPs,
+		Logger:         logger,
+	})
+
+	reg.Register(&scrapers.ConEdisonScraper{
+		ScraperVersion: cfg.ScraperVersion,
+		Logger:         logger,
+	})
+
+	reg.Register(&scrapers.PNMScraper{
+		ScraperVersion: cfg.ScraperVersion,
+		Logger:         logger,
+	})
+
+	reg.Register(&scrapers.XcelEnergyScraper{
+		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
 	})
 

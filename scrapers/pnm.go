@@ -1,0 +1,266 @@
+// pnm.go — PNM (Public Service Company of New Mexico) rebate scraper.
+//
+// Discovers rebate pages via the PNM sitemap, then visits each page and
+// extracts structured incentive data using HTML selectors and regex.
+//
+// Source defaults:
+//   - Source:           "pnm"
+//   - State:            NM
+//   - UtilityCompany:   "PNM"
+//   - ServiceTerritory: "PNM Service Area"
+//   - ZipCode:          "87102"  (Albuquerque — largest NM city)
+package scrapers
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gocolly/colly/v2"
+	"github.com/incenva/rebate-scraper/models"
+	"go.uber.org/zap"
+)
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const (
+	pnmSitemapURL   = "https://www.pnm.com/sitemap.xml"
+	pnmState        = "NM"
+	pnmUtility      = "PNM"
+	pnmTerritory    = "PNM Service Area"
+	pnmZIP          = "87102"
+	pnmSourceName   = "pnm"
+	pnmDefaultApply = "Visit the official PNM program website to learn about eligibility requirements and submit your application."
+)
+
+// pnmRebateKeywords are URL path substrings that indicate rebate content.
+var pnmRebateKeywords = []string{
+	"rebate", "incentive", "saving", "efficiency", "cool-rebate",
+	"heat-pump", "thermostat", "appliance", "solar", "ev-charger",
+	"electric-vehicle", "low-income", "weatheriz", "lighting",
+}
+
+// pnmSeedURLs are well-known PNM rebate pages used as fallback.
+func pnmSeedURLs() []string {
+	return []string{
+		"https://www.pnm.com/residential-rebates",
+		"https://www.pnm.com/business-rebates",
+		"https://www.pnm.com/cool-rebate",
+		"https://www.pnm.com/residential-energy-efficiency",
+		"https://www.pnm.com/electric-vehicles",
+		"https://www.pnm.com/low-income-programs",
+		"https://pnm.clearesult.com/",
+	}
+}
+
+// ── Scraper ───────────────────────────────────────────────────────────────────
+
+// PNMScraper discovers and scrapes rebate programs from pnm.com.
+type PNMScraper struct {
+	CollyBase
+	ScraperVersion string
+	Logger         *zap.Logger
+	HTTPClient     *http.Client
+}
+
+// Name implements Scraper.
+func (s *PNMScraper) Name() string { return pnmSourceName }
+
+// Scrape implements Scraper.
+func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
+	client := s.httpClient()
+
+	// Step 1: discover rebate URLs from sitemap.
+	allURLs, err := FetchSitemapURLs(ctx, client, pnmSitemapURL)
+	var urls []string
+	if err != nil || len(allURLs) == 0 {
+		if err != nil {
+			s.Logger.Warn("pnm: sitemap fetch failed, using seed URLs", zap.Error(err))
+		}
+		urls = pnmSeedURLs()
+	} else {
+		urls = FilterSitemapURLs(allURLs, pnmRebateKeywords)
+		if len(urls) == 0 {
+			urls = pnmSeedURLs()
+		}
+	}
+
+	s.Logger.Info("pnm: scraping URLs", zap.Int("count", len(urls)))
+
+	// Step 2: visit each page and extract incentive data.
+	seen := make(map[string]bool)
+	var all []models.Incentive
+
+	c := s.newCollector("www.pnm.com", "pnm.clearesult.com")
+
+	c.OnHTML("html", func(e *colly.HTMLElement) {
+		pageURL := e.Request.URL.String()
+		inc := s.extractPage(e, pageURL)
+		if inc == nil {
+			return
+		}
+		if seen[inc.ID] {
+			return
+		}
+		seen[inc.ID] = true
+		all = append(all, *inc)
+	})
+
+	for _, u := range urls {
+		select {
+		case <-ctx.Done():
+			return all, ctx.Err()
+		default:
+		}
+		if err := c.Visit(u); err != nil {
+			s.Logger.Warn("pnm: visit failed",
+				zap.String("url", u), zap.Error(err))
+		}
+	}
+
+	s.Logger.Info("pnm: scrape complete", zap.Int("programs", len(all)))
+	return all, nil
+}
+
+// extractPage extracts a single Incentive from a PNM rebate page.
+func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.Incentive {
+	// Page title.
+	programName := strings.TrimSpace(e.ChildText("h1"))
+	if programName == "" {
+		programName = strings.TrimSpace(e.ChildText("title"))
+		if idx := strings.Index(programName, "|"); idx > 0 {
+			programName = strings.TrimSpace(programName[:idx])
+		}
+		if idx := strings.Index(programName, " - "); idx > 0 {
+			programName = strings.TrimSpace(programName[:idx])
+		}
+	}
+	if programName == "" || len(programName) < 5 {
+		return nil
+	}
+
+	titleLower := strings.ToLower(programName)
+	for _, p := range []string{"page not found", "404", "error", "home", "login"} {
+		if strings.Contains(titleLower, p) {
+			return nil
+		}
+	}
+
+	// Description.
+	description := strings.TrimSpace(e.ChildAttr(`meta[name="description"]`, "content"))
+	if description == "" {
+		e.ForEach("p", func(_ int, el *colly.HTMLElement) {
+			if description != "" {
+				return
+			}
+			text := strings.TrimSpace(el.Text)
+			if len(text) > 40 {
+				description = text
+			}
+		})
+	}
+	if description == "" {
+		description = programName
+	}
+	if len(description) > 500 {
+		description = description[:497] + "..."
+	}
+
+	// Amount extraction — PNM often shows "Save $X" or "$X rebate".
+	pageText := e.Text
+	format, amount := ParseAmount(pageText)
+	if format == "narrative" {
+		e.ForEach("p, li, td, h2, h3, strong", func(_ int, el *colly.HTMLElement) {
+			if format != "narrative" {
+				return
+			}
+			f, a := ParseAmount(el.Text)
+			if f != "narrative" {
+				format = f
+				amount = a
+			}
+		})
+	}
+
+	// Application URL.
+	applicationURL := ""
+	e.ForEach("a[href]", func(_ int, el *colly.HTMLElement) {
+		if applicationURL != "" {
+			return
+		}
+		href := el.Attr("href")
+		text := strings.ToLower(el.Text + " " + href)
+		if strings.Contains(text, "apply") || strings.Contains(text, "application") ||
+			strings.Contains(text, "submit") || strings.Contains(text, "enroll") {
+			if strings.HasPrefix(href, "http") {
+				applicationURL = href
+			} else if strings.HasPrefix(href, "/") {
+				applicationURL = "https://www.pnm.com" + href
+			}
+		}
+	})
+
+	contactPhone := extractPhone(pageText)
+	contactEmail := extractEmail(pageText)
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName))
+
+	if format == "" {
+		format = "narrative"
+	}
+
+	id := models.DeterministicID(pnmSourceName, pageURL)
+
+	inc := models.NewIncentive(pnmSourceName, s.ScraperVersion)
+	inc.ID = id
+	inc.ProgramName = programName
+	inc.UtilityCompany = pnmUtility
+	inc.State = models.PtrString(pnmState)
+	inc.ZipCode = models.PtrString(pnmZIP)
+	inc.ServiceTerritory = models.PtrString(pnmTerritory)
+	inc.IncentiveDescription = models.PtrString(description)
+	inc.IncentiveFormat = models.PtrString(format)
+	inc.ApplicationProcess = models.PtrString(pnmDefaultApply)
+	inc.ProgramURL = models.PtrString(pageURL)
+	inc.AvailableNationwide = models.PtrBool(false)
+	inc.CategoryTag = categories
+	inc.ProgramHash = models.ComputeProgramHash(programName, pnmUtility)
+
+	if amount != nil {
+		inc.IncentiveAmount = amount
+	}
+	if applicationURL != "" {
+		inc.ApplicationURL = models.PtrString(applicationURL)
+	}
+	if contactPhone != "" {
+		inc.ContactPhone = models.PtrString(contactPhone)
+	}
+	if contactEmail != "" {
+		inc.ContactEmail = models.PtrString(contactEmail)
+	}
+
+	return &inc
+}
+
+func (s *PNMScraper) httpClient() *http.Client {
+	if s.HTTPClient != nil {
+		return s.HTTPClient
+	}
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+func (s *PNMScraper) newCollector(domains ...string) *colly.Collector {
+	if len(domains) > 0 {
+		s.CollyBase.AllowedDomain = domains[0]
+	}
+	s.CollyBase.Parallelism = 2
+	s.CollyBase.Delay = 600 * time.Millisecond
+	s.CollyBase.Logger = s.Logger
+
+	c := s.CollyBase.NewCollector()
+	// Allow additional domains (clearesult portal).
+	for _, d := range domains[1:] {
+		c.AllowedDomains = append(c.AllowedDomains, d)
+	}
+	return c
+}

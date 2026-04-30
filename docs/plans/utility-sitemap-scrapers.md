@@ -1,7 +1,7 @@
 # Implementation Plan: Utility Sitemap Scrapers
 
 **Source file:** `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth`
-**Status:** Planning
+**Status:** Partially implemented — Con Edison, PNM, Xcel Energy complete; SRP and Peninsula Clean Energy pending
 
 ---
 
@@ -571,18 +571,20 @@ GROUP BY source;
 
 ## Implementation Checklist
 
-- [ ] `scrapers/sitemap_parser.go` — `FetchSitemapURLs` with index + urlset support
-- [ ] `scrapers/url_filter.go` — `FilterRebateURLs` with include/exclude config
-- [ ] `scrapers/srp.go` — SRP scraper registered + tested
-- [ ] `scrapers/xcel_energy.go` — Xcel Energy scraper registered + tested
-- [ ] `scrapers/con_edison.go` — Con Edison scraper registered + tested
-- [ ] `scrapers/pnm.go` — PNM scraper (sitemap index + Access Denied handling)
-- [ ] `scrapers/peninsula_clean_energy.go` — PCE scraper (three sitemaps + blog filter)
-- [ ] `config/config.go` — 5 new env vars added
-- [ ] `.env.example` — 5 new vars documented
-- [ ] `cmd/scraper/main.go` — all 5 scrapers registered
-- [ ] All 5 verified in `rebates_staging` with correct `source` values
-- [ ] `docs/scrapers.md` updated with the 5 new scraper entries
+- [x] `scrapers/sitemap.go` — `FetchSitemapURLs` (index + urlset, 3-level recursion) + `FilterSitemapURLs`
+- [x] `scrapers/html_helpers.go` — `extractPhone`, `extractEmail`, `inferCategories` (30+ keyword→category rules)
+- [ ] `scrapers/srp.go` — SRP scraper *(pending)*
+- [x] `scrapers/xcel_energy.go` — Xcel Energy scraper registered (CO, MN, WI)
+- [x] `scrapers/con_edison.go` — Con Edison scraper registered (NY)
+- [x] `scrapers/pnm.go` — PNM scraper registered (NM, clearesult portal support)
+- [ ] `scrapers/peninsula_clean_energy.go` — PCE scraper *(pending)*
+- [ ] `config/config.go` — env vars for utility base URLs *(not yet added — scrapers use hardcoded defaults)*
+- [x] `cmd/scraper/main.go` — con_edison, pnm, xcel_energy registered
+- [x] `Makefile` — `scrape-coned`, `scrape-pnm`, `scrape-xcel` targets added
+- [x] `package.json` — `run:con_edison`, `run:pnm`, `run:xcel_energy` tasks added
+- [x] `scripts/run.mjs` — new source names whitelisted
+- [ ] All scrapers verified in `rebates_staging` with correct `source` values *(pending first run)*
+- [x] `docs/scrapers.md` updated with full field-by-field documentation for all 3 scrapers
 
 ---
 

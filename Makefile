@@ -7,7 +7,7 @@
 # All targets load config from .env automatically (via the Go config package).
 # =============================================================================
 
-.PHONY: help build scrape promote promote-dry stats pdf-scrape clean
+.PHONY: help build scrape scrape-coned scrape-pnm scrape-xcel promote promote-dry stats pdf-scrape clean
 
 # ── Default target ────────────────────────────────────────────────────────────
 help:
@@ -19,6 +19,9 @@ help:
 	@echo ""
 	@echo "  Scraping"
 	@echo "    make scrape          Run the scraper (all sources, RUN_ONCE=true)"
+	@echo "    make scrape-coned    Run only the Con Edison scraper (NY)"
+	@echo "    make scrape-pnm      Run only the PNM scraper (NM)"
+	@echo "    make scrape-xcel     Run only the Xcel Energy scraper (CO/MN/WI)"
 	@echo "    make pdf-scrape      Run the PDF scraper"
 	@echo ""
 	@echo "  Promotion"
@@ -44,6 +47,15 @@ build:
 # ── Scraping ──────────────────────────────────────────────────────────────────
 scrape: bin/scraper
 	RUN_ONCE=true ./bin/scraper
+
+scrape-coned: bin/scraper
+	RUN_ONCE=true SOURCE=con_edison ./bin/scraper
+
+scrape-pnm: bin/scraper
+	RUN_ONCE=true SOURCE=pnm ./bin/scraper
+
+scrape-xcel: bin/scraper
+	RUN_ONCE=true SOURCE=xcel_energy ./bin/scraper
 
 pdf-scrape: bin/pdf-scraper
 	./bin/pdf-scraper

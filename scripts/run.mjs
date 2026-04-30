@@ -19,13 +19,21 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const scraperDir = path.join(__dirname, "..");
 
-const allowed = new Set(["all", "dsireusa", "rewiring_america", "energy_star"]);
+const allowed = new Set([
+  "all",
+  "dsireusa",
+  "rewiring_america",
+  "energy_star",
+  "con_edison",
+  "pnm",
+  "xcel_energy",
+]);
 
 const sourceArg = process.argv[2] ?? "all";
 
 if (!allowed.has(sourceArg)) {
   console.error(
-    `Unknown scraper "${sourceArg}". Use: all | dsireusa | rewiring_america | energy_star`,
+    `Unknown scraper "${sourceArg}". Use: all | dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy`,
   );
   process.exit(1);
 }

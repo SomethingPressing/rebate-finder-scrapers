@@ -1,7 +1,7 @@
 # Implementation Plan: Rewiring America API Scraper
 
 **Source file:** `rf-rewiringamerica-mobyqauw8nc.smyth`
-**Status:** Planning
+**Status:** Implemented (core complete — some enhancements pending)
 
 ---
 
@@ -482,28 +482,44 @@ reg.Register(scrapers.NewRewiringAmericaScraper(
 
 ## Implementation Checklist
 
-- [ ] `models/rewiring_america_types.go` — all API structs + `RASharedContext`
-- [ ] `scrapers/rewiring_america.go` — `RewiringAmericaScraper` implements `Scraper` interface
-- [ ] `fetchCalculator` handles auth header + error codes (401, 422, 429)
-- [ ] `mapPaymentMethods` — all 6 payment method mappings
-- [ ] `mapItems` — all 17 item mappings + dominant category logic
-- [ ] `normalizeRADate` — all 4 input formats
-- [ ] Authority type rules applied correctly for all 6 authority types
-- [ ] Amount parsing: dollar_amount, percent, dollars_per_unit, narrative
-- [ ] `representative` value used as `IncentiveAmount` when present
-- [ ] `application_process` generated from payment methods (priority order)
-- [ ] `currently_active` computed from dates
-- [ ] Multi-parameter sweep with deduplication
-- [ ] AMI flags merged across income profiles
-- [ ] `DeterministicID` keyed on program + authority type
-- [ ] `config/config.go` — all env vars added/confirmed
-- [ ] `.env.example` — all vars documented
-- [ ] `cmd/scraper/main.go` — scraper registered
-- [ ] Federal programs verified: `state = NULL`, `available_nationwide = true`
-- [ ] State programs verified: `state` set, correct `service_territory`
-- [ ] Utility programs verified: `utility_company = coverageUtility`
-- [ ] Verified in `rebates_staging` with `source = 'Rewiring America'`
-- [ ] `docs/scrapers.md` updated with Rewiring America entry
+### Core (Complete ✅)
+- [x] `scrapers/rewiring_america.go` — `RewiringAmericaScraper` implements `Scraper` interface
+- [x] API structs inline in scraper file (`raCalculatorResponse`, `raIncentive`, `raAmount`, `raAuthority`)
+- [x] `fetchZIP` handles auth header (`Authorization: Bearer`) + 401 error
+- [x] Amount parsing: `percent` (×100 normalisation), `dollar_amount`, `dollars_per_unit`, fallback
+- [x] `Maximum` field mapped to `MaximumAmount`
+- [x] `start_date` / `end_date` passed through
+- [x] `program_url` → `ProgramURL` + `ApplicationURL`
+- [x] `available_nationwide = true` for `authority_type == "federal"`
+- [x] ZIP code attached to incentive (`ZipCode` field)
+- [x] Categories from `items[]` via `raHuman()` title-casing → `CategoryTag`
+- [x] `payment_methods[]` → `Segment`
+- [x] `DeterministicID` keyed on `authorityKey + program + primaryItem`
+- [x] `program_hash` set via `models.NewIncentive`
+- [x] Deduplication by ID across ZIPs (seen-map)
+- [x] Concurrency worker pool (default 3, configurable via `REWIRING_AMERICA_CONCURRENCY`)
+- [x] All US ZIPs from `uszips.csv` (full sweep) with representative-ZIPs fallback
+- [x] `cmd/scraper/main.go` — scraper registered
+- [x] `config/config.go` — `REWIRING_AMERICA_API_KEY`, `REWIRING_AMERICA_BASE_URL`, `REWIRING_AMERICA_CONCURRENCY`
+- [x] `.env` / `.env.example` — vars documented
+- [x] `authorities` map resolved to human-readable `authorityName` → `UtilityCompany`
+
+### Pending enhancements (not yet implemented ⬜)
+- [ ] **Separate `models/rewiring_america_types.go`** — structs are inline; extract if they grow
+- [ ] **`mapItems` full 17-item table** — currently uses generic `raHuman()` title-casing; specific readable names and dominant `ProductCategory` derivation not implemented
+- [ ] **`mapPaymentMethods` readable string** — currently raw API values go to `Segment`; plan calls for mapped `ProgramType` string (e.g. `"Tax Credit"`, `"Point of Sale Rebate"`)
+- [ ] **`normalizeRADate`** — dates passed through as-is; plan calls for normalising year-only (`"2023"` → `"2023-01-01"`) and month-only formats
+- [ ] **Authority type rules (full)** — `state` field, `service_territory`, and full `UtilityCompany` derivation per authority type not applied; only `available_nationwide` is set from `authority_type`
+- [ ] **`application_process` generation** — not generated from payment methods
+- [ ] **`currently_active` flag** — not computed from dates
+- [ ] **Multi-parameter sweep** — only `homeowner` + `household_income=80000` queried per ZIP; low-income (`30000`) and renter profiles not swept; AMI flags not merged across income levels
+- [ ] **`representative` amount as `IncentiveAmount`** — real API uses `maximum` instead; `representative` field not in current response struct
+- [ ] **`MoreInfoURL` → `SourcePage` / `AdditionalInformation`** — field not in current `raIncentive` struct
+- [ ] **State field on non-federal programs** — location/coverage state not extracted (real API uses `authorities` map, not `coverage.state`)
+- [ ] **`docs/scrapers.md`** — Rewiring America entry not yet written
+
+### Real API shape divergence from plan
+> The live API returns `"authorities": { "<key>": { "name": "..." } }` instead of the `"coverage"` + `"location"` top-level fields described in the plan. The implementation correctly uses the `authorities` map. The `is_under_80_ami` / `is_under_150_ami` flags also do not appear to be present in the live response shape used by the implementation.
 
 ---
 
