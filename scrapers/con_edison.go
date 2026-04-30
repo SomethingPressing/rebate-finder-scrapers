@@ -28,7 +28,7 @@ import (
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const (
-	conEdisonSitemapURL   = "https://www.coned.com/sitemap.xml"
+	conEdisonSitemapURL   = "https://www.coned.com/sitemap_coned_en.xml"
 	conEdisonState        = "NY"
 	conEdisonUtility      = "Con Edison"
 	conEdisonTerritory    = "Con Edison Service Territory"

@@ -406,17 +406,50 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		// can link it to a geography even if it's a state/utility program.
 		inc.ZipCode = models.PtrString(zip)
 
-		// Categories from product-type strings
+		// Service territory — derived from authorityType (schema field mapping).
+		// federal  → "Nationwide"
+		// state    → "[Authority Name] Statewide"
+		// utility  → "[Authority Name] Service Area"
+		// city/county/other → "[Authority Name] Service Area"
+		switch item.AuthorityType {
+		case "federal":
+			inc.ServiceTerritory = models.PtrString("Nationwide")
+		case "state":
+			inc.ServiceTerritory = models.PtrString(authorityName + " Statewide")
+		default:
+			inc.ServiceTerritory = models.PtrString(authorityName + " Service Area")
+		}
+
+		// Program level (stored in Portfolio so it can be queried).
+		switch item.AuthorityType {
+		case "federal":
+			inc.Portfolio = []string{"Federal"}
+		case "state":
+			inc.Portfolio = []string{"State"}
+		case "utility":
+			inc.Portfolio = []string{"Utility"}
+		case "city", "county":
+			inc.Portfolio = []string{"Local"}
+		}
+
+		// Categories from product-type strings.
 		if len(item.Items) > 0 {
 			cats := make([]string, 0, len(item.Items))
 			for _, it := range item.Items {
 				cats = append(cats, raHuman(it))
 			}
 			inc.CategoryTag = cats
+			// Derive product_category from the first item (most specific).
+			inc.ProductCategory = models.PtrString(raProductCategory(item.Items[0]))
 		}
 
-		// Payment methods → segment
-		inc.Segment = item.PaymentMethods
+		// Owner status → segment (homeowner, renter, etc.).
+		inc.Segment = item.OwnerStatus
+
+		// Payment methods — stored in Portfolio only if Portfolio not already set.
+		if len(inc.Portfolio) == 0 {
+			inc.Portfolio = item.PaymentMethods
+		}
 
 		out = append(out, inc)
 	}
@@ -435,4 +468,38 @@ func (s *RewiringAmericaScraper) httpClient() *http.Client {
 func raHuman(key string) string {
 	replacer := strings.NewReplacer("_", " ")
 	return strings.Title(replacer.Replace(key)) //nolint:staticcheck
+}
+
+// raProductCategory maps a Rewiring America item key to a product category tag.
+// Matches the Items Mapping table from the SmythOS Rewiring America LLM prompt.
+func raProductCategory(item string) string {
+	switch item {
+	case "electric_vehicle_charger":
+		return "Electric Vehicles"
+	case "heat_pump", "heat_pump_air_to_air", "heat_pump_mini_split":
+		return "HVAC"
+	case "heat_pump_water_heater":
+		return "Water Heating"
+	case "electric_panel", "electric_wiring":
+		return "Electrical"
+	case "electric_vehicle":
+		return "Electric Vehicles"
+	case "insulation_air_sealing":
+		return "Weatherization"
+	case "rooftop_solar_panels", "community_solar":
+		return "Solar"
+	case "battery_storage_installation":
+		return "Battery Storage"
+	case "heat_pump_clothes_dryer":
+		return "Appliances"
+	case "efficient_windows_skylights_doors":
+		return "Weatherization"
+	case "non_heat_pump_water_heater":
+		return "Water Heating"
+	case "geothermal_heating_installation":
+		return "HVAC"
+	default:
+		// Fall back to humanised name if not in the explicit mapping.
+		return raHuman(item)
+	}
 }

@@ -42,11 +42,16 @@ GET https://programs.dsireusa.org/api/v1/programs
 **Fields mapped:**
 - `program_name` ← `program.ProgramName`
 - `incentive_description` ← `program.Summary` (HTML stripped)
-- `state` ← first state abbreviation in `program.States`
-- `category_tag` ← `program.Categories`
-- `segment` ← mapped from `program.SectorTypes`
+- `state` ← `program.StateObj.Abbreviation`
+- `category_tag` ← extracted from `ParameterSets[].Technologies`
+- `segment` ← extracted from `ParameterSets[].Sectors`
+- `customer_type` ← joined sector names from `ParameterSets`
+- `portfolio` ← program level derived from `SectorObj.Name` (Federal/State/Utility/Local)
+- `product_category` ← top technology category from `ParameterSets`
 - `administrator` ← `program.Administrator`
 - `start_date`, `end_date` ← `program.StartDate`, `program.EndDate`
+- `status` ← `"active"` when `program.Published == "Yes"`, otherwise default `"draft"`
+- `program_hash` ← `ComputeProgramHash(ProgramName, UtilityCompany)`
 - `source` = `"dsireusa"`
 
 **Rate limiting:** No explicit delay (DSIRE API is paged).
@@ -83,14 +88,20 @@ GET https://api.rewiringamerica.org/api/v1/calculator
 **ID generation:** `DeterministicID("rewiring_america", programName+"|"+technology)` — stable across re-scrapes for the same program/technology pair.
 
 **Fields mapped:**
-- `program_name` ← program name + technology type
-- `incentive_amount` ← item amount
-- `maximum_amount` ← item max_amount
-- `incentive_format` ← derived from payment_method and unit
+- `program_name` ← `"[Authority Name] — [program]"`
+- `utility_company` ← `authorityName` resolved from top-level `authorities` map
+- `incentive_amount` ← item `amount.number`
+- `maximum_amount` ← item `amount.maximum` (when > 0)
+- `percent_value` ← item `amount.number * 100` when `amount.type == "percent"`
+- `incentive_format` ← derived from `amount.type` (`dollar_amount`, `percent`, `dollars_per_unit`)
+- `start_date`, `end_date` ← item `start_date`, `end_date`
+- `service_territory` ← `"Nationwide"` (federal) / `"[Authority] Statewide"` (state) / `"[Authority] Service Area"` (utility/city/county)
+- `portfolio` ← `["Federal"]` / `["State"]` / `["Utility"]` / `["Local"]` from `authority_type`
+- `segment` ← `item.owner_status` (e.g. `["homeowner", "renter"]`)
+- `category_tag` ← human-readable labels from `item.items` (product-type strings)
+- `product_category` ← `raProductCategory(items[0])` — maps first item key to category tag
+- `available_nationwide` ← `true` when `authority_type == "federal"`, else `false`
 - `source` = `"rewiring_america"`
-- `available_nationwide` = `true` (IRA programs are federal)
-- `segment` ← `["Residential"]`
-- `portfolio` ← `["Federal"]`
 
 **Rate limiting:** 200 ms delay between ZIP requests.
 
@@ -145,11 +156,13 @@ ENERGY_STAR_BASE_URL=https://www.energystar.gov   # override for testing
 
 **Approach:** Two-phase sitemap crawl + Colly HTML scraping.
 
-1. Fetches `https://www.coned.com/sitemap.xml` and filters `<loc>` entries by rebate-related keywords.
-2. Falls back to hardcoded seed URLs if the sitemap is unavailable or returns no matches.
-3. Visits each URL with Colly and extracts program data using HTML selectors and regex.
+1. Fetches `https://www.coned.com/sitemap.xml` and applies `conEdisonFilterCfg` (`FilterConfig`) — exclusions checked first, then inclusion keywords.
+2. Falls back to hardcoded seed URLs (specific program sub-pages) if the sitemap is unavailable or returns no matches.
+3. Visits each URL with Colly and extracts program data using HTML selectors and regex helpers.
 
-**URL filter keywords:** `rebate`, `incentive`, `save-money`, `saving`, `efficiency`, `weatheriz`, `weather-ready`, `heat-pump`, `electric-vehicle`, `solar`, `smart-thermostat`, `energy-star`, `financial-assist`
+**URL filter — exclusions (checked first):** `/using-distributed-generation`, `/shop-for-energy-service`, `/our-energy-vision`, `/where-we-are-going`, `/my-account`, `/login`, `/sign-in`, `/about-us`, `/careers`, `/media-center`, `/news`, `/investor`, `/safety`, `/outages`, `/grid`, `/transmission`, `/tariff`, `/fault-current`, `/contact-us`, `/terms-of-use`, `/privacy`, `/search`
+
+**URL filter — inclusions (must match one):** `rebate`, `incentive`, `save-money`, `saving`, `credit`, `reward`, `assistance`, `payment-plans-assistance`, `heat-pump`, `electric-vehicle`, `solar`, `financing`, `smart-usage`, `demand-response`, `weatherization`, `insulation`, `efficiency`, `low-income`, `income-eligible`, `find-incentive`, `incentive-viewer`
 
 **Seed URLs (fallback):**
 ```
@@ -184,11 +197,16 @@ https://www.coned.com/en/save-money/smart-usage-rewards
 | `ContactPhone` | First US phone number found in page text (regex) |
 | `ContactEmail` | First email address found in page text (regex) |
 | `CategoryTag` | Inferred from URL path and title keywords — see [Category Inference](#category-inference) |
+| `ContractorRequired` | `extractContractorRequired(pageText)` — `true` if licensed/approved contractor language found |
+| `EnergyAuditRequired` | `extractEnergyAuditRequired(pageText)` — `true` if energy audit language found |
+| `CustomerType` | `extractCustomerType(url + title)` — `"Residential"`, `"Commercial"`, `"Residential, Commercial"`, or `""` |
+| `StartDate` | `extractStartDate(pageText)` — date after "effective", "starting", "as of" keywords |
+| `EndDate` | `extractEndDate(pageText)` — date after "expires", "through", "deadline" keywords |
 | `AvailableNationwide` | `false` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, "Con Edison")` |
 | `ScraperVersion` | From config |
 
-**Fields NOT populated:** `segment`, `portfolio`, `customer_type`, `start_date`, `end_date`, `contractor_required`, `energy_audit_required`, `image_url`, `rate_tiers`
+**Fields NOT populated:** `segment`, `portfolio`, `image_url`, `rate_tiers`
 
 **Rate limiting:** 600 ms delay between requests, parallelism = 2.
 
@@ -202,11 +220,13 @@ https://www.coned.com/en/save-money/smart-usage-rewards
 
 **Approach:** Two-phase sitemap crawl + Colly HTML scraping across `pnm.com` and `pnm.clearesult.com` (third-party rebate portal).
 
-1. Fetches `https://www.pnm.com/sitemap.xml` (may be a sitemap index with nested sitemaps) and filters by keywords.
+1. Fetches `https://www.pnm.com/sitemap.xml` (may be a sitemap index with nested sitemaps; child sitemaps returning HTML "Access Denied" are silently skipped) and applies `pnmFilterCfg` (`FilterConfig`).
 2. Falls back to hardcoded seed URLs if unavailable.
-3. Visits each URL; also follows clearesult portal links for `application_url`.
+3. Visits each URL; `pnm.clearesult.com` is an allowed domain for Colly so clearesult portal links are followed for `application_url`.
 
-**URL filter keywords:** `rebate`, `incentive`, `saving`, `efficiency`, `cool-rebate`, `heat-pump`, `thermostat`, `appliance`, `solar`, `ev-charger`, `electric-vehicle`, `low-income`, `weatheriz`, `lighting`
+**URL filter — exclusions (checked first):** `/about-pnm`, `/corporate`, `/investor`, `/news`, `/careers`, `/jobs`, `/regulatory`, `/filings`, `/tariffs`, `/legal`, `/terms`, `/privacy`, `/login`, `/sign-in`, `/my-account`, `/outages`, `/safety`, `/storm`, `/emergency`, `/start-service`, `/stop-service`, `/pay-bill`, `/documents`, `/media`, `/education`, `/community`, `/infrastructure`, `/grid`, `/generation`, `/power-plants`, `/transmission`
+
+**URL filter — inclusions (must match one):** `save-money-and-energy`, `rebate`, `incentive`, `checkup`, `energy-efficiency`, `weatherization`, `appliance-recycling`, `solar`, `pnmskyblue`, `/ev`, `electric-vehicle`, `goodneighborfund`, `assistance`, `liheap`, `low-income`, `time-of-use`, `demand-response`, `quick-saver`, `heat-pump`, `thermostat`, `lighting`
 
 **Seed URLs (fallback):**
 ```
@@ -241,11 +261,16 @@ https://pnm.clearesult.com/
 | `ContactPhone` | First US phone number found in page text (regex) |
 | `ContactEmail` | First email address found in page text (regex) |
 | `CategoryTag` | Inferred from URL path and title keywords — see [Category Inference](#category-inference) |
+| `ContractorRequired` | `extractContractorRequired(pageText)` |
+| `EnergyAuditRequired` | `extractEnergyAuditRequired(pageText)` |
+| `CustomerType` | `extractCustomerType(url + title)` |
+| `StartDate` | `extractStartDate(pageText)` |
+| `EndDate` | `extractEndDate(pageText)` |
 | `AvailableNationwide` | `false` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, "PNM")` |
 | `ScraperVersion` | From config |
 
-**Fields NOT populated:** `segment`, `portfolio`, `customer_type`, `maximum_amount`, `start_date`, `end_date`, `contractor_required`, `energy_audit_required`, `image_url`, `rate_tiers`
+**Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`
 
 **Rate limiting:** 600 ms delay between requests, parallelism = 2.
 
@@ -257,32 +282,21 @@ https://pnm.clearesult.com/
 
 **Source:** [xcelenergy.com](https://www.xcelenergy.com) — Xcel Energy (multi-state utility)
 
-**Approach:** Per-state two-phase sitemap crawl + Colly HTML scraping. Iterates three state subdomains in sequence.
+**Approach:** Single corporate sitemap crawl + Colly HTML scraping. All rebate pages live on the main `xcelenergy.com` domain.
 
-**States covered:**
+**Sitemap:** `https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml`
 
-| Subdomain | State | Service Territory | Representative ZIP |
-|-----------|-------|-------------------|-------------------|
-| `co.my.xcelenergy.com` | CO | Xcel Energy Colorado Service Area | `80202` (Denver) |
-| `mn.my.xcelenergy.com` | MN | Xcel Energy Minnesota Service Area | `55401` (Minneapolis) |
-| `wi.my.xcelenergy.com` | WI | Xcel Energy Wisconsin Service Area | `53202` (Milwaukee) |
+**States covered:** CO, MN, WI, ND, SD, NM — state is auto-detected from page text rather than URL subdomain.
 
-For each state:
-1. Fetches `https://{state}.my.xcelenergy.com/sitemap.xml` and filters by keywords.
-2. Falls back to seed paths under `https://{state}.my.xcelenergy.com/s/` if sitemap fails.
-3. Visits each page, infers the service territory from page content when possible (overrides the default).
+1. Fetches the static corporate XML sitemap and applies `xcelFilterCfg` (`FilterConfig`) with extensive exclusion-first logic and `MinPathSegments: 3` hub-page detection.
+2. Falls back to hardcoded seed URLs under `https://www.xcelenergy.com/programs_and_rebates/` if sitemap fails.
+3. Visits each page; state is extracted from page text via `xcelStateFromText()` (matches "Colorado" → `"CO"`, "Minnesota" → `"MN"`, etc.). Service territory and representative ZIP are derived from detected state.
 
-**URL filter keywords:** `rebate`, `incentive`, `saving`, `efficiency`, `heat-pump`, `thermostat`, `electric-vehicle`, `ev-charger`, `solar`, `weatheriz`, `appliance`, `lighting`, `demand-response`, `energy-saving`, `rate-option`, `bill-credit`
+**URL filter — hub page detection:** URLs with fewer than 3 path segments are rejected as category/hub pages (e.g. `/programs_and_rebates/equipment_rebates` depth=2 → excluded; `/programs_and_rebates/equipment_rebates/lighting_efficiency` depth=3 → included).
 
-**Seed URL paths per state (fallback):**
-```
-/s/energy-saving-programs
-/s/rebates-incentives
-/s/residential-rebates
-/s/business-rebates
-/s/electric-vehicles
-/s/renewable-energy
-```
+**URL filter — exclusions (checked first):** Corporate (`/company/`, `/about_us/`, `/investor_relations/`, `/careers/`, `/media_room/`, `/news_releases/`, etc.), infrastructure (`/rates_and_regulations/`, `/filings/`, `/outages_and_emergencies/`, `/billing_and_payment/`, `/power_plants/`, etc.), pattern exclusions (`_tool`, `_finder`, `_calculator`, `_advisor`, `/ways_to_save`, `_sign_up`, `_faq`, `_how_it_works`, `_case_study`, `/my_account`, etc.)
+
+**URL filter — inclusions (must match one):** `rebate`, `rebates`, `incentive`, `reward`, `savings`, `efficient`, `upgrade`, `heat_pump`, `heat-pump`, `hvac`, `appliance`, `thermostat`, `solar`, `electric_vehicle`, `battery_storage`, `assistance`, `low_income`, `demand_response`, `peak_reward`, `saver`, `lighting`, `insulation`, `programs_and_rebates`, `program`
 
 **ID generation:** `DeterministicID("xcel_energy", pageURL)` — stable per page URL.
 
@@ -294,9 +308,9 @@ For each state:
 | `Source` | `"xcel_energy"` (hardcoded) |
 | `ProgramName` | `<h1>` text; fallback: `<title>` stripped of suffix |
 | `UtilityCompany` | `"Xcel Energy"` (hardcoded) |
-| `State` | From state config — `"CO"`, `"MN"`, or `"WI"` |
-| `ZipCode` | From state config — `"80202"`, `"55401"`, or `"53202"` |
-| `ServiceTerritory` | From state config; overridden if page text mentions a specific state (e.g. "Colorado") |
+| `State` | Auto-detected from page text via `xcelStateFromText()` — e.g. "Colorado" → `"CO"`, "Minnesota" → `"MN"` |
+| `ZipCode` | Derived from detected state via `xcelZIPFromState()` — e.g. CO→`80202`, MN→`55401`, WI→`53202`, NM→`87102`, ND→`58501`, SD→`57501` |
+| `ServiceTerritory` | Derived from detected state via `xcelTerritoryFromState()` — e.g. `"Xcel Energy Colorado Service Area"` |
 | `IncentiveDescription` | `<meta name="description">` content; fallback: first `<p>` with >40 chars |
 | `IncentiveFormat` | Parsed via `ParseAmount()` — `dollar_amount`, `percent`, `per_unit`, or `narrative` |
 | `IncentiveAmount` | First dollar/percent amount found in page text, `<p>`, `<li>`, `<td>`, `<strong>` |
@@ -306,15 +320,20 @@ For each state:
 | `ContactPhone` | First US phone number found in page text (regex) |
 | `ContactEmail` | First email address found in page text (regex) |
 | `CategoryTag` | Inferred from URL path and title keywords — see [Category Inference](#category-inference) |
+| `ContractorRequired` | `extractContractorRequired(pageText)` |
+| `EnergyAuditRequired` | `extractEnergyAuditRequired(pageText)` |
+| `CustomerType` | `extractCustomerType(url + title)` |
+| `StartDate` | `extractStartDate(pageText)` |
+| `EndDate` | `extractEndDate(pageText)` |
 | `AvailableNationwide` | `false` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, "Xcel Energy")` |
 | `ScraperVersion` | From config |
 
-**Fields NOT populated:** `segment`, `portfolio`, `customer_type`, `maximum_amount`, `start_date`, `end_date`, `contractor_required`, `energy_audit_required`, `image_url`, `rate_tiers`
+**Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`
 
-**Rate limiting:** 600 ms delay between requests, parallelism = 2 per state domain.
+**Rate limiting:** 600 ms delay between requests, parallelism = 2.
 
-**Configuration:** No required env vars. To restrict which states are scraped, modify `XcelEnergyScraper.States` field in `cmd/scraper/main.go`.
+**Configuration:** No required env vars (uses hardcoded corporate sitemap URL).
 
 ---
 
@@ -347,11 +366,19 @@ Multiple categories can be returned for a single page (e.g., a heat pump water h
 
 All utility HTML scrapers share these extraction helpers:
 
-| Function | Description |
-|----------|-------------|
-| `extractPhone(text)` | Returns the first US phone number found in the text using regex `(?:\+1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})` |
-| `extractEmail(text)` | Returns the first email address found using regex `[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}` |
-| `inferCategories(text)` | Returns `[]string` of category tags inferred from keyword matching against the combined URL + title text |
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `extractPhone(text)` | `string` | First US phone number found using regex `(?:\+1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})` |
+| `extractEmail(text)` | `string` | First email address found using regex `[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}` |
+| `extractContractorRequired(text)` | `*bool` | `true` if text matches "licensed contractor", "approved contractor", "trade ally", "contractor required", "participating contractor", or "must be installed/completed by" |
+| `extractEnergyAuditRequired(text)` | `*bool` | `true` if text matches "energy audit required", "home assessment required", "home energy assessment", "home energy checkup required", or "pre-inspection required" |
+| `extractCurrentlyActive(text)` | `*bool` | `false` if text signals program ended ("expired", "program ended", "no longer available", "funding exhausted", "waitlist"); `true` otherwise |
+| `extractLowIncomeEligible(text)` | `*bool` | `true` if text mentions income-qualified eligibility (CARE, FERA, LIHEAP, "low-income", "income-qualified", AMI percentage) |
+| `extractCustomerType(urlAndTitle)` | `string` | `"Residential"`, `"Commercial"`, `"Residential, Commercial"`, or `""` based on URL and title keywords |
+| `extractRecipient(text)` | `string` | `"Homeowner"`, `"Renter"`, `"Landlord"`, `"Small Business Owner"`, or `"Business Owner"` |
+| `extractStartDate(text)` | `string` | Date string following "effective", "starting", "beginning", "as of", or "from" keywords |
+| `extractEndDate(text)` | `string` | Date string following "ends", "expires", "through", "until", "deadline", "valid through", or "offer ends" keywords |
+| `inferCategories(text)` | `[]string` | Category tags inferred from 50+ keyword rules against the combined URL + title text; returns `["Energy Efficiency"]` when no keywords match |
 
 ---
 
@@ -361,8 +388,17 @@ All utility scrapers use `FetchSitemapURLs()` and `FilterSitemapURLs()`:
 
 | Function | Description |
 |----------|-------------|
-| `FetchSitemapURLs(ctx, client, url)` | Fetches a sitemap and returns all `<loc>` entries. Handles both `<sitemapindex>` (recursively fetches child sitemaps up to 3 levels deep) and `<urlset>` (leaf) formats. Returns empty slice on error — scrapers fall back to seed URLs. |
-| `FilterSitemapURLs(urls, keywords)` | Returns only those URLs whose full URL string contains at least one of the provided keywords (case-insensitive). |
+| `FetchSitemapURLs(ctx, client, url)` | Fetches a sitemap and returns all `<loc>` entries. Handles both `<sitemapindex>` (recursively fetches child sitemaps up to 3 levels deep) and `<urlset>` (leaf) formats. Silently skips child sitemaps that return HTML error pages. Returns empty slice on error — scrapers fall back to seed URLs. |
+| `FilterSitemapURLs(urls, cfg FilterConfig)` | Applies a `FilterConfig` to a URL list. Exclusion keywords are checked first (any match → reject). Then path depth is checked via `MinPathSegments` (URLs with fewer segments → reject). Finally, at least one inclusion keyword must match. |
+
+```go
+// FilterConfig holds the two-pass URL filtering configuration.
+type FilterConfig struct {
+    ExcludeKeywords []string  // checked first — any match rejects the URL
+    IncludeKeywords []string  // at least one must match after exclusions pass
+    MinPathSegments int       // URLs with fewer path segments are rejected (hub detection)
+}
+```
 
 ---
 

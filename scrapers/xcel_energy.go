@@ -1,24 +1,28 @@
 // xcel_energy.go — Xcel Energy multi-state rebate and incentive scraper.
 //
-// Xcel Energy operates in Colorado, Minnesota, Texas, and other states.
-// This scraper targets the three main state portals from the SAS agent:
-// CO, MN, and WI (Texas Xcel operates as Southwestern Public Service and
-// has its own brand separate from rebate discovery here).
+// Xcel Energy operates in Colorado, Minnesota, Texas (SPS), and other states.
+// All rebate program pages live on the main corporate website:
 //
-// URL pattern: https://{state}.my.xcelenergy.com/
-//   - CO: https://co.my.xcelenergy.com/
-//   - MN: https://mn.my.xcelenergy.com/
-//   - WI: https://wi.my.xcelenergy.com/
+//	https://www.xcelenergy.com/programs_and_rebates/...
+//
+// The sitemap used is the static corporate sitemap:
+//
+//	https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml
+//
+// URL filtering mirrors the exclusion-first logic from the SmythOS
+// rf-crawler-pnm-srp-coned-xcel-peninsul LLM prompt for Xcel Energy.
+// Hub-page detection is implemented via MinPathSegments = 3 — generic
+// category pages (depth 2) are excluded; specific program pages (depth 3+)
+// are included.
 //
 // Source defaults:
-//   - Source:           "xcel_energy"
-//   - UtilityCompany:   "Xcel Energy"
-//   - State / Territory: extracted from the URL subdomain or page content
+//   - Source:         "xcel_energy"
+//   - UtilityCompany: "Xcel Energy"
+//   - State:          extracted from page content (CO, MN, etc.)
 package scrapers
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -31,71 +35,292 @@ import (
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const (
+	// xcelSitemapURL is the static XML sitemap for the main Xcel Energy site.
+	xcelSitemapURL   = "https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml"
 	xcelUtility      = "Xcel Energy"
 	xcelSourceName   = "xcel_energy"
 	xcelDefaultApply = "Visit the official Xcel Energy program website to learn about eligibility requirements and submit your application."
 )
 
-// xcelStateConfig maps state subdomain → (state abbr, service territory, representative ZIP).
-var xcelStateConfig = map[string]struct {
-	State       string
-	Territory   string
-	RepZIP      string
-	SitemapURL  string
-}{
-	"co": {
-		State:      "CO",
-		Territory:  "Xcel Energy Colorado Service Area",
-		RepZIP:     "80202",
-		SitemapURL: "https://co.my.xcelenergy.com/sitemap.xml",
+// xcelFilterCfg mirrors the Xcel Energy URL decision logic from the SmythOS
+// crawler LLM prompt.  Exclusion-first: corporate/infrastructure patterns are
+// checked before any inclusion keyword.  MinPathSegments = 3 rejects hub
+// pages that end with a generic category name.
+var xcelFilterCfg = FilterConfig{
+	// ── ABSOLUTE EXCLUSIONS — Corporate/Company ────────────────────────────
+	// Any URL containing these segments is ALWAYS rejected.
+	ExcludeKeywords: []string{
+		// Corporate / company info
+		"/company/",
+		"/about_us/",
+		"/investor_relations/",
+		"/board_of_directors/",
+		"/leadership/",
+		"/media_room/",
+		"/news_releases/",
+		"/careers/",
+		"/corporate_governance/",
+		"/corporate_responsibility",
+
+		// Infrastructure & operations
+		"/rates_and_regulations/",
+		"/filings/",
+		"/rate_cases/",
+		"/outages_and_emergencies/",
+		"/storm_center/",
+		"/customer_support/",
+		"/vegetation_management/",
+		"/contact_us",
+		"/billing_and_payment/",
+		"/start,_stop,_transfer/",
+		"/installing_and_connecting",
+		"/energy_portfolio/",
+		"/power_plants/",
+		"/natural_gas/projects/",
+		"/working_with_us/",
+		"/trade_partners/",
+		"/suppliers/",
+		"/municipalities/",
+		"/landlords/",
+		"/builders/",
+		"/renewable_developer",
+		"/how_to_interconnect/",
+
+		// Community & environment (non-program)
+		"/community/",
+		"/environment/",
+		"/renewable_development_fund/",
+		"/stakeholder_group/",
+
+		// Pattern exclusions — tools, FAQs, guides (not rebate programs)
+		"/assessment",
+		"/audit",
+		"/analysis",
+		"/profile",
+		"_tool",
+		"/tool/",
+		"_finder",
+		"_calculator",
+		"_advisor",
+		"/ways_to_save",
+		"/keeping_your_bill_low",
+		"/energy_saving_tips",
+		"_sign_up",
+		"_enrollment",
+		"_registration",
+		"_alerts",
+		"_application_process",
+		"_how_it_works",
+		"/get_started",
+		"_buying_guide",
+		"_customer_guide",
+		"/resources",
+		"/faq",
+		"_faq",
+		"/terms_and_conditions",
+		"_pricing_terms",
+		"_product_content_label",
+		"/project_-_",
+		"_case_study",
+		"_success_stories",
+		"/completed_projects/",
+		"/active_projects/",
+		"/scheduling",
+		"/pay_arrangements",
+		"/net_metering",
+		"/stray_voltage",
+		"_financing",
+		"/pilot",
+		"/working_with_third_party",
+		"is_solar_right",
+		"_participant_portal",
+		"/my_account",
+		"/mobile_app",
 	},
-	"mn": {
-		State:      "MN",
-		Territory:  "Xcel Energy Minnesota Service Area",
-		RepZIP:     "55401",
-		SitemapURL: "https://mn.my.xcelenergy.com/sitemap.xml",
+
+	// ── Inclusions ─────────────────────────────────────────────────────────
+	// At least one must match after all exclusion checks pass.
+	IncludeKeywords: []string{
+		// Money-back / incentive
+		"rebate",
+		"rebates",
+		"incentive",
+		"incentives",
+		"reward",
+		"rewards",
+		"credit",
+		"cashback",
+		"refund",
+		"bonus",
+		"discount",
+
+		// Reduced costs / savings
+		"savings",
+		"affordable",
+		"low-cost",
+		"free",
+		"assistance",
+		"income_qualified",
+		"low_income",
+		"income-qualified",
+		"poweron",
+		"affordability",
+
+		// Energy efficiency
+		"efficient",
+		"efficiency",
+		"upgrade",
+		"improvement",
+		"conservation",
+		"optimize",
+		"insulation",
+		"weatheriz",
+
+		// Equipment programs
+		"heat_pump",
+		"heat-pump",
+		"hvac",
+		"mini-split",
+		"ground_source",
+		"geothermal",
+		"appliance",
+		"water_heater",
+		"thermostat",
+		"lighting",
+		"furnace",
+		"boiler",
+		"cooling",
+		"heating",
+		"refrigeration",
+
+		// Clean energy
+		"solar",
+		"wind",
+		"renewable",
+		"battery_storage",
+		"battery-storage",
+
+		// EV
+		"electric_vehicle",
+		"electric-vehicle",
+		"_ev_",
+		"/ev_",
+		"ev_rate",
+		"ev-rate",
+
+		// Demand response / rate programs
+		"demand_response",
+		"demand-response",
+		"peak_partner",
+		"peak_reward",
+		"saver",
+		"saver's_switch",
+		"time-of-use",
+		"time_of_use",
+		"load_management",
+		"interruptible",
+
+		// Home services
+		"homesmart",
+
+		// Programs
+		"programs_and_rebates",
+		"program",
 	},
-	"wi": {
-		State:      "WI",
-		Territory:  "Xcel Energy Wisconsin Service Area",
-		RepZIP:     "53202",
-		SitemapURL: "https://wi.my.xcelenergy.com/sitemap.xml",
-	},
+
+	// Minimum path depth to reject hub/category pages.
+	// ❌ /programs_and_rebates/equipment_rebates           (depth 2 — hub)
+	// ✅ /programs_and_rebates/equipment_rebates/lighting  (depth 3 — program)
+	MinPathSegments: 3,
 }
 
-// xcelRebateKeywords are URL substrings that signal rebate/incentive content.
-var xcelRebateKeywords = []string{
-	"rebate", "incentive", "saving", "efficiency", "heat-pump",
-	"thermostat", "electric-vehicle", "ev-charger", "solar",
-	"weatheriz", "appliance", "lighting", "demand-response",
-	"energy-saving", "rate-option", "bill-credit",
-}
-
-// xcelSeedURLs returns fallback URLs for a given state subdomain.
-func xcelSeedURLs(stateSub string) []string {
-	base := fmt.Sprintf("https://%s.my.xcelenergy.com", stateSub)
+// xcelSeedURLs are well-known Xcel program pages used as fallback.
+func xcelSeedURLs() []string {
 	return []string{
-		base + "/s/energy-saving-programs",
-		base + "/s/rebates-incentives",
-		base + "/s/residential-rebates",
-		base + "/s/business-rebates",
-		base + "/s/electric-vehicles",
-		base + "/s/renewable-energy",
+		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/heating_and_cooling/heat_pump_rebates",
+		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/equipment_and_appliances/water_heater_rebates",
+		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/equipment_and_appliances/energy_star_appliance_rebates",
+		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/heating_and_cooling/ac_rewards_smart_thermostat_program",
+		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/solar/solar_rewards_for_residences",
+		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/affordable_energy/income-qualified_rebate_programs",
+		"https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates/equipment_rebates/lighting_efficiency",
+		"https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates/equipment_rebates/heating_efficiency",
+		"https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates/rate_programs/peak_partner_rewards",
+	}
+}
+
+// ── State detection ───────────────────────────────────────────────────────────
+
+// xcelStateFromText tries to infer the state from page text / URL.
+// Returns a 2-letter state code or empty string if unknown.
+func xcelStateFromText(urlAndText string) string {
+	lower := strings.ToLower(urlAndText)
+	switch {
+	case strings.Contains(lower, "colorado"):
+		return "CO"
+	case strings.Contains(lower, "minnesota"):
+		return "MN"
+	case strings.Contains(lower, "wisconsin"):
+		return "WI"
+	case strings.Contains(lower, "north dakota"):
+		return "ND"
+	case strings.Contains(lower, "south dakota"):
+		return "SD"
+	case strings.Contains(lower, "new mexico"):
+		return "NM"
+	case strings.Contains(lower, "wyoming"):
+		return "WY"
+	default:
+		return ""
+	}
+}
+
+// xcelTerritoryFromState returns the service territory label for a state.
+func xcelTerritoryFromState(state string) string {
+	switch state {
+	case "CO":
+		return "Xcel Energy Colorado Service Area"
+	case "MN":
+		return "Xcel Energy Minnesota Service Area"
+	case "WI":
+		return "Xcel Energy Wisconsin Service Area"
+	case "ND", "SD":
+		return "Xcel Energy Northern States Power Service Area"
+	case "NM":
+		return "Xcel Energy New Mexico Service Area"
+	default:
+		return "Xcel Energy Service Area"
+	}
+}
+
+// xcelZIPFromState returns a representative ZIP for a state.
+func xcelZIPFromState(state string) string {
+	switch state {
+	case "CO":
+		return "80202" // Denver
+	case "MN":
+		return "55401" // Minneapolis
+	case "WI":
+		return "53202" // Milwaukee
+	case "ND":
+		return "58102" // Fargo
+	case "SD":
+		return "57101" // Sioux Falls
+	case "NM":
+		return "87501" // Santa Fe
+	default:
+		return ""
 	}
 }
 
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
-// XcelEnergyScraper discovers and scrapes rebate programs from xcelenergy.com
-// across Colorado, Minnesota, and Wisconsin.
+// XcelEnergyScraper discovers and scrapes rebate programs from xcelenergy.com.
 type XcelEnergyScraper struct {
 	CollyBase
 	ScraperVersion string
 	Logger         *zap.Logger
 	HTTPClient     *http.Client
-	// States restricts scraping to specific state subdomains.
-	// Defaults to ["co", "mn", "wi"] when empty.
-	States []string
 }
 
 // Name implements Scraper.
@@ -103,77 +328,35 @@ func (s *XcelEnergyScraper) Name() string { return xcelSourceName }
 
 // Scrape implements Scraper.
 func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
-	states := s.States
-	if len(states) == 0 {
-		states = []string{"co", "mn", "wi"}
-	}
-
 	client := s.httpClient()
-	seen := make(map[string]bool)
-	var all []models.Incentive
 
-	for _, stateSub := range states {
-		cfg, ok := xcelStateConfig[stateSub]
-		if !ok {
-			s.Logger.Warn("xcel_energy: unknown state subdomain", zap.String("state", stateSub))
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return all, ctx.Err()
-		default:
-		}
-
-		stateIncentives := s.scrapeState(ctx, client, stateSub, cfg.State, cfg.Territory, cfg.RepZIP, cfg.SitemapURL, seen)
-		all = append(all, stateIncentives...)
-
-		s.Logger.Info("xcel_energy: state complete",
-			zap.String("state", stateSub),
-			zap.Int("programs", len(stateIncentives)),
-		)
-	}
-
-	s.Logger.Info("xcel_energy: scrape complete", zap.Int("total_programs", len(all)))
-	return all, nil
-}
-
-// scrapeState handles one state subdomain.
-func (s *XcelEnergyScraper) scrapeState(
-	ctx context.Context,
-	client *http.Client,
-	stateSub, state, territory, repZIP, sitemapURL string,
-	seen map[string]bool,
-) []models.Incentive {
-	domain := fmt.Sprintf("%s.my.xcelenergy.com", stateSub)
-
-	allURLs, err := FetchSitemapURLs(ctx, client, sitemapURL)
+	// Step 1: fetch and filter URLs from the corporate sitemap.
+	allURLs, err := FetchSitemapURLs(ctx, client, xcelSitemapURL)
 	var urls []string
 	if err != nil || len(allURLs) == 0 {
 		if err != nil {
-			s.Logger.Warn("xcel_energy: sitemap failed, using seeds",
-				zap.String("state", stateSub), zap.Error(err))
+			s.Logger.Warn("xcel_energy: sitemap fetch failed, using seed URLs", zap.Error(err))
 		}
-		urls = xcelSeedURLs(stateSub)
+		urls = xcelSeedURLs()
 	} else {
-		urls = FilterSitemapURLs(allURLs, xcelRebateKeywords)
+		urls = FilterSitemapURLs(allURLs, xcelFilterCfg)
 		if len(urls) == 0 {
-			urls = xcelSeedURLs(stateSub)
+			s.Logger.Warn("xcel_energy: no URLs passed filter, using seed URLs")
+			urls = xcelSeedURLs()
 		}
 	}
 
-	s.Logger.Info("xcel_energy: scraping state",
-		zap.String("state", stateSub),
-		zap.Int("urls", len(urls)),
-	)
+	s.Logger.Info("xcel_energy: scraping URLs", zap.Int("count", len(urls)))
 
-	var stateIncentives []models.Incentive
+	// Step 2: visit each page and extract incentive data.
+	seen := make(map[string]bool)
+	var all []models.Incentive
 
-	c := s.newStateCollector(domain)
+	c := s.newCollector("www.xcelenergy.com")
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
-		inc := s.extractPage(e, pageURL, state, territory, repZIP)
+		inc := s.extractPage(e, pageURL)
 		if inc == nil {
 			return
 		}
@@ -181,13 +364,13 @@ func (s *XcelEnergyScraper) scrapeState(
 			return
 		}
 		seen[inc.ID] = true
-		stateIncentives = append(stateIncentives, *inc)
+		all = append(all, *inc)
 	})
 
 	for _, u := range urls {
 		select {
 		case <-ctx.Done():
-			return stateIncentives
+			return all, ctx.Err()
 		default:
 		}
 		if err := c.Visit(u); err != nil {
@@ -196,13 +379,14 @@ func (s *XcelEnergyScraper) scrapeState(
 		}
 	}
 
-	return stateIncentives
+	s.Logger.Info("xcel_energy: scrape complete", zap.Int("programs", len(all)))
+	return all, nil
 }
 
 // extractPage extracts a single Incentive from an Xcel Energy rebate page.
 func (s *XcelEnergyScraper) extractPage(
 	e *colly.HTMLElement,
-	pageURL, state, territory, repZIP string,
+	pageURL string,
 ) *models.Incentive {
 	programName := strings.TrimSpace(e.ChildText("h1"))
 	if programName == "" {
@@ -245,18 +429,15 @@ func (s *XcelEnergyScraper) extractPage(
 		description = description[:497] + "..."
 	}
 
-	// Service territory — override if content mentions a specific state area.
-	effectiveTerritory := territory
-	if strings.Contains(strings.ToLower(e.Text), "colorado") {
-		effectiveTerritory = "Xcel Energy Colorado Service Area"
-	} else if strings.Contains(strings.ToLower(e.Text), "minnesota") {
-		effectiveTerritory = "Xcel Energy Minnesota Service Area"
-	} else if strings.Contains(strings.ToLower(e.Text), "wisconsin") {
-		effectiveTerritory = "Xcel Energy Wisconsin Service Area"
-	}
+	// Full page text for regex extraction.
+	pageText := e.Text
+
+	// State detection — infer from page text + URL (Xcel is multi-state).
+	state := xcelStateFromText(pageURL + " " + pageText)
+	territory := xcelTerritoryFromState(state)
+	repZIP := xcelZIPFromState(state)
 
 	// Amount extraction.
-	pageText := e.Text
 	format, amount := ParseAmount(pageText)
 	if format == "narrative" {
 		e.ForEach("p, li, td, h2, h3, strong", func(_ int, el *colly.HTMLElement) {
@@ -283,12 +464,24 @@ func (s *XcelEnergyScraper) extractPage(
 			strings.Contains(text, "submit") || strings.Contains(text, "enroll") {
 			if strings.HasPrefix(href, "http") {
 				applicationURL = href
+			} else if strings.HasPrefix(href, "/") {
+				applicationURL = "https://www.xcelenergy.com" + href
 			}
 		}
 	})
 
+	// ── Boolean / structured field extraction (from html_helpers.go) ────────
+	contractorRequired := extractContractorRequired(pageText)
+	energyAuditRequired := extractEnergyAuditRequired(pageText)
+	customerType := extractCustomerType(pageURL + " " + programName)
+	startDate := extractStartDate(pageText)
+	endDate := extractEndDate(pageText)
+
+	// Contact info.
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
+
+	// Category inference.
 	categories := inferCategories(pageURL + " " + strings.ToLower(programName))
 
 	if format == "" {
@@ -301,9 +494,7 @@ func (s *XcelEnergyScraper) extractPage(
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = xcelUtility
-	inc.State = models.PtrString(state)
-	inc.ZipCode = models.PtrString(repZIP)
-	inc.ServiceTerritory = models.PtrString(effectiveTerritory)
+	inc.ServiceTerritory = models.PtrString(territory)
 	inc.IncentiveDescription = models.PtrString(description)
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(xcelDefaultApply)
@@ -311,6 +502,14 @@ func (s *XcelEnergyScraper) extractPage(
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
 	inc.ProgramHash = models.ComputeProgramHash(programName, xcelUtility)
+
+	// Only set state / ZIP if we detected them from the page.
+	if state != "" {
+		inc.State = models.PtrString(state)
+	}
+	if repZIP != "" {
+		inc.ZipCode = models.PtrString(repZIP)
+	}
 
 	if amount != nil {
 		inc.IncentiveAmount = amount
@@ -324,6 +523,21 @@ func (s *XcelEnergyScraper) extractPage(
 	if contactEmail != "" {
 		inc.ContactEmail = models.PtrString(contactEmail)
 	}
+	if contractorRequired != nil {
+		inc.ContractorRequired = contractorRequired
+	}
+	if energyAuditRequired != nil {
+		inc.EnergyAuditRequired = energyAuditRequired
+	}
+	if customerType != "" {
+		inc.CustomerType = models.PtrString(customerType)
+	}
+	if startDate != "" {
+		inc.StartDate = models.PtrString(startDate)
+	}
+	if endDate != "" {
+		inc.EndDate = models.PtrString(endDate)
+	}
 
 	return &inc
 }
@@ -335,7 +549,7 @@ func (s *XcelEnergyScraper) httpClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
 }
 
-func (s *XcelEnergyScraper) newStateCollector(domain string) *colly.Collector {
+func (s *XcelEnergyScraper) newCollector(domain string) *colly.Collector {
 	s.CollyBase.AllowedDomain = domain
 	s.CollyBase.Parallelism = 2
 	s.CollyBase.Delay = 600 * time.Millisecond

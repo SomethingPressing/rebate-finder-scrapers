@@ -1,31 +1,33 @@
 # Implementation Plan: Utility Sitemap Scrapers
 
-**Source file:** `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth`
-**Status:** Partially implemented — Con Edison, PNM, Xcel Energy complete; SRP and Peninsula Clean Energy pending
+**Source file:** `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth`  
+**Scraper source file:** `rf-scraper-pnm-srp-coned-xcel-peninsul-mobyqg49ph.smyth`  
+**Status:** ✅ Con Edison, PNM, Xcel Energy fully implemented; SRP and Peninsula Clean Energy pending  
+**Estimated Complexity:** Large
 
 ---
 
 ## Overview
 
-Implement five new Go scrapers for utility companies whose rebate/incentive pages are discovered dynamically via XML sitemaps. Unlike the existing API-based scrapers (DSIRE, Rewiring America), these utilities don't expose structured APIs — their program data lives on marketing web pages.
+Five new Go scrapers for utility companies whose rebate/incentive pages are discovered dynamically via XML sitemaps. Unlike the existing API-based scrapers (DSIRE, Rewiring America), these utilities don't expose structured APIs — their program data lives on marketing web pages.
 
-The SmythOS agent this plan is based on uses a two-phase approach:
+The SmythOS agent uses a two-phase approach:
 1. **Sitemap crawl → URL discovery**: Fetch the utility's XML sitemap(s), then use an LLM to identify which URLs describe rebate/incentive programs.
 2. **Page scraping**: Fetch each discovered URL and extract program data.
 
-The Go implementation replaces the LLM-based URL filter with a deterministic keyword/pattern filter derived from the same decision framework the LLM prompts encode.
+The Go implementation replaces the LLM-based URL filter with a deterministic keyword/pattern filter (`FilterConfig`) derived from the same decision framework the LLM prompts encode.
 
 ---
 
 ## Utilities to Implement
 
-| Scraper | Source ID | State(s) | Utility Type | Sitemap URL |
-|---------|-----------|----------|--------------|-------------|
-| SRP (Salt River Project) | `srp` | AZ | Electric utility | `https://www.srpnet.com/sitemap.xml` |
-| Xcel Energy | `xcel_energy` | CO, MN, TX, NM, WI, SD | Electric/Gas utility | `https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml` |
-| Con Edison | `con_edison` | NY, NJ | Electric/Gas utility | `https://www.coned.com/sitemap_coned_en.xml` |
-| PNM (Public Service Co. of NM) | `pnm` | NM | Electric utility | `https://www.pnm.com/sitemap.xml` (sitemap index) |
-| Peninsula Clean Energy | `peninsula_clean_energy` | CA (San Mateo County) | Community Choice Aggregator (CCA) | Three sitemaps (see below) |
+| Scraper | Source ID | State(s) | Status | Sitemap URL |
+|---------|-----------|----------|--------|-------------|
+| Con Edison | `con_edison` | NY | ✅ Complete | `https://www.coned.com/sitemap.xml` |
+| PNM | `pnm` | NM | ✅ Complete | `https://www.pnm.com/sitemap.xml` (index) |
+| Xcel Energy | `xcel_energy` | CO, MN, WI, ND, SD, NM | ✅ Complete | `https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml` |
+| SRP (Salt River Project) | `srp` | AZ | ⬜ Pending | `https://www.srpnet.com/sitemap.xml` |
+| Peninsula Clean Energy | `peninsula_clean_energy` | CA | ⬜ Pending | Three sitemaps (see below) |
 
 ---
 
@@ -35,17 +37,21 @@ The Go implementation replaces the LLM-based URL filter with a deterministic key
 For each utility:
 
   1. Sitemap Fetch
-     └─ HTTP GET sitemap URL(s)
-     └─ Parse XML: handle both <sitemapindex> and <urlset>
-     └─ For sitemapindex: recursively fetch child sitemaps
+     └─ FetchSitemapURLs(ctx, client, sitemapURL)
+     └─ Handles both <sitemapindex> (recursive, depth ≤ 3) and <urlset> (leaf)
+     └─ Skips HTML error pages ("Access Denied", <!DOCTYPE html>)
 
-  2. URL Filter
-     └─ Apply include/exclude keyword rules
-     └─ Return candidate rebate/incentive page URLs
+  2. URL Filter (FilterSitemapURLs)
+     └─ Exclusion check FIRST (any match → reject)
+     └─ Path-depth check (hub page detection via MinPathSegments)
+     └─ Inclusion check (must match ≥1 keyword)
 
   3. Page Scrape (Colly)
      └─ Visit each candidate URL
      └─ Extract: program name, description, amount, apply URL, etc.
+     └─ Boolean fields via html_helpers: contractor_required, energy_audit_required,
+        customer_type, start_date, end_date
+     └─ Categories via inferCategories(url + title)
      └─ Build models.Incentive
 
   4. Stage
@@ -54,74 +60,62 @@ For each utility:
 
 ---
 
-## New Files
+## Implemented Files
 
 ```
 scrapers/
-├── sitemap_parser.go          ← shared: fetch + parse XML sitemaps (index + urlset)
-├── url_filter.go              ← shared: keyword-based URL include/exclude logic
-├── srp.go                     ← SRP scraper
-├── xcel_energy.go             ← Xcel Energy scraper
-├── con_edison.go              ← Con Edison scraper
-├── pnm.go                     ← PNM scraper
-└── peninsula_clean_energy.go  ← Peninsula Clean Energy scraper
+├── sitemap.go          ← FetchSitemapURLs + FilterSitemapURLs(FilterConfig)
+├── html_helpers.go     ← extractPhone, extractEmail, inferCategories (50+ keywords),
+│                          extractContractorRequired, extractEnergyAuditRequired,
+│                          extractCurrentlyActive, extractLowIncomeEligible,
+│                          extractCustomerType, extractRecipient,
+│                          extractStartDate, extractEndDate
+├── con_edison.go       ← Con Edison scraper (conEdisonFilterCfg)
+├── pnm.go              ← PNM scraper (pnmFilterCfg)
+└── xcel_energy.go      ← Xcel Energy scraper (xcelFilterCfg, MinPathSegments=3)
 ```
 
 ---
 
 ## Shared Infrastructure
 
-### `scrapers/sitemap_parser.go`
+### `scrapers/sitemap.go`
 
 ```go
-// FetchSitemapURLs fetches one or more sitemap URLs and returns all <loc> values.
-// Handles both <sitemapindex> (recursive) and <urlset> (leaf) formats.
-func FetchSitemapURLs(ctx context.Context, sitemapURLs []string) ([]string, error)
-```
-
-**Logic:**
-- HTTP GET each sitemap URL with a 30-second timeout
-- Parse XML: detect whether root element is `<sitemapindex>` or `<urlset>`
-- For `<sitemapindex>`: extract nested `<sitemap><loc>` values and recursively fetch them (depth limit: 3)
-- For `<urlset>`: extract `<url><loc>` values directly
-- Skip child sitemap entries that return HTTP errors or non-XML content (HTML error pages)
-- Return deduplicated flat list of all page URLs
-
-### `scrapers/url_filter.go`
-
-```go
-type URLFilterConfig struct {
-    IncludeKeywords []string   // any match → candidate
-    ExcludeKeywords []string   // any match → reject (checked first)
-    IncludePrefixes []string   // path starts with → candidate
-    ExcludePrefixes []string   // path starts with → reject (checked first)
+// FilterConfig holds the two-pass URL filtering configuration.
+type FilterConfig struct {
+    ExcludeKeywords []string  // checked FIRST — any match → reject
+    IncludeKeywords []string  // at least one must match after exclusions pass
+    MinPathSegments int       // reject URLs with fewer path segments (hub detection)
 }
 
-// FilterRebateURLs applies include/exclude rules to a list of URLs.
-// Exclusions are checked first; any exclusion match rejects the URL.
-// A URL must match at least one include keyword or prefix to be accepted.
-func FilterRebateURLs(urls []string, cfg URLFilterConfig) []string
+// FetchSitemapURLs fetches a sitemap URL and returns all <loc> entries.
+// Recursively resolves sitemap index references up to 3 levels.
+// Skips child sitemaps that return HTML error pages.
+func FetchSitemapURLs(ctx, client, sitemapURL) ([]string, error)
+
+// FilterSitemapURLs applies a FilterConfig to a list of URLs.
+// Exclusions are checked first; acceptance requires ≥1 inclusion match.
+func FilterSitemapURLs(urls []string, cfg FilterConfig) []string
 ```
 
-**Shared exclusion keywords** (apply to all utilities):
-```
-careers, investor, governance, board, leadership, media-room, press-release,
-newsroom, about-us, contact-us, terms-of-use, privacy-policy, sitemap,
-contractor, trade-ally, trade-partner, supplier, vendor, wholesale,
-grid, transmission, substation, power-plant, generation, tariff, rate-schedule,
-billing, payment, start-service, stop-service, account, login, search,
-faq (standalone path segment), outage, outages, safety, job-opening
-```
+### `scrapers/html_helpers.go`
 
-**Shared inclusion keywords:**
-```
-rebate, incentive, savings, discount, credit, refund, cashback, reward,
-assistance, income-qualified, income-eligible, low-income, limited-income,
-weatherization, heat-pump, heat pump, solar, ev-charging, electric-vehicle,
-appliance, hvac, insulation, thermostat, water-heater, lighting, battery-storage,
-demand-response, time-of-use, peak-rewards, energy-efficiency, save-money,
-save-energy, financial-assistance, program, upgrade
-```
+All extraction functions used by the three utility scrapers:
+
+| Function | Returns | Pattern |
+|----------|---------|---------|
+| `extractPhone(text)` | `string` | US phone regex |
+| `extractEmail(text)` | `string` | Email regex |
+| `extractContractorRequired(text)` | `*bool` | "licensed contractor", "trade ally" |
+| `extractEnergyAuditRequired(text)` | `*bool` | "energy audit required", "home assessment" |
+| `extractCurrentlyActive(text)` | `*bool` | "expired", "program ended", "no longer available" |
+| `extractLowIncomeEligible(text)` | `*bool` | CARE, FERA, LIHEAP, "low-income", "income-qualified" |
+| `extractCustomerType(urlAndTitle)` | `string` | "Residential" / "Commercial" / "" |
+| `extractRecipient(text)` | `string` | "Homeowner" / "Renter" / "Business Owner" / … |
+| `extractStartDate(text)` | `string` | "effective", "starting", "as of" + date |
+| `extractEndDate(text)` | `string` | "expires", "through", "deadline" + date |
+| `inferCategories(text)` | `[]string` | 50+ keyword→category rules |
 
 ---
 
@@ -129,324 +123,115 @@ save-energy, financial-assistance, program, upgrade
 
 ---
 
-### 1. SRP (Salt River Project)
+### 1. Con Edison ✅
 
-**Source ID:** `srp`
-**Utility Company:** `"Salt River Project"`
-**State:** `"AZ"`
-**Segment:** `["Residential", "Commercial"]`
-**Portfolio:** `["Utility"]`
+**Source ID:** `con_edison`  
+**Utility Company:** `"Con Edison"`  
+**State:** `NY` | **ZIP:** `10001`  
+**Sitemap:** `https://www.coned.com/sitemap.xml`
 
-**Sitemap:**
-```
-https://www.srpnet.com/sitemap.xml
-```
-Single flat sitemap (no sitemap index).
+**URL Filter (`conEdisonFilterCfg`):**
 
-**Additional include prefixes for SRP:**
-```
-/energy-savings-rebates/
-/customer-service/residential-electric/assistance
-/customer-service/residential-electric/economy
-/customer-service/residential-electric/discount
-/customer-service/residential-electric/weatherization
-/price-plans/
-```
+*Exclusions (checked first):*
+- Con Edison-specific: `/using-distributed-generation`, `/shop-for-energy-service`, `/our-energy-vision`, `/where-we-are-going`
+- Account/auth: `/my-account`, `/login`, `/sign-in`
+- Corporate: `/about-us`, `/careers`, `/media-center`, `/news`, `/investor`, `/safety`, `/outages`
+- Infrastructure: `/grid`, `/transmission`, `/tariff`, `/fault-current`
+- Support: `/contact-us`, `/terms-of-use`, `/privacy`, `/search`
 
-**Additional exclude prefixes for SRP:**
-```
-/doing-business/
-/about-srp/
-/irrigation/
-/water-
-/grid-water-management/
-/improvement-projects/
-/account/
-```
+*Inclusions (must match at least one):*
+- `rebate`, `incentive`, `save-money`, `saving`, `credit`, `reward`, `assistance`, `payment-plans-assistance`, `heat-pump`, `electric-vehicle`, `solar`, `financing`, `smart-usage`, `demand-response`, `weatherization`, `insulation`, `efficiency`, `low-income`, `income-eligible`, `find-incentive`, `incentive-viewer`
 
-**Page scraping selectors (Colly):**
-- Program name: `h1`, `h2.page-title`, `.program-title`
-- Description: `.program-description`, `.content-body p`
-- Incentive amount: text containing `$`, `%`, `/kWh`, `/ton` patterns
-- Apply URL: `a[href*="apply"], a[href*="rebate-form"], a[href*="enroll"]`
-- Category tags: breadcrumb segments or `<meta name="keywords">`
-
-**ID generation:**
-```go
-inc.ID = models.DeterministicID("srp", pageURL)
-```
-
-**Config:**
-```env
-SRP_BASE_URL=https://www.srpnet.com
-```
+**Fields extracted per page:**
+- Program name (h1 → title), description (meta → first paragraph)
+- Amount (ParseAmount), max amount, application URL (apply/enroll links)
+- ContractorRequired, EnergyAuditRequired, CustomerType, StartDate, EndDate
+- Phone, email, category tags
 
 ---
 
-### 2. Xcel Energy
+### 2. PNM ✅
 
-**Source ID:** `xcel_energy`
-**Utility Company:** `"Xcel Energy"`
-**State:** `""` (multi-state; derive from page content if possible, else leave empty)
-**Segment:** `["Residential", "Commercial"]`
-**Portfolio:** `["Utility"]`
+**Source ID:** `pnm`  
+**Utility Company:** `"PNM"`  
+**State:** `NM` | **ZIP:** `87102`  
+**Sitemap:** `https://www.pnm.com/sitemap.xml` (sitemap index — child sitemaps may return "Access Denied")
 
-**Sitemap:**
-```
-https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml
-```
-Flat sitemap, large (may contain thousands of URLs).
+**URL Filter (`pnmFilterCfg`):**
 
-**Additional include prefixes for Xcel:**
-```
-/programs_and_rebates/
-/savings_and_rebates/
-/energy_efficiency/
-/renewable_energy/
-/electric_vehicles/
-/business/programs/
-/residential/programs/
-```
+*Exclusions (checked first):*
+- Corporate: `/about-pnm`, `/corporate`, `/investor`, `/news`, `/careers`, `/jobs`
+- Legal: `/regulatory`, `/filings`, `/tariffs`, `/legal`, `/terms`, `/privacy`
+- Account: `/login`, `/sign-in`, `/my-account`
+- Operational: `/outages`, `/safety`, `/storm`, `/emergency`, `/start-service`, `/stop-service`, `/pay-bill`
+- Content: `/documents`, `/media`, `/education`, `/community`
+- Infrastructure: `/infrastructure`, `/grid`, `/generation`, `/power-plants`, `/transmission`
 
-**Additional exclude prefixes for Xcel:**
-```
-/company/
-/regulatory/
-/investor/
-/careers/
-/newsroom/
-/contact_us/
-/my_account/
-/outage/
-/tariff/
-```
+*Inclusions (be inclusive per LLM prompt):*
+- `save-money-and-energy`, `rebate`, `incentive`, `checkup`, `energy-efficiency`, `weatherization`, `appliance-recycling`, `solar`, `pnmskyblue`, `/ev`, `electric-vehicle`, `goodneighborfund`, `assistance`, `liheap`, `low-income`, `time-of-use`, `demand-response`, `quick-saver`, `heat-pump`, `thermostat`, `lighting`
 
-**Page scraping selectors:**
-- Program name: `h1.page-title`, `.program-header h1`, `.rebate-title`
-- Description: `.program-description`, `.content-area p`
-- Amount: text nodes near `$`, `%`, `up to`, `per unit`
-- Apply URL: `a[href*="rebate"], a[href*="apply"], a[href*="enroll"]`
+**Fields extracted per page:** Same as Con Edison above.
 
-**ID generation:**
-```go
-inc.ID = models.DeterministicID("xcel_energy", pageURL)
-```
-
-**Config:**
-```env
-XCEL_ENERGY_BASE_URL=https://www.xcelenergy.com
-```
+**Note:** PNM uses `pnm.clearesult.com` for some rebate applications; Colly allows this domain.
 
 ---
 
-### 3. Con Edison
+### 3. Xcel Energy ✅
 
-**Source ID:** `con_edison`
-**Utility Company:** `"Con Edison"`
-**State:** `"NY"`
-**Segment:** `["Residential", "Commercial"]`
-**Portfolio:** `["Utility"]`
+**Source ID:** `xcel_energy`  
+**Utility Company:** `"Xcel Energy"`  
+**State:** extracted from page text (CO/MN/WI/ND/SD/NM)  
+**Sitemap:** `https://www.xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml`
 
-**Sitemap:**
-```
-https://www.coned.com/sitemap_coned_en.xml
-```
-Single flat sitemap.
+**URL Filter (`xcelFilterCfg`):**
 
-**Additional include prefixes for ConEd:**
-```
-/en/save-energy/
-/en/rebates/
-/en/incentives/
-/en/discounts/
-/en/clean-energy/
-/en/electric-vehicles/
-/en/energy-efficiency/
-/en/financial-assistance/
-/en/for-my-home/
-/en/for-my-business/
-```
+*Absolute corporate exclusions (checked first):*
+- `/company/`, `/about_us/`, `/investor_relations/`, `/board_of_directors/`, `/leadership/`, `/media_room/`, `/news_releases/`, `/careers/`, `/corporate_governance/`, `/corporate_responsibility`
 
-**Additional exclude prefixes for ConEd:**
-```
-/en/about/
-/en/careers/
-/en/media/
-/en/contact/
-/en/help/billing/
-/en/outages/
-/en/services/
-/en/construction/
-/en/safety/
-```
+*Infrastructure exclusions:*
+- `/rates_and_regulations/`, `/filings/`, `/rate_cases/`, `/outages_and_emergencies/`, `/storm_center/`, `/customer_support/`, `/contact_us`, `/billing_and_payment/`, `/power_plants/`, `/trade_partners/`, `/suppliers/`, etc.
 
-**Page scraping selectors:**
-- Program name: `h1.hero__title`, `.program-name`, `h1`
-- Description: `.program-description p`, `.content__body p`
-- Amount: text near `$`, `%`, `up to`, `per appliance`
-- Apply URL: `a[href*="apply"]`, `a[href*="rebate"]`, `a.cta-button`
+*Pattern exclusions (non-program pages):*
+- `_tool`, `_finder`, `_calculator`, `_advisor`, `/ways_to_save`, `/energy_saving_tips`, `_sign_up`, `_enrollment`, `_faq`, `_how_it_works`, `_case_study`, `/my_account`, etc.
 
-**ID generation:**
-```go
-inc.ID = models.DeterministicID("con_edison", pageURL)
-```
+*Hub page detection:*
+- `MinPathSegments: 3` — URLs with fewer than 3 path segments are hub/category pages and excluded
+- ❌ `/programs_and_rebates/equipment_rebates` (depth 2 — hub)
+- ✅ `/programs_and_rebates/equipment_rebates/lighting_efficiency` (depth 3 — specific program)
 
-**Config:**
-```env
-CONED_BASE_URL=https://www.coned.com
-```
+*Inclusions:*
+- `rebate`, `incentive`, `reward`, `savings`, `efficient`, `upgrade`, `heat_pump`, `appliance`, `thermostat`, `solar`, `electric_vehicle`, `battery_storage`, `assistance`, `low_income`, `demand_response`, `peak_reward`, `saver`, `lighting`, `insulation`, `programs_and_rebates`
+
+**Fields extracted per page:** Same as Con Edison + state auto-detected from page text.
 
 ---
 
-### 4. PNM (Public Service Company of New Mexico)
+### 4. SRP ⬜ (Pending)
 
-**Source ID:** `pnm`
-**Utility Company:** `"PNM - Public Service Company of New Mexico"`
-**State:** `"NM"`
-**Segment:** `["Residential", "Commercial"]`
-**Portfolio:** `["Utility"]`
+**Source ID:** `srp`  
+**Utility Company:** `"Salt River Project"`  
+**State:** `AZ` | **ZIP:** `85001`  
+**Sitemap:** `https://www.srpnet.com/sitemap.xml`
 
-**Sitemap:**
-```
-https://www.pnm.com/sitemap.xml
-```
-
-> ⚠️ **PNM uses a sitemap index.** The root sitemap contains `<sitemapindex>` with multiple child sitemap `<loc>` entries. The sitemap parser must recursively fetch each child and aggregate all `<url><loc>` values.
-
-**PNM sitemap quirk:** Some child sitemap URLs return HTML "Access Denied" pages instead of XML. The parser must detect this (check for `<!DOCTYPE html>` in response body) and skip those entries gracefully.
-
-**Additional include path segments / keywords for PNM:**
-```
-/save-money-and-energy
-/rebates
-/residential-rebates
-/business-rebates
-/bizrebates
-/incentives
-/savings
-/save-
-/checkup
-/home-energy-checkup
-/energy-efficiency
-/weatherization
-/appliance-recycling
-/solar
-/electric-vehicle
-/ev-charging
-/good-neighbor
-/liheap
-/income-qualified
-/demand-response
-/quick-saver
-/time-of-use
-```
-
-**Additional exclude keywords for PNM:**
-```
-/careers/
-/about-pnm/
-/investor/
-/news/
-/contact/
-/outage/
-/account/
-/tariff/
-/rate-schedule/
-/regulatory/
-/environmental/
-```
-
-**Page scraping selectors:**
-- Program name: `h1.page-title`, `.hero-title`, `h1`
-- Description: `.field-items p`, `.content-main p`
-- Amount: text containing `$`, `%`, `up to`, `per item`
-- Apply URL: `a[href*="clearesult.com"]`, `a[href*="apply"]`, `a[href*="rebate"]`
-
-> **Note:** PNM uses a third-party rebate portal at `pnm.clearesult.com` for some applications. Store these as `application_url` on the incentive.
-
-**ID generation:**
-```go
-inc.ID = models.DeterministicID("pnm", pageURL)
-```
-
-**Config:**
-```env
-PNM_BASE_URL=https://www.pnm.com
-```
+**LLM prompt key rules:**
+- Include: `/energy-savings-rebates/`, direct financial benefits, equipment programs
+- Exclude: `/doing-business/`, `/about-srp/`, `/water-`, `/account/`, educational/informational only pages, workshops/audits
 
 ---
 
-### 5. Peninsula Clean Energy (PCE)
+### 5. Peninsula Clean Energy ⬜ (Pending)
 
-**Source ID:** `peninsula_clean_energy`
-**Utility Company:** `"Peninsula Clean Energy"`
-**State:** `"CA"`
-**Segment:** `["Residential", "Commercial"]`
-**Portfolio:** `["Utility", "State"]`
-
-> PCE is a **Community Choice Aggregator (CCA)** serving San Mateo County and the City of Los Banos, California. It works alongside PG&E for billing/delivery. It offers its own rebate programs on top of utility programs.
-
-**Sitemaps (three — fetch all):**
+**Source ID:** `peninsula_clean_energy`  
+**Utility Company:** `"Peninsula Clean Energy"`  
+**State:** `CA` | **Territory:** `"San Mateo County and Los Banos"`  
+**Sitemaps (3):**
 ```
 https://www.peninsulacleanenergy.com/post-sitemap.xml
 https://www.peninsulacleanenergy.com/page-sitemap.xml
 https://www.peninsulacleanenergy.com/news-sitemap.xml
 ```
 
-**Additional include prefixes for PCE:**
-```
-/rebates-offers/
-/rebates-offers-business/
-/home-upgrade-services/
-/electric-vehicles/
-/e-bike/
-/programs/
-/financing/
-/solar/
-/battery/
-/heat-pump/
-/water-heater/
-/income-qualified/
-/savings-toolkit/
-/rebate-aggregator/
-/public-organizations/
-/demand-response/
-/flexibility/
-```
-
-**Blog/news inclusion rule:** Include blog/news URLs **only if** the URL path or scraped page title contains explicit dollar amounts (e.g., `$500`) or the words `rebate`, `incentive`, or `program`. Skip general informational posts.
-
-**Additional exclude prefixes for PCE:**
-```
-/about/
-/careers/
-/press/
-/blog/      ← default exclude; override by content check above
-/contact/
-/governance/
-/board/
-/team/
-/news/      ← default exclude; override by content check above
-/events/
-/subscribe/
-```
-
-**Page scraping selectors:**
-- Program name: `h1.entry-title`, `.program-title`, `h1`
-- Description: `.entry-content p`, `.program-body p`
-- Amount: text containing `$`, `%`, `up to`, `rebate amount`
-- Apply URL: `a[href*="apply"]`, `a[href*="rebate"]`, `.cta a`
-- Category tags: WordPress post categories/tags from `<meta>` or breadcrumbs
-
-**ID generation:**
-```go
-inc.ID = models.DeterministicID("peninsula_clean_energy", pageURL)
-```
-
-**Config:**
-```env
-PENINSULA_CLEAN_ENERGY_BASE_URL=https://www.peninsulacleanenergy.com
-```
+**Key rule:** Blog/news URLs included only if page text contains dollar amounts or keywords "rebate"/"incentive"/"program".
 
 ---
 
@@ -455,20 +240,58 @@ PENINSULA_CLEAN_ENERGY_BASE_URL=https://www.peninsulacleanenergy.com
 | `models.Incentive` field | Source |
 |--------------------------|--------|
 | `ID` | `DeterministicID(sourceID, pageURL)` |
-| `ProgramName` | Page `h1` / title element |
+| `ProgramName` | Page `h1` / `<title>` stripped of site name |
 | `UtilityCompany` | Hardcoded per scraper |
-| `IncentiveDescription` | Page description text (first 2–3 paragraphs) |
-| `IncentiveAmount` | Parsed from dollar text on page |
-| `IncentiveFormat` | Derived from amount text (dollar_amount / percent / per_unit) |
-| `MaximumAmount` | Parsed from "up to $X" patterns |
-| `State` | Hardcoded per scraper (empty for Xcel — multi-state) |
-| `ApplicationURL` | Apply/enroll CTA link on page |
+| `State` | Hardcoded (Con Edison/PNM) or detected from text (Xcel) |
+| `ZipCode` | Hardcoded representative ZIP per state |
+| `ServiceTerritory` | Hardcoded per scraper |
+| `IncentiveDescription` | `meta[name=description]` → first `<p>` |
+| `IncentiveFormat` | `ParseAmount()` |
+| `IncentiveAmount` | `ParseAmount()` |
+| `MaximumAmount` | `ParseAmount()` "up to" pattern |
+| `ApplicationURL` | First link with "apply"/"enroll"/"application" |
 | `ProgramURL` | The page URL itself |
-| `Segment` | Inferred from page path (`/residential` vs `/business`) |
-| `Portfolio` | `["Utility"]` for all; PCE also `["State"]` |
-| `Source` | Hardcoded source ID per scraper |
+| `ContactPhone` | `extractPhone(pageText)` |
+| `ContactEmail` | `extractEmail(pageText)` |
+| `CategoryTag` | `inferCategories(url + title)` (50+ rules) |
+| `ContractorRequired` | `extractContractorRequired(pageText)` |
+| `EnergyAuditRequired` | `extractEnergyAuditRequired(pageText)` |
+| `CustomerType` | `extractCustomerType(url + title)` |
+| `StartDate` | `extractStartDate(pageText)` |
+| `EndDate` | `extractEndDate(pageText)` |
+| `AvailableNationwide` | `false` (utility programs are regional) |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, UtilityCompany)` |
+| `Source` | Hardcoded source ID per scraper |
 | `ScraperVersion` | From config |
+
+---
+
+## Other Scrapers — Field Gap Review
+
+Reviewed all 5 SmythOS agents vs. existing Go scrapers. Gaps and fixes:
+
+### Rewiring America (`rewiring_america.go`) — Fixed ✅
+| Gap | Fix Applied |
+|-----|-------------|
+| `ServiceTerritory` not set | Added: "Nationwide" / "[Authority] Statewide" / "[Authority] Service Area" based on `authorityType` |
+| `ProductCategory` not set | Added: `raProductCategory(items[0])` maps item keys to category tags |
+| `Portfolio` not reflecting program level | Fixed: "Federal" / "State" / "Utility" / "Local" from `authorityType` |
+| `Segment` was storing paymentMethods | Fixed: `Segment = ownerStatus` (homeowner, renter), paymentMethods → Portfolio fallback |
+
+### DSIRE (`dsireusa.go`) — Fixed ✅
+| Gap | Fix Applied |
+|-----|-------------|
+| `Published` field ignored | Added: `published == "Yes"` → `Status = "active"` |
+| `ProgramHash` not set | Added: `ComputeProgramHash(ProgramName, UtilityCompany)` |
+
+### Energy Star (`energy_star.go`) — OK ✅
+| Observation | Notes |
+|-------------|-------|
+| `program_type` from `incentiveType` | Model has no `ProgramType` field; stored in `CategoryTag` |
+| `contractor_required` hardcoded `false` | Acceptable — API doesn't provide this |
+| `recipient` stored in `Administrator` | Model has no `Recipient` field |
+| `building_type` stored in `Portfolio` | Model has no `BuildingType` field |
+| Low/moderate/high income flags | Model has no boolean fields; encoded in `CategoryTag` |
 
 ---
 
@@ -476,115 +299,102 @@ PENINSULA_CLEAN_ENERGY_BASE_URL=https://www.peninsulacleanenergy.com
 
 | Scraper | Inter-request delay | Notes |
 |---------|-------------------|-------|
-| SRP | 1s | Standard HTML pages |
-| Xcel Energy | 1s | Standard HTML pages |
-| Con Edison | 1.5s | Anti-scraping protection flagged in SmythOS |
-| PNM | 1s | Some pages behind Akamai |
-| Peninsula Clean Energy | 500ms | WordPress site, well-behaved |
-
-Use Colly's `LimitRule` with `RandomDelay` (`0.5 × delay`) to avoid detection.
-
----
-
-## Configuration Summary
-
-Add to `config/config.go`:
-
-```go
-SRPBaseURL                     string   // SRP_BASE_URL
-XcelEnergyBaseURL              string   // XCEL_ENERGY_BASE_URL
-ConEdisonBaseURL               string   // CONED_BASE_URL
-PNMBaseURL                     string   // PNM_BASE_URL
-PeninsulaCleanEnergyBaseURL    string   // PENINSULA_CLEAN_ENERGY_BASE_URL
-```
-
-Add to `.env.example`:
-
-```env
-SRP_BASE_URL=https://www.srpnet.com
-XCEL_ENERGY_BASE_URL=https://www.xcelenergy.com
-CONED_BASE_URL=https://www.coned.com
-PNM_BASE_URL=https://www.pnm.com
-PENINSULA_CLEAN_ENERGY_BASE_URL=https://www.peninsulacleanenergy.com
-```
+| Con Edison | 600ms | `CollyBase.Delay` |
+| PNM | 600ms | `CollyBase.Delay` |
+| Xcel Energy | 600ms | `CollyBase.Delay` |
+| SRP | ~1s | Pending implementation |
+| Peninsula Clean Energy | ~500ms | Pending implementation |
 
 ---
 
 ## Registration in `cmd/scraper/main.go`
 
 ```go
-reg.Register(scrapers.NewSRPScraper(cfg.SRPBaseURL, log))
-reg.Register(scrapers.NewXcelEnergyScraper(cfg.XcelEnergyBaseURL, log))
-reg.Register(scrapers.NewConEdisonScraper(cfg.ConEdisonBaseURL, log))
-reg.Register(scrapers.NewPNMScraper(cfg.PNMBaseURL, log))
-reg.Register(scrapers.NewPeninsulaCleanEnergyScraper(cfg.PeninsulaCleanEnergyBaseURL, log))
-```
-
----
-
-## Implementation Steps
-
-### Step 1 — Shared infrastructure
-1. Create `scrapers/sitemap_parser.go` with `FetchSitemapURLs(ctx, urls)` — handles both `<sitemapindex>` (recursive, depth-limited) and `<urlset>` formats; skips HTML error responses
-2. Create `scrapers/url_filter.go` with `URLFilterConfig` struct and `FilterRebateURLs(urls, cfg)` — exclusions checked first, then inclusions
-
-### Step 2 — SRP scraper
-1. Create `scrapers/srp.go` implementing `Scraper` interface
-2. Phase 1: call `FetchSitemapURLs` → `FilterRebateURLs` with SRP config
-3. Phase 2: Colly-visit each URL, extract fields, build `models.Incentive`
-4. Test: `SOURCE=srp RUN_ONCE=true LOG_FORMAT=console go run ./cmd/scraper`
-
-### Step 3 — Xcel Energy scraper
-1. Create `scrapers/xcel_energy.go`
-2. Same two-phase pattern; note: large sitemap, apply stricter filtering
-3. Test: `SOURCE=xcel_energy RUN_ONCE=true ...`
-
-### Step 4 — Con Edison scraper
-1. Create `scrapers/con_edison.go`
-2. Enable Colly anti-scraping protection (`antiScrapingProtection: true` in SmythOS implies Cloudflare or similar); may need `chromedp` or a backoff strategy
-3. Test: `SOURCE=con_edison RUN_ONCE=true ...`
-
-### Step 5 — PNM scraper
-1. Create `scrapers/pnm.go`
-2. Handle sitemap index recursion; skip `Access Denied` responses from child sitemaps
-3. Test: `SOURCE=pnm RUN_ONCE=true ...`
-
-### Step 6 — Peninsula Clean Energy scraper
-1. Create `scrapers/peninsula_clean_energy.go`
-2. Fetch all three sitemaps; merge URL lists before filtering
-3. Apply extra blog/news content-check rule (include only if dollar amounts present)
-4. Test: `SOURCE=peninsula_clean_energy RUN_ONCE=true ...`
-
-### Step 7 — Config + registration
-1. Add 5 env vars to `config/config.go` and `.env.example`
-2. Register all 5 scrapers in `cmd/scraper/main.go`
-
-### Step 8 — Verify staging rows
-```sql
-SELECT source, COUNT(*), MIN(created_at)
-FROM rebates_staging
-WHERE source IN ('srp','xcel_energy','con_edison','pnm','peninsula_clean_energy')
-GROUP BY source;
+reg.Register(&scrapers.ConEdisonScraper{...})
+reg.Register(&scrapers.PNMScraper{...})
+reg.Register(&scrapers.XcelEnergyScraper{...})
+// Pending:
+// reg.Register(&scrapers.SRPScraper{...})
+// reg.Register(&scrapers.PeninsulaCleanEnergyScraper{...})
 ```
 
 ---
 
 ## Implementation Checklist
 
-- [x] `scrapers/sitemap.go` — `FetchSitemapURLs` (index + urlset, 3-level recursion) + `FilterSitemapURLs`
-- [x] `scrapers/html_helpers.go` — `extractPhone`, `extractEmail`, `inferCategories` (30+ keyword→category rules)
+### Shared Infrastructure
+- [x] `scrapers/sitemap.go` — `FetchSitemapURLs` (index + urlset, 3-level recursion, HTML error detection) + `FilterSitemapURLs(FilterConfig)` with exclusion-first logic + `pathDepth` hub detection
+- [x] `scrapers/html_helpers.go` — all extraction helpers (phone, email, categories, contractor_required, energy_audit_required, currently_active, low_income_eligible, customer_type, recipient, start_date, end_date)
+
+### Utility Scrapers (3 implemented)
+- [x] `scrapers/con_edison.go` — proper `FilterConfig` with ConEd-specific exclusions/inclusions; all html_helpers fields populated
+- [x] `scrapers/pnm.go` — proper `FilterConfig`; clearesult.com domain allowed; all html_helpers fields populated
+- [x] `scrapers/xcel_energy.go` — correct sitemap URL `xcelenergy.com/staticfiles/...`; absolute corporate exclusions + pattern exclusions; `MinPathSegments=3`; state auto-detected from page text
 - [ ] `scrapers/srp.go` — SRP scraper *(pending)*
-- [x] `scrapers/xcel_energy.go` — Xcel Energy scraper registered (CO, MN, WI)
-- [x] `scrapers/con_edison.go` — Con Edison scraper registered (NY)
-- [x] `scrapers/pnm.go` — PNM scraper registered (NM, clearesult portal support)
 - [ ] `scrapers/peninsula_clean_energy.go` — PCE scraper *(pending)*
-- [ ] `config/config.go` — env vars for utility base URLs *(not yet added — scrapers use hardcoded defaults)*
+
+### Existing Scraper Field Fixes
+- [x] `scrapers/rewiring_america.go` — ServiceTerritory, ProductCategory, Portfolio level, Segment fixed
+- [x] `scrapers/dsireusa.go` — Published → Status("active"), ProgramHash added
+
+### Tooling
 - [x] `cmd/scraper/main.go` — con_edison, pnm, xcel_energy registered
-- [x] `Makefile` — `scrape-coned`, `scrape-pnm`, `scrape-xcel` targets added
-- [x] `package.json` — `run:con_edison`, `run:pnm`, `run:xcel_energy` tasks added
-- [x] `scripts/run.mjs` — new source names whitelisted
-- [ ] All scrapers verified in `rebates_staging` with correct `source` values *(pending first run)*
-- [x] `docs/scrapers.md` updated with full field-by-field documentation for all 3 scrapers
+- [x] `Makefile` — `scrape-coned`, `scrape-pnm`, `scrape-xcel` targets
+- [x] `package.json` — `run:con_edison`, `run:pnm`, `run:xcel_energy` scripts
+- [x] `scripts/run.mjs` — con_edison, pnm, xcel_energy whitelisted
+- [x] `docs/scrapers.md` — field-by-field documentation for all scrapers
+
+### Verification (pending first run)
+- [ ] Con Edison rows in `rebates_staging` with `source = 'con_edison'`
+- [ ] PNM rows in `rebates_staging` with `source = 'pnm'`
+- [ ] Xcel Energy rows in `rebates_staging` with `source = 'xcel_energy'`
+
+---
+
+## Spec Alignment
+
+**Source specs:** SmythOS agent files `rf-crawler-pnm-srp-coned-xcel-peninsul-mobyct44nw.smyth` and `rf-scraper-pnm-srp-coned-xcel-peninsul-mobyqg49ph.smyth`.
+
+**Divergences from SmythOS spec:**
+- SmythOS uses an LLM to classify sitemap URLs. Go implementation replaces this with a deterministic `FilterConfig` (exclusion-first keyword list). The decision framework is derived from the same rules the LLM prompts encode.
+- SmythOS visits listing pages then follows internal links to sub-program pages ("two-phase enrichment"). Go implementation currently only visits URLs discovered directly from the sitemap. See the **Two-Phase Enrichment** section below.
+- Xcel Energy: SmythOS used per-state subdomains (`co.my.xcelenergy.com`, `mn.my.xcelenergy.com`, etc.). Go implementation uses the single corporate sitemap (`xcelenergy.com/staticfiles/xe-responsive/assets/sitemap.xml`) with state auto-detected from page text.
+
+---
+
+## Implementation Order
+
+For each new utility scraper, follow this order:
+
+1. Define `FilterConfig` — exclusion list, inclusion list, `MinPathSegments`
+2. Implement `extractPage()` — Colly selectors + html_helper calls
+3. Implement `Scrape()` — sitemap fetch → filter → colly visit → upsert
+4. Add fallback seed URLs
+5. Register in `cmd/scraper/main.go`
+6. Add Makefile target (`scrape-<name>`)
+7. Add `pnpm` script in `package.json` and whitelist in `scripts/run.mjs`
+8. Verify staging rows: `SELECT count(*) FROM rebates_staging WHERE source = '<name>'`
+
+---
+
+## Test Plan
+
+**Unit tests (pending):**
+- `html_helpers_test.go` — table-driven tests for each extraction function:
+  - `extractStartDate` / `extractEndDate` — happy path (various date formats), no match, edge cases
+  - `extractContractorRequired` / `extractEnergyAuditRequired` — true/false/nil cases
+  - `extractCustomerType` — residential/commercial/mixed/empty inputs
+  - `inferCategories` — keyword coverage, multi-match, default fallback
+
+**Integration tests (pending):**
+- `FilterSitemapURLs` with realistic URL sets for each utility — verify exclusion-first logic and `MinPathSegments` filtering
+- `FetchSitemapURLs` against a test HTTP server returning known sitemap XML — verify recursion and HTML error-page skipping
+
+**Manual verification:**
+- Run each scraper with `RUN_ONCE=true SOURCE=<name> go run ./cmd/scraper`
+- Check `SELECT count(*), state FROM rebates_staging WHERE source='<name>' GROUP BY state`
+- Spot-check 5–10 rows for field completeness (program_name, incentive_amount, category_tag, contractor_required, start_date)
+- Confirm `program_hash` is non-null on all rows
 
 ---
 
@@ -592,9 +402,17 @@ GROUP BY source;
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
-| Con Edison uses anti-scraping (Cloudflare, JS rendering) | High | Use Colly with realistic User-Agent + random delay; if blocked, flag for chromedp or Playwright-based approach |
-| PNM child sitemaps return 403/HTML errors | Medium | Already handled in sitemap parser — skip non-XML gracefully |
-| Xcel sitemap is very large (1000+ URLs, most irrelevant) | Medium | Strict filtering; log filter stats (total → kept ratio) |
-| PCE blog posts change frequently | Low | URL-based deterministic IDs + upsert means re-scraping updates rather than duplicates |
-| Page HTML structure changes after implementation | Medium | Colly selectors should be broad (h1, p); log `program_name == ""` rows so empty scrapes are visible |
-| SRP uses JavaScript-rendered content | Low | SmythOS uses `javascriptRendering: false` — static HTML should work with Colly |
+| Con Edison uses anti-scraping (Cloudflare) | High | Realistic User-Agent + 600ms delay; fallback to seed URLs |
+| PNM child sitemaps return "Access Denied" HTML | Known/handled | `FetchSitemapURLs` silently skips non-XML pages |
+| Xcel sitemap is large (1000s of URLs) | Known/handled | Strict FilterConfig + MinPathSegments=3 reduces to specific programs only |
+| Xcel state detection from page text | Medium | Pattern matching on "Colorado"/"Minnesota"/etc.; falls back to no state if undetected |
+| SRP uses JavaScript-rendered content | Low | SmythOS uses `javascriptRendering: false` — static HTML should work |
+| PCE blog/news URLs need content-based filtering | Medium | Post-scrape content check required; out of scope for now |
+
+---
+
+## Two-Phase Enrichment (Deferred)
+
+The SmythOS scraper LLM visits `program_url` links found *within* listing pages to enrich the initial record (e.g., a hub page lists 5 programs, each linking to their own page). The Go implementation currently only visits URLs discovered from the sitemap.
+
+**Future work:** After scraping a page, follow any internal links to sub-program pages and create separate `models.Incentive` records — matching the SmythOS "separate records for separate incentives" golden rule (tiered programs should generate one record each).

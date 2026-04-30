@@ -342,6 +342,16 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 		inc.ProductCategory = models.PtrString(pc)
 	}
 
+	// ── Active status (schema: currently_active = published == "Yes") ────────
+	// Map Published → Status.  Only "Yes" is treated as active; anything else
+	// (including "") leaves the default "draft".
+	if strings.EqualFold(p.Published, "yes") {
+		inc.Status = "active"
+	}
+
+	// ── Program hash ──────────────────────────────────────────────────────────
+	inc.ProgramHash = models.ComputeProgramHash(inc.ProgramName, inc.UtilityCompany)
+
 	return inc
 }
 

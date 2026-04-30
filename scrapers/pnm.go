@@ -3,6 +3,11 @@
 // Discovers rebate pages via the PNM sitemap, then visits each page and
 // extracts structured incentive data using HTML selectors and regex.
 //
+// URL filtering mirrors the two-pass (exclusion-first, then inclusion) logic
+// from the SmythOS rf-crawler-pnm-srp-coned-xcel-peninsul LLM prompt.
+// PNM uses a sitemap index structure and some child sitemaps return HTML
+// "Access Denied" pages — FetchSitemapURLs handles this gracefully.
+//
 // Source defaults:
 //   - Source:           "pnm"
 //   - State:            NM
@@ -34,22 +39,148 @@ const (
 	pnmDefaultApply = "Visit the official PNM program website to learn about eligibility requirements and submit your application."
 )
 
-// pnmRebateKeywords are URL path substrings that indicate rebate content.
-var pnmRebateKeywords = []string{
-	"rebate", "incentive", "saving", "efficiency", "cool-rebate",
-	"heat-pump", "thermostat", "appliance", "solar", "ev-charger",
-	"electric-vehicle", "low-income", "weatheriz", "lighting",
+// pnmFilterCfg mirrors the two-pass URL decision logic from the SmythOS
+// PNM crawler LLM prompt.  PNM is more inclusive than Xcel/ConEd — when in
+// doubt, include.
+var pnmFilterCfg = FilterConfig{
+	// ── Exclusions (checked first) ─────────────────────────────────────────
+	ExcludeKeywords: []string{
+		// Corporate / company info
+		"/about-pnm",
+		"/about-us",
+		"/corporate",
+		"/investor",
+		"/news",
+		"/newsroom",
+		"/press-release",
+		"/careers",
+		"/jobs",
+
+		// Legal / regulatory
+		"/regulatory",
+		"/regulation",
+		"/filings",
+		"/tariffs",
+		"/legal",
+		"/terms",
+		"/privacy",
+
+		// Account management
+		"/login",
+		"/sign-in",
+		"/my-account",
+
+		// Operational / non-customer
+		"/outages",
+		"/outage-map",
+		"/safety",
+		"/storm",
+		"/emergency",
+		"/start-service",
+		"/stop-service",
+		"/move",
+		"/pay-bill",
+		"/payment-options",
+		"/customer-service",
+
+		// Content / media
+		"/documents",
+		"/media",
+		"/multimedia",
+		"/education",
+		"/schools",
+		"/community",
+
+		// Infrastructure
+		"/infrastructure",
+		"/grid",
+		"/generation",
+		"/power-plants",
+		"/transmission",
+	},
+
+	// ── Inclusions ─────────────────────────────────────────────────────────
+	// At least one must match after exclusion check passes.
+	// PNM prompt says "be inclusive" — include anything that helps customers
+	// save money or get a rebate.
+	IncludeKeywords: []string{
+		// Main savings hub and rebates
+		"save-money-and-energy",
+		"save-money",
+		"save-energy",
+		"/save",
+		"rebate",
+		"incentive",
+		"savings",
+		"discount",
+
+		// Energy efficiency programs
+		"energy-efficiency",
+		"checkup",
+		"home-energy-checkup",
+		"weatherization",
+		"energy-audit",
+		"quick-saver",
+
+		// Equipment programs
+		"appliance-recycling",
+		"refrigerator-recycling",
+		"smart-thermostat",
+		"heat-pump",
+		"water-heater",
+		"evaporative-cooler",
+		"swamp-cooler",
+		"pool-pump",
+		"lighting",
+
+		// Solar & renewable
+		"solar",
+		"pnmskyblue",
+		"sky-blue",
+		"renewable-energy",
+		"green-energy",
+		"net-metering",
+
+		// EV programs
+		"/ev",
+		"electric-vehicle",
+		"ev-tax-credit",
+		"charging",
+		"ev-rates",
+
+		// Financial assistance
+		"goodneighborfund",
+		"good-neighbor-fund",
+		"assistance",
+		"liheap",
+		"low-income",
+		"help-paying-bill",
+		"energy-assistance",
+		"payment-plan",
+		"payment-arrangement",
+		"budget-billing",
+
+		// Rate programs with savings
+		"time-of-use",
+		"/tou",
+		"demand-response",
+		"peak-",
+		"off-peak",
+		"rate-options",
+	},
 }
 
 // pnmSeedURLs are well-known PNM rebate pages used as fallback.
 func pnmSeedURLs() []string {
 	return []string{
+		"https://www.pnm.com/save-money-and-energy",
 		"https://www.pnm.com/residential-rebates",
-		"https://www.pnm.com/business-rebates",
-		"https://www.pnm.com/cool-rebate",
+		"https://www.pnm.com/checkup",
+		"https://www.pnm.com/goodneighborfund",
+		"https://www.pnm.com/pnmskyblue",
 		"https://www.pnm.com/residential-energy-efficiency",
 		"https://www.pnm.com/electric-vehicles",
-		"https://www.pnm.com/low-income-programs",
+		"https://www.pnm.com/appliance-recycling",
 		"https://pnm.clearesult.com/",
 	}
 }
@@ -72,6 +203,8 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	client := s.httpClient()
 
 	// Step 1: discover rebate URLs from sitemap.
+	// PNM uses a sitemap index; some child sitemaps return "Access Denied" HTML
+	// which FetchSitemapURLs silently skips.
 	allURLs, err := FetchSitemapURLs(ctx, client, pnmSitemapURL)
 	var urls []string
 	if err != nil || len(allURLs) == 0 {
@@ -80,7 +213,7 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		}
 		urls = pnmSeedURLs()
 	} else {
-		urls = FilterSitemapURLs(allURLs, pnmRebateKeywords)
+		urls = FilterSitemapURLs(allURLs, pnmFilterCfg)
 		if len(urls) == 0 {
 			urls = pnmSeedURLs()
 		}
@@ -167,8 +300,10 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		description = description[:497] + "..."
 	}
 
-	// Amount extraction — PNM often shows "Save $X" or "$X rebate".
+	// Full page text for all regex extractions.
 	pageText := e.Text
+
+	// Amount extraction — PNM often shows "Save $X" or "$X rebate".
 	format, amount := ParseAmount(pageText)
 	if format == "narrative" {
 		e.ForEach("p, li, td, h2, h3, strong", func(_ int, el *colly.HTMLElement) {
@@ -201,8 +336,18 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		}
 	})
 
+	// ── Boolean / structured field extraction (from html_helpers.go) ────────
+	contractorRequired := extractContractorRequired(pageText)
+	energyAuditRequired := extractEnergyAuditRequired(pageText)
+	customerType := extractCustomerType(pageURL + " " + programName)
+	startDate := extractStartDate(pageText)
+	endDate := extractEndDate(pageText)
+
+	// Contact info.
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
+
+	// Infer category from URL and title.
 	categories := inferCategories(pageURL + " " + strings.ToLower(programName))
 
 	if format == "" {
@@ -237,6 +382,21 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	}
 	if contactEmail != "" {
 		inc.ContactEmail = models.PtrString(contactEmail)
+	}
+	if contractorRequired != nil {
+		inc.ContractorRequired = contractorRequired
+	}
+	if energyAuditRequired != nil {
+		inc.EnergyAuditRequired = energyAuditRequired
+	}
+	if customerType != "" {
+		inc.CustomerType = models.PtrString(customerType)
+	}
+	if startDate != "" {
+		inc.StartDate = models.PtrString(startDate)
+	}
+	if endDate != "" {
+		inc.EndDate = models.PtrString(endDate)
 	}
 
 	return &inc
