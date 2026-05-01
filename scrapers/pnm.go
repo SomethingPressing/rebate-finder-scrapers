@@ -214,6 +214,10 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		urls = pnmSeedURLs()
 	} else {
 		urls = FilterSitemapURLs(allURLs, pnmFilterCfg)
+		s.Logger.Info("pnm: sitemap discovery",
+			zap.Int("sitemap_total", len(allURLs)),
+			zap.Int("passed_filter", len(urls)),
+		)
 		if len(urls) == 0 {
 			urls = pnmSeedURLs()
 		}

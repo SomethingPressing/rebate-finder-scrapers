@@ -201,6 +201,10 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 		urls = conEdisonSeedURLs()
 	} else {
 		urls = FilterSitemapURLs(allURLs, conEdisonFilterCfg)
+		s.Logger.Info("con_edison: sitemap discovery",
+			zap.Int("sitemap_total", len(allURLs)),
+			zap.Int("passed_filter", len(urls)),
+		)
 		if len(urls) == 0 {
 			urls = conEdisonSeedURLs()
 		}
@@ -235,14 +239,25 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 		}
 		seen[inc.ID] = true
 		all = append(all, *inc)
+		s.Logger.Info("con_edison: program found",
+			zap.String("name", inc.ProgramName),
+			zap.Strings("categories", inc.CategoryTag),
+			zap.Int("total_so_far", len(all)),
+		)
 	})
 
-	for _, u := range urls {
+	total := len(urls)
+	for i, u := range urls {
 		select {
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
 		}
+		s.Logger.Info("con_edison: visiting URL",
+			zap.Int("i", i+1),
+			zap.Int("total", total),
+			zap.String("url", u),
+		)
 		if IsPDFURL(u) {
 			text, err := ExtractPDFPages(u, nil)
 			if err != nil {
@@ -253,6 +268,10 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 			if inc != nil && !seen[inc.ID] {
 				seen[inc.ID] = true
 				all = append(all, *inc)
+				s.Logger.Info("con_edison: program found (pdf)",
+					zap.String("name", inc.ProgramName),
+					zap.Int("total_so_far", len(all)),
+				)
 			}
 			continue
 		}
