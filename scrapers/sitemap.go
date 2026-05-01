@@ -112,6 +112,65 @@ func fetchSitemapURLsDepth(ctx context.Context, client *http.Client, u string, d
 	return out, nil
 }
 
+// ── Browser-based sitemap fetching ───────────────────────────────────────────
+
+// FetchSitemapURLsBrowser fetches a sitemap through a headless browser.
+// Use this as a fallback when FetchSitemapURLs returns an isPermissionError —
+// e.g. when the site's CDN (Cloudflare) blocks direct HTTP requests.
+//
+// Internally it uses BrowserFetcher.FetchXML which navigates to the URL to
+// acquire CF cookies, then re-fetches the raw XML via JS fetch().
+func FetchSitemapURLsBrowser(ctx context.Context, bf *BrowserFetcher, sitemapURL string) ([]string, error) {
+	return fetchSitemapBrowserDepth(ctx, bf, sitemapURL, 0)
+}
+
+func fetchSitemapBrowserDepth(ctx context.Context, bf *BrowserFetcher, u string, depth int) ([]string, error) {
+	if depth >= sitemapMaxDepth {
+		return nil, nil
+	}
+
+	body, err := bf.FetchXML(ctx, u)
+	if err != nil {
+		return nil, fmt.Errorf("sitemap browser: fetch %s: %w", u, err)
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("sitemap browser: empty body for %s", u)
+	}
+
+	// Skip HTML error pages that slipped through the browser path.
+	if bodySniff := strings.ToLower(string(body[:min(512, len(body))])); strings.Contains(bodySniff, "<!doctype html") {
+		return nil, fmt.Errorf("sitemap browser: HTML page returned for %s (CF still blocking?)", u)
+	}
+
+	// Try sitemap index first.
+	var idx sitemapIndex
+	if err := xml.Unmarshal(body, &idx); err == nil && len(idx.Sitemaps) > 0 {
+		var all []string
+		for _, sm := range idx.Sitemaps {
+			if sm.Loc == "" {
+				continue
+			}
+			sub, _ := fetchSitemapBrowserDepth(ctx, bf, sm.Loc, depth+1)
+			all = append(all, sub...)
+		}
+		return all, nil
+	}
+
+	// Try URL set.
+	var urlset sitemapURLSet
+	if err := xml.Unmarshal(body, &urlset); err != nil {
+		return nil, fmt.Errorf("sitemap browser: parse %s: %w", u, err)
+	}
+
+	out := make([]string, 0, len(urlset.URLs))
+	for _, entry := range urlset.URLs {
+		if entry.Loc != "" {
+			out = append(out, entry.Loc)
+		}
+	}
+	return out, nil
+}
+
 // ── URL filtering ─────────────────────────────────────────────────────────────
 
 // FilterConfig mirrors the two-pass filtering logic from the SmythOS crawler

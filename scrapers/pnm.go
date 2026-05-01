@@ -200,6 +200,17 @@ type PNMScraper struct {
 	ProxyURL string
 }
 
+// pnmExtractCfg is the shared goquery extraction config for PNM.
+var pnmExtractCfg = PageExtractConfig{
+	Source:         pnmSourceName,
+	UtilityCompany: pnmUtility,
+	State:          pnmState,
+	ZipCode:        pnmZIP,
+	Territory:      pnmTerritory,
+	DefaultApply:   pnmDefaultApply,
+	BaseURL:        "https://www.pnm.com",
+}
+
 // Name implements Scraper.
 func (s *PNMScraper) Name() string { return pnmSourceName }
 
@@ -207,10 +218,15 @@ func (s *PNMScraper) Name() string { return pnmSourceName }
 func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	client := s.httpClient()
 
+	// Lazy browser — only started if a permission error is encountered.
+	getBF, cleanup := lazyBrowser(s.Logger)
+	defer cleanup()
+
 	// Step 1: discover rebate URLs from sitemap.
 	// PNM uses a sitemap index; some child sitemaps return "Access Denied" HTML
-	// which FetchSitemapURLs silently skips.
-	allURLs, err := FetchSitemapURLs(ctx, client, pnmSitemapURL)
+	// which FetchSitemapURLs silently skips.  Permission errors trigger the
+	// headless-browser fallback automatically.
+	allURLs, err := sitemapWithFallback(ctx, client, pnmSitemapURL, getBF, s.Logger, "pnm")
 	var urls []string
 	if err != nil || len(allURLs) == 0 {
 		if err != nil {
@@ -230,7 +246,6 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 
 	s.Logger.Info("pnm: scraping URLs", zap.Int("count", len(urls)))
 
-	// Step 2: split PDF vs HTML URLs, then scrape each.
 	seen := make(map[string]bool)
 	var all []models.Incentive
 
@@ -243,8 +258,12 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		Territory:      pnmTerritory,
 		DefaultApply:   pnmDefaultApply,
 	}
+	extractCfg := pnmExtractCfg
+	extractCfg.ScraperVersion = s.ScraperVersion
 
+	// Step 2: Colly-based HTML scraping with automatic 403-fallback.
 	c := s.newCollector("www.pnm.com", "pnm.clearesult.com")
+	permBlocked := trackPermissionErrors(c)
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
@@ -301,6 +320,9 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		bar.Add(1) //nolint:errcheck
 	}
 	bar.Finish() //nolint:errcheck
+
+	// Step 3: retry any permission-blocked pages with the headless browser.
+	retryBlockedWithBrowser(ctx, *permBlocked, getBF, extractCfg, seen, &all, s.Logger, "pnm")
 
 	s.Logger.Info("pnm: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

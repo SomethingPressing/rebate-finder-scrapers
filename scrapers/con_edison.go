@@ -191,6 +191,18 @@ type ConEdisonScraper struct {
 	ProxyURL string
 }
 
+// conEdisonExtractCfg is the shared goquery extraction config.
+// ScraperVersion is filled in at scrape-time.
+var conEdisonExtractCfg = PageExtractConfig{
+	Source:         conEdisonSourceName,
+	UtilityCompany: conEdisonUtility,
+	State:          conEdisonState,
+	ZipCode:        conEdisonZIP,
+	Territory:      conEdisonTerritory,
+	DefaultApply:   conEdisonDefaultApply,
+	BaseURL:        "https://www.coned.com",
+}
+
 // Name implements Scraper.
 func (s *ConEdisonScraper) Name() string { return conEdisonSourceName }
 
@@ -198,8 +210,14 @@ func (s *ConEdisonScraper) Name() string { return conEdisonSourceName }
 func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	client := s.httpClient()
 
-	// Step 1: discover rebate URLs from sitemap (fallback to seeds on error).
-	allURLs, err := FetchSitemapURLs(ctx, client, conEdisonSitemapURL)
+	// Lazy browser — only started if a permission error is encountered.
+	getBF, cleanup := lazyBrowser(s.Logger)
+	defer cleanup()
+
+	// Step 1: discover rebate URLs from sitemap.
+	// Automatically retries with the headless browser if the HTTP request
+	// returns 403 / 401 / 407.
+	allURLs, err := sitemapWithFallback(ctx, client, conEdisonSitemapURL, getBF, s.Logger, "con_edison")
 	var urls []string
 	if err != nil || len(allURLs) == 0 {
 		if err != nil {
@@ -219,7 +237,6 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 
 	s.Logger.Info("con_edison: scraping URLs", zap.Int("count", len(urls)))
 
-	// Step 2: split PDF vs HTML URLs, then scrape each.
 	seen := make(map[string]bool)
 	var all []models.Incentive
 
@@ -232,8 +249,14 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 		Territory:      conEdisonTerritory,
 		DefaultApply:   conEdisonDefaultApply,
 	}
+	extractCfg := conEdisonExtractCfg
+	extractCfg.ScraperVersion = s.ScraperVersion
 
+	// Step 2: Colly-based HTML scraping with automatic 403-fallback.
 	c := s.newCollector("www.coned.com")
+
+	// Track any URLs blocked with a permission error — retried via browser below.
+	permBlocked := trackPermissionErrors(c)
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
@@ -290,6 +313,9 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 		bar.Add(1) //nolint:errcheck
 	}
 	bar.Finish() //nolint:errcheck
+
+	// Step 3: retry any permission-blocked pages with the headless browser.
+	retryBlockedWithBrowser(ctx, *permBlocked, getBF, extractCfg, seen, &all, s.Logger, "con_edison")
 
 	s.Logger.Info("con_edison: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

@@ -69,15 +69,11 @@ func main() {
 		zap.Bool("run_once", cfg.RunOnce),
 		zap.String("source_filter", source),
 		zap.Bool("proxy_active", proxyActive),
-		zap.Bool("headless_browser", cfg.UseHeadlessBrowser),
 	)
 	if proxyActive {
 		logger.Info("proxy configured for HTML scrapers",
 			zap.String("proxy_url", cfg.ProxyURL),
 		)
-	}
-	if cfg.UseHeadlessBrowser {
-		logger.Info("headless browser mode enabled for Cloudflare-protected scrapers (SRP)")
 	}
 
 	// ── Database (GORM) ───────────────────────────────────────────────────────
@@ -154,10 +150,9 @@ func main() {
 	})
 
 	reg.Register(&scrapers.SRPScraper{
-		ScraperVersion:     cfg.ScraperVersion,
-		Logger:             logger,
-		ProxyURL:           cfg.ProxyURL,
-		UseHeadlessBrowser: cfg.UseHeadlessBrowser,
+		ScraperVersion: cfg.ScraperVersion,
+		Logger:         logger,
+		ProxyURL:       cfg.ProxyURL,
 	})
 
 	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{

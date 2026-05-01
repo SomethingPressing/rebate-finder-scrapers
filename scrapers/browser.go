@@ -30,6 +30,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// newBrowserFetcher is a convenience alias used by all HTML scrapers.
+// Launches headless Chromium with safe server defaults (NoSandbox=true).
+func newBrowserFetcher(logger *zap.Logger) (*BrowserFetcher, error) {
+	return NewBrowserFetcher(logger, BrowserFetcherOpts{NoSandbox: true})
+}
+
 // BrowserFetcherOpts configures a BrowserFetcher.
 type BrowserFetcherOpts struct {
 	// PageTimeout is the maximum time allowed for a single page load.
@@ -159,6 +165,49 @@ func (f *BrowserFetcher) FetchHTML(ctx context.Context, u string) (string, error
 	}
 
 	return html, nil
+}
+
+// FetchXML navigates to a URL (typically a sitemap) and returns the raw
+// document text content using JavaScript fetch() with the CF cookies already
+// set from the navigation.  This works around Chrome's XML-viewer mode which
+// wraps the content in HTML, making it unparseable as XML directly.
+//
+// The flow is:
+//  1. Navigate to the URL (solves any CF JS challenge, sets CF cookies).
+//  2. Call window.fetch(url, {credentials:'include'}) in JS to get raw text.
+//  3. Return the raw bytes for XML parsing.
+func (f *BrowserFetcher) FetchXML(ctx context.Context, u string) ([]byte, error) {
+	page, err := f.browser.Page(proto.TargetCreateTarget{})
+	if err != nil {
+		return nil, fmt.Errorf("browser: create tab for xml: %w", err)
+	}
+	defer func() { _ = page.Close() }()
+
+	page = page.Timeout(f.pageTimeout)
+
+	// Navigate so CF cookies are set.
+	if err := page.Navigate(u); err != nil {
+		return nil, fmt.Errorf("browser: navigate xml %s: %w", u, err)
+	}
+	if err := page.WaitLoad(); err != nil && f.logger != nil {
+		f.logger.Warn("browser: WaitLoad timeout on xml page",
+			zap.String("url", u), zap.Error(err))
+	}
+
+	// Extra delay for CF challenge redirect.
+	if err := sleepCtx(ctx, f.extraDelay); err != nil {
+		return nil, err
+	}
+
+	// Use fetch() with CF cookies included to get the raw XML text.
+	result, err := page.Eval(
+		`(url) => fetch(url, {credentials: 'include'}).then(r => r.text())`, u,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("browser: fetch xml %s: %w", u, err)
+	}
+
+	return []byte(result.Value.Str()), nil
 }
 
 // Close shuts down the Chromium process.  Always call this when done.

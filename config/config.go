@@ -73,13 +73,6 @@ type Config struct {
 	// Default: "rewiring_america,dsireusa,energy_star".
 	PromoterSourcePriority []string
 
-	// UseHeadlessBrowser, when true, enables the headless Chromium path for
-	// HTML scrapers that are blocked by Cloudflare or other WAFs.  Rod
-	// downloads Chromium automatically (~150 MB, cached at
-	// ~/.cache/rod/browser/).  Currently applied to SRP only.
-	// Env var: USE_HEADLESS_BROWSER=true
-	UseHeadlessBrowser bool
-
 	// ProxyURL, when set, routes all scraper HTTP requests (sitemap fetches and
 	// Colly page visits) through this proxy.  This is required for scrapers
 	// whose target domains block data-center IP ranges at the CDN/WAF level
@@ -126,7 +119,6 @@ func Load() (*Config, error) {
 		Source:                 getEnv("SOURCE", ""),
 		ScraperDBSchema:        getEnv("SCRAPER_DB_SCHEMA", "scraper"),
 		PromoterSourcePriority: getCSVEnv("PROMOTER_SOURCE_PRIORITY", []string{"rewiring_america", "dsireusa", "energy_star"}),
-		UseHeadlessBrowser:     getBoolEnv("USE_HEADLESS_BROWSER", false),
 		ProxyURL:               getEnv("SCRAPER_PROXY_URL", ""),
 	}
 

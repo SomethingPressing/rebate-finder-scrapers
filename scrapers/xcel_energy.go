@@ -328,6 +328,20 @@ type XcelEnergyScraper struct {
 	ProxyURL string
 }
 
+// xcelExtractCfg is the shared goquery extraction config for Xcel Energy.
+// Xcel is multi-state so StateDetector infers state/territory/zip from page text.
+var xcelExtractCfg = PageExtractConfig{
+	Source:          xcelSourceName,
+	UtilityCompany:  xcelUtility,
+	DefaultApply:    xcelDefaultApply,
+	BaseURL:         "https://www.xcelenergy.com",
+	AmountSelectors: "strong",
+	StateDetector: func(text string) (state, territory, zip string) {
+		s := xcelStateFromText(text)
+		return s, xcelTerritoryFromState(s), xcelZIPFromState(s)
+	},
+}
+
 // Name implements Scraper.
 func (s *XcelEnergyScraper) Name() string { return xcelSourceName }
 
@@ -335,8 +349,13 @@ func (s *XcelEnergyScraper) Name() string { return xcelSourceName }
 func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	client := s.httpClient()
 
+	// Lazy browser — only started if a permission error is encountered.
+	getBF, cleanup := lazyBrowser(s.Logger)
+	defer cleanup()
+
 	// Step 1: fetch and filter URLs from the corporate sitemap.
-	allURLs, err := FetchSitemapURLs(ctx, client, xcelSitemapURL)
+	// Permission errors (403/401/407) automatically fall back to the headless browser.
+	allURLs, err := sitemapWithFallback(ctx, client, xcelSitemapURL, getBF, s.Logger, "xcel_energy")
 	var urls []string
 	if err != nil || len(allURLs) == 0 {
 		if err != nil {
@@ -370,7 +389,11 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		// infers these from page content.  For PDFs we leave them blank.
 	}
 
+	extractCfg := xcelExtractCfg
+	extractCfg.ScraperVersion = s.ScraperVersion
+
 	c := s.newCollector("www.xcelenergy.com")
+	permBlocked := trackPermissionErrors(c)
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
@@ -428,6 +451,9 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		bar.Add(1) //nolint:errcheck
 	}
 	bar.Finish() //nolint:errcheck
+
+	// Step 3: retry any permission-blocked pages with the headless browser.
+	retryBlockedWithBrowser(ctx, *permBlocked, getBF, extractCfg, seen, &all, s.Logger, "xcel_energy")
 
 	s.Logger.Info("xcel_energy: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

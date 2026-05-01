@@ -209,6 +209,17 @@ type PeninsulaCleanEnergyScraper struct {
 	ProxyURL string
 }
 
+// pceExtractCfg is the shared goquery extraction config for PCE.
+var pceExtractCfg = PageExtractConfig{
+	Source:         pceSourceName,
+	UtilityCompany: pceUtility,
+	State:          pceState,
+	ZipCode:        pceZIP,
+	Territory:      pceTerritory,
+	DefaultApply:   pceDefaultApply,
+	BaseURL:        pceBaseURL,
+}
+
 // Name implements Scraper.
 func (s *PeninsulaCleanEnergyScraper) Name() string { return pceSourceName }
 
@@ -216,10 +227,15 @@ func (s *PeninsulaCleanEnergyScraper) Name() string { return pceSourceName }
 func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	client := s.httpClient()
 
+	// Lazy browser — only started if a permission error is encountered.
+	getBF, cleanup := lazyBrowser(s.Logger)
+	defer cleanup()
+
 	// Step 1: discover rebate URLs from all four sitemaps.
+	// Each sitemap falls back to the headless browser on permission errors.
 	var allURLs []string
 	for si, sitemapURL := range pceSitemapURLs {
-		fetched, err := FetchSitemapURLs(ctx, client, sitemapURL)
+		fetched, err := sitemapWithFallback(ctx, client, sitemapURL, getBF, s.Logger, "peninsula_clean_energy")
 		if err != nil {
 			s.Logger.Warn("peninsula_clean_energy: sitemap fetch failed",
 				zap.String("sitemap", sitemapURL), zap.Error(err))
@@ -266,7 +282,11 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 		DefaultApply:   pceDefaultApply,
 	}
 
+	extractCfg := pceExtractCfg
+	extractCfg.ScraperVersion = s.ScraperVersion
+
 	c := s.newCollector(pceDomain)
+	permBlocked := trackPermissionErrors(c)
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
@@ -323,6 +343,9 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 		bar.Add(1) //nolint:errcheck
 	}
 	bar.Finish() //nolint:errcheck
+
+	// Step 3: retry any permission-blocked pages with the headless browser.
+	retryBlockedWithBrowser(ctx, *permBlocked, getBF, extractCfg, seen, &all, s.Logger, "peninsula_clean_energy")
 
 	s.Logger.Info("peninsula_clean_energy: scrape complete", zap.Int("programs", len(all)))
 	return all, nil
