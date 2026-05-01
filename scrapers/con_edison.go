@@ -247,6 +247,7 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 	})
 
 	total := len(urls)
+	bar := NewProgressBar(total, "con_edison")
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
@@ -279,7 +280,9 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 			s.Logger.Warn("con_edison: visit failed",
 				zap.String("url", u), zap.Error(err))
 		}
+		bar.Add(1) //nolint:errcheck
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("con_edison: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

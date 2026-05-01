@@ -84,6 +84,9 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	rawPages := make([][]models.EnergyStarRawResult, totalPages)
 	rawPages[0] = probe.Results
 
+	bar := NewProgressBar(totalPages, "energy_star")
+	bar.Add(1) //nolint:errcheck — page 0 already fetched
+
 	if totalPages > 1 {
 		conc := s.maxConcurrency()
 		sem := make(chan struct{}, conc)
@@ -108,6 +111,7 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 					return fmt.Errorf("page %d: %w", page, err)
 				}
 				rawPages[page] = resp.Results
+				bar.Add(1) //nolint:errcheck
 				s.Logger.Info("energy_star: page fetched",
 					zap.Int("page", page+1),
 					zap.Int("total_pages", totalPages),
@@ -121,6 +125,7 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 			return nil, fmt.Errorf("energy_star: fetch pages: %w", err)
 		}
 	}
+	bar.Finish() //nolint:errcheck
 
 	// ── Phase 3: parse + map ──────────────────────────────────────────────────
 	version := s.ScraperVersion

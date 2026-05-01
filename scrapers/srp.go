@@ -259,6 +259,7 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	})
 
 	total := len(urls)
+	bar := NewProgressBar(total, "srp")
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
@@ -291,7 +292,9 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 			s.Logger.Warn("srp: visit failed",
 				zap.String("url", u), zap.Error(err))
 		}
+		bar.Add(1) //nolint:errcheck
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("srp: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

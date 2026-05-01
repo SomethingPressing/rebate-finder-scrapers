@@ -282,6 +282,7 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 	})
 
 	total := len(urls)
+	bar := NewProgressBar(total, "peninsula_clean_energy")
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
@@ -314,7 +315,9 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 			s.Logger.Warn("peninsula_clean_energy: visit failed",
 				zap.String("url", u), zap.Error(err))
 		}
+		bar.Add(1) //nolint:errcheck
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("peninsula_clean_energy: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

@@ -260,6 +260,7 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	})
 
 	total := len(urls)
+	bar := NewProgressBar(total, "pnm")
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
@@ -292,7 +293,9 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 			s.Logger.Warn("pnm: visit failed",
 				zap.String("url", u), zap.Error(err))
 		}
+		bar.Add(1) //nolint:errcheck
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("pnm: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

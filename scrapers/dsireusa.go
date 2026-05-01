@@ -152,6 +152,7 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		zap.Bool("scrape_details", s.ScrapeDetails),
 	)
 
+	bar := NewProgressBar(total, "dsireusa")
 	for i, state := range usStateAbbrs {
 		select {
 		case <-ctx.Done():
@@ -159,12 +160,15 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		default:
 		}
 
+		bar.Describe(padDescription("dsireusa [" + state + "]"))
+
 		programs, err := s.fetchState(ctx, client, state)
 		if err != nil {
 			s.Logger.Warn("dsireusa state error",
 				zap.String("state", state),
 				zap.Error(err),
 			)
+			bar.Add(1) //nolint:errcheck
 			continue
 		}
 
@@ -193,8 +197,10 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 			zap.Int("unique_total", len(all)),
 		)
 
+		bar.Add(1) //nolint:errcheck
 		time.Sleep(s.pageDelay())
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("dsireusa scrape complete",
 		zap.Int("unique_programs", len(all)),

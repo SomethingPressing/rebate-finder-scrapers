@@ -387,6 +387,7 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	})
 
 	total := len(urls)
+	bar := NewProgressBar(total, "xcel_energy")
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
@@ -419,7 +420,9 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 			s.Logger.Warn("xcel_energy: visit failed",
 				zap.String("url", u), zap.Error(err))
 		}
+		bar.Add(1) //nolint:errcheck
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("xcel_energy: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

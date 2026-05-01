@@ -234,6 +234,7 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 		zap.Int("concurrency", concurrency),
 	)
 
+	bar := NewProgressBar(nTask, "rewiring_america")
 	client := s.httpClient()
 
 	type result struct {
@@ -285,6 +286,7 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 
 	for r := range resultCh {
 		done++
+		bar.Add(1) //nolint:errcheck
 		if r.err != nil {
 			errors++
 			s.Logger.Warn("rewiring_america zip error",
@@ -312,6 +314,7 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 			)
 		}
 	}
+	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("rewiring_america scrape complete",
 		zap.Int("unique_incentives", len(all)),
