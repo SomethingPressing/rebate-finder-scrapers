@@ -52,8 +52,10 @@ func fetchSitemapURLsDepth(ctx context.Context, client *http.Client, u string, d
 	if err != nil {
 		return nil, fmt.Errorf("sitemap: build request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; IncenvaBot/1.0; +https://incenva.com/bot)")
-	req.Header.Set("Accept", "application/xml, text/xml, */*")
+	// Use a realistic browser UA — some sites (e.g. SRP) return 403 for known bot UAs.
+	req.Header.Set("User-Agent", browserUA)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	cl := client
 	if cl == nil {

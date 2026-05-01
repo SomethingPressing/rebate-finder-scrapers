@@ -10,6 +10,27 @@ import (
 	"go.uber.org/zap"
 )
 
+// browserUA is a realistic Chrome user-agent string.
+// Using a recognisable browser UA is necessary to avoid 403s from WAF/CDN
+// protections on utility websites (e.g. SRP, Xcel) that block known bot UAs.
+const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+	"AppleWebKit/537.36 (KHTML, like Gecko) " +
+	"Chrome/124.0.0.0 Safari/537.36"
+
+// browserHeaders are the additional HTTP headers sent with every Colly request
+// to make the traffic profile match a real browser as closely as possible.
+var browserHeaders = map[string]string{
+	"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+	"Accept-Language":           "en-US,en;q=0.9",
+	"Accept-Encoding":           "gzip, deflate, br",
+	"Connection":                "keep-alive",
+	"Upgrade-Insecure-Requests": "1",
+	"Sec-Fetch-Dest":            "document",
+	"Sec-Fetch-Mode":            "navigate",
+	"Sec-Fetch-Site":            "none",
+	"Sec-Fetch-User":            "?1",
+}
+
 // CollyBase provides a pre-configured Colly collector for HTML scraping.
 // Embed this in utility-specific scrapers to avoid repeating boilerplate.
 //
@@ -37,7 +58,7 @@ type CollyBase struct {
 // NewCollector returns a *colly.Collector configured with the settings on CollyBase.
 func (b *CollyBase) NewCollector() *colly.Collector {
 	opts := []colly.CollectorOption{
-		colly.UserAgent("Mozilla/5.0 (compatible; IncenvaBot/1.0; +https://incenva.com/bot)"),
+		colly.UserAgent(browserUA),
 	}
 	if b.AllowedDomain != "" {
 		opts = append(opts, colly.AllowedDomains(b.AllowedDomain))
@@ -59,6 +80,14 @@ func (b *CollyBase) NewCollector() *colly.Collector {
 		DomainGlob:  "*",
 		Parallelism: parallelism,
 		Delay:       delay,
+		RandomDelay: delay / 2, // adds up to 50% jitter to avoid rhythmic patterns
+	})
+
+	// Attach browser-like headers to every request.
+	c.OnRequest(func(r *colly.Request) {
+		for k, v := range browserHeaders {
+			r.Headers.Set(k, v)
+		}
 	})
 
 	if b.Logger != nil {
