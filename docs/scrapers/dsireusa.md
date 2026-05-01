@@ -6,12 +6,31 @@
 
 ---
 
+## Geographic Coverage — How States & ZIPs Are Determined
+
+DSIRE is queried **per state**, not per ZIP. The scraper iterates over a hardcoded list of all 50 US states + DC:
+
+```
+AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME
+MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI
+SC SD TN TX UT VT VA WA WV WI WY
+```
+
+One API request is made per state (`?state[]={abbr}`). This guarantees every state's programs are discovered regardless of ZIP coverage.
+
+**ZIP population for storage (`ZipCodes` field):** When `StateZIPs` is loaded from `data/uszips.csv`, every ZIP in the program's state is stored in the `ZipCodes` array on the incentive record. ZIPs are sorted by descending population so downstream systems get the most-populated ZIP first. This is purely for indexing — it does not affect which programs are fetched.
+
+**Deduplication:** Federal and multi-state programs appear in multiple state responses. The scraper deduplicates by DSIRE program integer ID, so each program is stored only once.
+
+---
+
 ## Approach
 
-1. Queries the DSIRE v1 programs endpoint with one representative ZIP per US state (51 ZIPs total).
-2. Fetches all matching programs in a single page (`length=-1`) per ZIP.
+1. Queries the DSIRE v1 programs endpoint once per US state + DC (51 requests total).
+2. Fetches all matching programs in a single page (`length=-1`) per state.
 3. Deduplicates by DSIRE program ID — the same program appearing in multiple states is only stored once.
 4. Strips HTML from `summary` fields.
+5. Stores all ZIPs for the program's state in `ZipCodes` (from `data/uszips.csv`).
 
 ---
 
@@ -52,6 +71,20 @@ GET https://programs.dsireusa.org/api/v1/programs
 | `Status` | `"active"` when `program.Published == "Yes"`, otherwise default `"draft"` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, UtilityCompany)` |
 | `Source` | `"dsireusa"` (hardcoded) |
+
+---
+
+## Running
+
+```bash
+pnpm run:dsireusa
+```
+
+Or directly via Go:
+
+```bash
+SOURCE=dsireusa RUN_ONCE=true go run ./cmd/scraper
+```
 
 ---
 

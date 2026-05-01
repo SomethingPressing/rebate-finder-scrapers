@@ -6,6 +6,20 @@
 
 ---
 
+## Geographic Coverage — How State & ZIP Are Determined
+
+Peninsula Clean Energy (PCE) is a Community Choice Aggregator (CCA) serving **San Mateo County and the city of Los Banos, California**. State and ZIP are hardcoded on every record:
+
+| Field | Value | Rationale |
+|-------|-------|-----------|
+| `State` | `"CA"` | PCE operates exclusively in California |
+| `ZipCode` | `"94025"` | Menlo Park (central San Mateo County ZIP) |
+| `ServiceTerritory` | `"San Mateo County and Los Banos"` | PCE's full geographic footprint |
+
+The scraper does not sweep multiple ZIPs. All PCE programs apply uniformly within their service area, so one representative ZIP is sufficient for downstream lookups.
+
+---
+
 ## Approach
 
 1. Fetches all four PCE sitemaps and aggregates their URLs before filtering:
@@ -77,6 +91,21 @@ https://www.peninsulacleanenergy.com/financing/
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`
+
+---
+
+## Running
+
+```bash
+pnpm run:peninsula_clean_energy
+```
+
+Or directly via Go / Makefile:
+
+```bash
+SOURCE=peninsula_clean_energy RUN_ONCE=true go run ./cmd/scraper
+make scrape-pce
+```
 
 ---
 

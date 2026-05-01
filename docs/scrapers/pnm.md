@@ -6,6 +6,20 @@
 
 ---
 
+## Geographic Coverage — How State & ZIP Are Determined
+
+PNM serves **New Mexico only**. State and ZIP are hardcoded on every record:
+
+| Field | Value | Rationale |
+|-------|-------|-----------|
+| `State` | `"NM"` | PNM is a single-state utility |
+| `ZipCode` | `"87102"` | Albuquerque (largest NM city, most representative ZIP) |
+| `ServiceTerritory` | `"PNM Service Area"` | Covers central/northern NM |
+
+The scraper does not sweep multiple ZIPs. PNM programs apply uniformly across their service area, so one representative ZIP is sufficient.
+
+---
+
 ## Approach
 
 1. Fetches `https://www.pnm.com/sitemap.xml` — may be a sitemap index with nested sitemaps. Child sitemaps returning HTML "Access Denied" are silently skipped.
@@ -77,6 +91,21 @@ https://pnm.clearesult.com/
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`
+
+---
+
+## Running
+
+```bash
+pnpm run:pnm
+```
+
+Or directly via Go / Makefile:
+
+```bash
+SOURCE=pnm RUN_ONCE=true go run ./cmd/scraper
+make scrape-pnm
+```
 
 ---
 

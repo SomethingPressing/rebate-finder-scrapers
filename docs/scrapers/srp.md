@@ -6,6 +6,20 @@
 
 ---
 
+## Geographic Coverage — How State & ZIP Are Determined
+
+SRP serves the **greater Phoenix metropolitan area in Arizona**. State and ZIP are hardcoded on every record:
+
+| Field | Value | Rationale |
+|-------|-------|-----------|
+| `State` | `"AZ"` | SRP is an Arizona-only utility |
+| `ZipCode` | `"85001"` | Phoenix (SRP's headquarters city and core service area) |
+| `ServiceTerritory` | `"SRP Service Area"` | Covers greater Phoenix metro |
+
+The scraper does not sweep multiple ZIPs. SRP programs apply uniformly across their service territory, so one representative ZIP is sufficient.
+
+---
+
 ## Approach
 
 1. Fetches `https://www.srpnet.com/sitemap.xml` and applies `srpFilterCfg` — exclusions checked first, then inclusion keywords.
@@ -71,6 +85,21 @@ https://www.srpnet.com/assistance
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`
+
+---
+
+## Running
+
+```bash
+pnpm run:srp
+```
+
+Or directly via Go / Makefile:
+
+```bash
+SOURCE=srp RUN_ONCE=true go run ./cmd/scraper
+make scrape-srp
+```
 
 ---
 

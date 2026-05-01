@@ -6,6 +6,20 @@
 
 ---
 
+## Geographic Coverage — How State & ZIP Are Determined
+
+Con Edison serves **New York City and Westchester County, NY only**. State and ZIP are hardcoded on every record — no dynamic detection is needed:
+
+| Field | Value | Rationale |
+|-------|-------|-----------|
+| `State` | `"NY"` | Con Edison is a single-state utility |
+| `ZipCode` | `"10001"` | Manhattan (representative NY ZIP for indexing) |
+| `ServiceTerritory` | `"Con Edison Service Territory"` | Covers NYC + Westchester |
+
+The scraper does not sweep multiple ZIPs. Because Con Edison programs apply uniformly across their territory, one representative ZIP is sufficient for downstream lookups.
+
+---
+
 ## Approach
 
 1. Fetches `https://www.coned.com/sitemap_coned_en.xml` and applies `conEdisonFilterCfg` — exclusions checked first, then inclusion keywords.
@@ -75,6 +89,21 @@ https://www.coned.com/en/accounts-billing/payment-plans-assistance/help-paying-y
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `image_url`, `rate_tiers`
+
+---
+
+## Running
+
+```bash
+pnpm run:con_edison
+```
+
+Or directly via Go / Makefile:
+
+```bash
+SOURCE=con_edison RUN_ONCE=true go run ./cmd/scraper
+make scrape-coned
+```
 
 ---
 

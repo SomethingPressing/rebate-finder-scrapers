@@ -4,7 +4,29 @@
 
 **Approach:** Single corporate sitemap crawl + Colly HTML scraping. PDF URLs are routed to the PDF extraction path.
 
-**States covered:** CO, MN, WI, ND, SD, NM — state is auto-detected from page text, not from URL subdomains.
+**States covered:** CO, MN, WI, ND, SD, NM — state is **auto-detected from page text**, not from URL subdomains.
+
+---
+
+## Geographic Coverage — How State & ZIP Are Determined
+
+Xcel Energy operates across **six states** under different subsidiary brands (e.g. Public Service Company of Colorado, Northern States Power). Unlike single-state utilities, the state and ZIP cannot be hardcoded — they must be inferred per page.
+
+**State detection (`xcelStateFromText`):** The scraper scans the full page text + URL for state name keywords:
+
+| Keyword found | `State` | Representative `ZipCode` | `ServiceTerritory` |
+|---------------|---------|--------------------------|-------------------|
+| "Colorado" | `"CO"` | `"80202"` (Denver) | `"Xcel Energy Colorado Service Area"` |
+| "Minnesota" | `"MN"` | `"55401"` (Minneapolis) | `"Xcel Energy Minnesota Service Area"` |
+| "Wisconsin" | `"WI"` | `"53202"` (Milwaukee) | `"Xcel Energy Wisconsin Service Area"` |
+| "North Dakota" | `"ND"` | `"58102"` (Fargo) | `"Xcel Energy Northern States Power Service Area"` |
+| "South Dakota" | `"SD"` | `"57101"` (Sioux Falls) | `"Xcel Energy Northern States Power Service Area"` |
+| "New Mexico" | `"NM"` | `"87501"` (Santa Fe) | `"Xcel Energy New Mexico Service Area"` |
+| *(no match)* | `""` | `""` | `"Xcel Energy Service Area"` |
+
+**Why this approach:** Xcel's rebate pages explicitly name the state they apply to (e.g. "Colorado customers can receive…"). Scraping this directly from page content is more accurate than trying to maintain a URL-to-state mapping.
+
+**PDF fallback:** For PDF URLs, state/ZIP are left blank because PDFs rarely contain enough text for reliable state detection. The PDF record is still stored — state can be enriched later.
 
 ---
 
@@ -96,6 +118,21 @@ https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`
+
+---
+
+## Running
+
+```bash
+pnpm run:xcel_energy
+```
+
+Or directly via Go / Makefile:
+
+```bash
+SOURCE=xcel_energy RUN_ONCE=true go run ./cmd/scraper
+make scrape-xcel
+```
 
 ---
 
