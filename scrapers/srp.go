@@ -212,6 +212,10 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		urls = srpSeedURLs()
 	} else {
 		urls = FilterSitemapURLs(allURLs, srpFilterCfg)
+		s.Logger.Info("srp: sitemap discovery",
+			zap.Int("sitemap_total", len(allURLs)),
+			zap.Int("passed_filter", len(urls)),
+		)
 		if len(urls) == 0 {
 			s.Logger.Warn("srp: no URLs passed filter, using seed URLs")
 			urls = srpSeedURLs()
@@ -247,14 +251,25 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		}
 		seen[inc.ID] = true
 		all = append(all, *inc)
+		s.Logger.Info("srp: program found",
+			zap.String("name", inc.ProgramName),
+			zap.Strings("categories", inc.CategoryTag),
+			zap.Int("total_so_far", len(all)),
+		)
 	})
 
-	for _, u := range urls {
+	total := len(urls)
+	for i, u := range urls {
 		select {
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
 		}
+		s.Logger.Info("srp: visiting URL",
+			zap.Int("i", i+1),
+			zap.Int("total", total),
+			zap.String("url", u),
+		)
 		if IsPDFURL(u) {
 			text, err := ExtractPDFPages(u, nil)
 			if err != nil {
@@ -265,6 +280,10 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 			if inc != nil && !seen[inc.ID] {
 				seen[inc.ID] = true
 				all = append(all, *inc)
+				s.Logger.Info("srp: program found (pdf)",
+					zap.String("name", inc.ProgramName),
+					zap.Int("total_so_far", len(all)),
+				)
 			}
 			continue
 		}

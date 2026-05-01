@@ -213,13 +213,19 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 
 	// Step 1: discover rebate URLs from all four sitemaps.
 	var allURLs []string
-	for _, sitemapURL := range pceSitemapURLs {
+	for si, sitemapURL := range pceSitemapURLs {
 		fetched, err := FetchSitemapURLs(ctx, client, sitemapURL)
 		if err != nil {
 			s.Logger.Warn("peninsula_clean_energy: sitemap fetch failed",
 				zap.String("sitemap", sitemapURL), zap.Error(err))
 			continue
 		}
+		s.Logger.Info("peninsula_clean_energy: sitemap fetched",
+			zap.Int("sitemap_index", si+1),
+			zap.Int("sitemap_total", len(pceSitemapURLs)),
+			zap.String("sitemap", sitemapURL),
+			zap.Int("urls_found", len(fetched)),
+		)
 		allURLs = append(allURLs, fetched...)
 	}
 
@@ -229,6 +235,10 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 		urls = pceSeedURLs()
 	} else {
 		urls = FilterSitemapURLs(allURLs, pceFilterCfg)
+		s.Logger.Info("peninsula_clean_energy: sitemap discovery",
+			zap.Int("sitemap_total", len(allURLs)),
+			zap.Int("passed_filter", len(urls)),
+		)
 		if len(urls) == 0 {
 			s.Logger.Warn("peninsula_clean_energy: no URLs passed filter, using seed URLs")
 			urls = pceSeedURLs()
@@ -264,14 +274,25 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 		}
 		seen[inc.ID] = true
 		all = append(all, *inc)
+		s.Logger.Info("peninsula_clean_energy: program found",
+			zap.String("name", inc.ProgramName),
+			zap.Strings("categories", inc.CategoryTag),
+			zap.Int("total_so_far", len(all)),
+		)
 	})
 
-	for _, u := range urls {
+	total := len(urls)
+	for i, u := range urls {
 		select {
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
 		}
+		s.Logger.Info("peninsula_clean_energy: visiting URL",
+			zap.Int("i", i+1),
+			zap.Int("total", total),
+			zap.String("url", u),
+		)
 		if IsPDFURL(u) {
 			text, err := ExtractPDFPages(u, nil)
 			if err != nil {
@@ -282,6 +303,10 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 			if inc != nil && !seen[inc.ID] {
 				seen[inc.ID] = true
 				all = append(all, *inc)
+				s.Logger.Info("peninsula_clean_energy: program found (pdf)",
+					zap.String("name", inc.ProgramName),
+					zap.Int("total_so_far", len(all)),
+				)
 			}
 			continue
 		}

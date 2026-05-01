@@ -108,6 +108,11 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 					return fmt.Errorf("page %d: %w", page, err)
 				}
 				rawPages[page] = resp.Results
+				s.Logger.Info("energy_star: page fetched",
+					zap.Int("page", page+1),
+					zap.Int("total_pages", totalPages),
+					zap.Int("results_on_page", len(resp.Results)),
+				)
 				return nil
 			})
 		}

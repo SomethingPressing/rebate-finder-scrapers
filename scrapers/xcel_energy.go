@@ -340,6 +340,10 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		urls = xcelSeedURLs()
 	} else {
 		urls = FilterSitemapURLs(allURLs, xcelFilterCfg)
+		s.Logger.Info("xcel_energy: sitemap discovery",
+			zap.Int("sitemap_total", len(allURLs)),
+			zap.Int("passed_filter", len(urls)),
+		)
 		if len(urls) == 0 {
 			s.Logger.Warn("xcel_energy: no URLs passed filter, using seed URLs")
 			urls = xcelSeedURLs()
@@ -374,14 +378,26 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		}
 		seen[inc.ID] = true
 		all = append(all, *inc)
+		s.Logger.Info("xcel_energy: program found",
+			zap.String("name", inc.ProgramName),
+			zap.Stringp("state", inc.State),
+			zap.Strings("categories", inc.CategoryTag),
+			zap.Int("total_so_far", len(all)),
+		)
 	})
 
-	for _, u := range urls {
+	total := len(urls)
+	for i, u := range urls {
 		select {
 		case <-ctx.Done():
 			return all, ctx.Err()
 		default:
 		}
+		s.Logger.Info("xcel_energy: visiting URL",
+			zap.Int("i", i+1),
+			zap.Int("total", total),
+			zap.String("url", u),
+		)
 		if IsPDFURL(u) {
 			text, err := ExtractPDFPages(u, nil)
 			if err != nil {
@@ -392,6 +408,10 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 			if inc != nil && !seen[inc.ID] {
 				seen[inc.ID] = true
 				all = append(all, *inc)
+				s.Logger.Info("xcel_energy: program found (pdf)",
+					zap.String("name", inc.ProgramName),
+					zap.Int("total_so_far", len(all)),
+				)
 			}
 			continue
 		}
