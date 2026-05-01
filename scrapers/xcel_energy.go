@@ -1,3 +1,4 @@
+// Utility (Covers multiple states)
 // xcel_energy.go — Xcel Energy multi-state rebate and incentive scraper.
 //
 // Xcel Energy operates in Colorado, Minnesota, Texas (SPS), and other states.

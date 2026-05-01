@@ -1,3 +1,4 @@
+// Federal (takes about the government), National (takes about the states)
 package scrapers
 
 import (
@@ -56,7 +57,7 @@ type raAuthority struct {
 
 // raAmount describes the incentive value.
 type raAmount struct {
-	Type           string   `json:"type"`           // "percent" | "dollar_amount" | "dollars_per_unit"
+	Type           string   `json:"type"` // "percent" | "dollar_amount" | "dollars_per_unit"
 	Number         float64  `json:"number"`
 	Maximum        float64  `json:"maximum"`        // 0 = no cap
 	Representative *float64 `json:"representative"` // typical/minimum value when != maximum

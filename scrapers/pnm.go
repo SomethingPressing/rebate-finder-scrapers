@@ -1,3 +1,4 @@
+// Utility
 // pnm.go — PNM (Public Service Company of New Mexico) rebate scraper.
 //
 // Discovers rebate pages via the PNM sitemap, then visits each page and

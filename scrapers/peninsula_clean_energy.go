@@ -1,3 +1,4 @@
+// Utility
 // peninsula_clean_energy.go — Peninsula Clean Energy (PCE) rebate scraper.
 //
 // Peninsula Clean Energy is the Community Choice Aggregator (CCA) for San
@@ -33,14 +34,14 @@ import (
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const (
-	pceState         = "CA"
-	pceUtility       = "Peninsula Clean Energy"
-	pceTerritory     = "San Mateo County and Los Banos"
-	pceZIP           = "94025"
-	pceSourceName    = "peninsula_clean_energy"
-	pceDefaultApply  = "Visit the official Peninsula Clean Energy website to learn about eligibility requirements and submit your application."
-	pceDomain        = "www.peninsulacleanenergy.com"
-	pceBaseURL       = "https://www.peninsulacleanenergy.com"
+	pceState        = "CA"
+	pceUtility      = "Peninsula Clean Energy"
+	pceTerritory    = "San Mateo County and Los Banos"
+	pceZIP          = "94025"
+	pceSourceName   = "peninsula_clean_energy"
+	pceDefaultApply = "Visit the official Peninsula Clean Energy website to learn about eligibility requirements and submit your application."
+	pceDomain       = "www.peninsulacleanenergy.com"
+	pceBaseURL      = "https://www.peninsulacleanenergy.com"
 )
 
 // pceSitemapURLs lists all four sitemaps PCE publishes.

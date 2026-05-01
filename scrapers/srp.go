@@ -1,3 +1,4 @@
+// Utility
 // srp.go — Salt River Project (SRP) rebate and incentive scraper.
 //
 // Discovers rebate pages via the SRP sitemap, then visits each page
@@ -30,13 +31,13 @@ import (
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const (
-	srpSitemapURL    = "https://www.srpnet.com/sitemap.xml"
-	srpState         = "AZ"
-	srpUtility       = "Salt River Project"
-	srpTerritory     = "SRP Service Area"
-	srpZIP           = "85001"
-	srpSourceName    = "srp"
-	srpDefaultApply  = "Visit the official Salt River Project website to learn about eligibility requirements and submit your application."
+	srpSitemapURL   = "https://www.srpnet.com/sitemap.xml"
+	srpState        = "AZ"
+	srpUtility      = "Salt River Project"
+	srpTerritory    = "SRP Service Area"
+	srpZIP          = "85001"
+	srpSourceName   = "srp"
+	srpDefaultApply = "Visit the official Salt River Project website to learn about eligibility requirements and submit your application."
 )
 
 // srpFilterCfg mirrors the SRP URL decision logic from the SmythOS crawler
@@ -503,7 +504,6 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 
 	return &inc
 }
-
 
 func (s *SRPScraper) httpClient() *http.Client {
 	if s.HTTPClient != nil {

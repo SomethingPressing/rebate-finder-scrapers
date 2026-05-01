@@ -1,3 +1,4 @@
+// State, Utility, Local, Federal (Means all of the US)
 package scrapers
 
 import (
@@ -34,10 +35,10 @@ type dsireV1Response struct {
 }
 
 type dsireProgram struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	WebsiteURL   string `json:"websiteUrl"`
-	Summary      string `json:"summary"` // HTML — must be stripped
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	WebsiteURL    string `json:"websiteUrl"`
+	Summary       string `json:"summary"` // HTML — must be stripped
 	Administrator string `json:"administrator"`
 	FundingSource string `json:"fundingSource"`
 	Budget        string `json:"budget"`
@@ -69,7 +70,7 @@ type dsireProgram struct {
 }
 
 type dsireParameterSet struct {
-	Parameters []dsireParameter `json:"parameters"`
+	Parameters   []dsireParameter `json:"parameters"`
 	Technologies []struct {
 		Name     string `json:"name"`
 		Category string `json:"category"`

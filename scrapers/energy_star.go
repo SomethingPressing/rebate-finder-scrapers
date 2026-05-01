@@ -1,3 +1,5 @@
+//Federal.  It's more like a certfication program. this refrigator is energy star efficient
+
 package scrapers
 
 import (

@@ -1,3 +1,4 @@
+// Utility
 // con_edison.go — Con Edison (coned.com) rebate and incentive scraper.
 //
 // Discovers rebate pages via the Con Edison sitemap, then visits each page
