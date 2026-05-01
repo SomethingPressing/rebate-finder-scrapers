@@ -1,6 +1,8 @@
 package scrapers
 
 import (
+	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -53,6 +55,12 @@ type CollyBase struct {
 	Parallelism    int
 	Delay          time.Duration
 	Logger         *zap.Logger
+
+	// ProxyURL, when non-empty, routes all Colly requests and bare *http.Client
+	// calls through this proxy.  Useful for bypassing CDN/WAF IP-range blocks
+	// (e.g. Cloudflare blocks data-center IPs for SRP regardless of UA).
+	// Accepted formats: "http://user:pass@host:port", "socks5://host:port".
+	ProxyURL string
 }
 
 // NewCollector returns a *colly.Collector configured with the settings on CollyBase.
@@ -100,7 +108,37 @@ func (b *CollyBase) NewCollector() *colly.Collector {
 		})
 	}
 
+	// Route through proxy if configured (e.g. residential proxy to bypass
+	// Cloudflare IP-range blocks that affect data-center egress IPs).
+	if b.ProxyURL != "" {
+		if err := c.SetProxy(b.ProxyURL); err != nil {
+			if b.Logger != nil {
+				b.Logger.Warn("colly: failed to set proxy",
+					zap.String("proxy", b.ProxyURL),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
 	return c
+}
+
+// NewHTTPClient returns an *http.Client configured with the CollyBase proxy
+// (if set) and the given timeout.  Use this for sitemap fetches and any other
+// non-Colly HTTP calls that must share the same proxy as the collector.
+func (b *CollyBase) NewHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	// Clone the default transport so we inherit TLS settings, keep-alives, etc.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if b.ProxyURL != "" {
+		if parsed, err := url.Parse(b.ProxyURL); err == nil {
+			tr.Proxy = http.ProxyURL(parsed)
+		}
+	}
+	return &http.Client{Timeout: timeout, Transport: tr}
 }
 
 func (b *CollyBase) requestTimeout() time.Duration {

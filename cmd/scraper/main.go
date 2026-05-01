@@ -62,12 +62,23 @@ func main() {
 	// ── Logger ────────────────────────────────────────────────────────────────
 	logger := logutil.New(cfg.LogLevel, cfg.LogFormat)
 	defer logger.Sync() //nolint:errcheck
+	proxyActive := cfg.ProxyURL != ""
 	logger.Info("scraper service starting",
 		zap.String("log_level", cfg.LogLevel),
 		zap.String("log_format", cfg.LogFormat),
 		zap.Bool("run_once", cfg.RunOnce),
 		zap.String("source_filter", source),
+		zap.Bool("proxy_active", proxyActive),
+		zap.Bool("headless_browser", cfg.UseHeadlessBrowser),
 	)
+	if proxyActive {
+		logger.Info("proxy configured for HTML scrapers",
+			zap.String("proxy_url", cfg.ProxyURL),
+		)
+	}
+	if cfg.UseHeadlessBrowser {
+		logger.Info("headless browser mode enabled for Cloudflare-protected scrapers (SRP)")
+	}
 
 	// ── Database (GORM) ───────────────────────────────────────────────────────
 	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
@@ -127,26 +138,32 @@ func main() {
 	reg.Register(&scrapers.ConEdisonScraper{
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
+		ProxyURL:       cfg.ProxyURL,
 	})
 
 	reg.Register(&scrapers.PNMScraper{
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
+		ProxyURL:       cfg.ProxyURL,
 	})
 
 	reg.Register(&scrapers.XcelEnergyScraper{
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
+		ProxyURL:       cfg.ProxyURL,
 	})
 
 	reg.Register(&scrapers.SRPScraper{
-		ScraperVersion: cfg.ScraperVersion,
-		Logger:         logger,
+		ScraperVersion:     cfg.ScraperVersion,
+		Logger:             logger,
+		ProxyURL:           cfg.ProxyURL,
+		UseHeadlessBrowser: cfg.UseHeadlessBrowser,
 	})
 
 	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{
 		ScraperVersion: cfg.ScraperVersion,
 		Logger:         logger,
+		ProxyURL:       cfg.ProxyURL,
 	})
 
 	// ── Validate --source if provided ─────────────────────────────────────────

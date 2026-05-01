@@ -177,11 +177,18 @@ func conEdisonSeedURLs() []string {
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
 // ConEdisonScraper discovers and scrapes rebate programs from coned.com.
+// Set ProxyURL to route through a residential proxy if Cloudflare/WAF blocks
+// the server's IP range (same pattern as SRPScraper).
 type ConEdisonScraper struct {
 	CollyBase
 	ScraperVersion string
 	Logger         *zap.Logger
-	HTTPClient     *http.Client
+	HTTPClient     *http.Client // optional override for tests
+
+	// ProxyURL routes sitemap fetches and Colly visits through a proxy.
+	// Format: "http://user:pass@host:port" or "socks5://host:port".
+	// Env var: SCRAPER_PROXY_URL
+	ProxyURL string
 }
 
 // Name implements Scraper.
@@ -458,7 +465,8 @@ func (s *ConEdisonScraper) httpClient() *http.Client {
 	if s.HTTPClient != nil {
 		return s.HTTPClient
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	s.CollyBase.ProxyURL = s.ProxyURL
+	return s.CollyBase.NewHTTPClient(30 * time.Second)
 }
 
 func (s *ConEdisonScraper) newCollector(domain string) *colly.Collector {
@@ -466,5 +474,6 @@ func (s *ConEdisonScraper) newCollector(domain string) *colly.Collector {
 	s.CollyBase.Parallelism = 2
 	s.CollyBase.Delay = 600 * time.Millisecond
 	s.CollyBase.Logger = s.Logger
+	s.CollyBase.ProxyURL = s.ProxyURL
 	return s.CollyBase.NewCollector()
 }

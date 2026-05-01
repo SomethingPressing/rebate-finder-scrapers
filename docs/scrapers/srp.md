@@ -109,6 +109,40 @@ make scrape-srp
 
 ---
 
+## Cloudflare Bypass
+
+SRP is behind Cloudflare. Requests from data-center IP ranges (AWS, GCP, Hetzner, etc.) return HTTP 403 regardless of User-Agent or headers — this is confirmed by `server: cloudflare` + `cf-ray` in the response headers from a direct `curl`. Two bypass options are available:
+
+### Option A — Headless browser (recommended, no extra infrastructure)
+
+```bash
+USE_HEADLESS_BROWSER=true SOURCE=srp RUN_ONCE=true go run ./cmd/scraper
+```
+
+Or in `.env`:
+```
+USE_HEADLESS_BROWSER=true
+```
+
+Rod downloads Chromium automatically the first time (~150 MB, cached at `~/.cache/rod/browser/`). Subsequent runs reuse the cached binary. The headless browser uses a real Chrome TLS fingerprint and can solve Cloudflare JS challenges, so it works even from a data-center IP.
+
+**On Docker / container environments**, the Chrome sandbox needs to be disabled (Rod does this automatically when `NoSandbox: true` is set, which is the default). You may also need to install shared libraries:
+```bash
+# Debian/Ubuntu
+apt-get install -y ca-certificates libnss3 libatk-bridge2.0-0 libgbm1 libasound2
+```
+
+### Option B — Residential proxy (if you have one)
+
+```bash
+SCRAPER_PROXY_URL=http://user:pass@proxy.example.com:8080 SOURCE=srp RUN_ONCE=true go run ./cmd/scraper
+```
+
+This routes the plain HTTP client (sitemap + Colly visits) through the proxy's IP, which is not in any data-center block list.
+
 ## Configuration
 
-No required env vars (uses hardcoded base URLs).
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `USE_HEADLESS_BROWSER` | `false` | Use headless Chromium (go-rod) instead of Colly for page visits. Bypasses Cloudflare TLS/IP/JS-challenge blocks. Rod auto-downloads Chromium on first use. |
+| `SCRAPER_PROXY_URL` | _(none)_ | Route sitemap fetches and Colly visits through a proxy. Format: `http://user:pass@host:port` or `socks5://host:port`. Alternative to headless browser if you have a residential proxy. |

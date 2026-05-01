@@ -72,6 +72,36 @@ pnpm run:peninsula_clean_energy
 
 ---
 
+## Cloudflare / WAF Bypass
+
+Some utility websites (currently confirmed: **SRP**) are protected by Cloudflare's IP-based blocking, which rejects requests from data-center IP ranges regardless of User-Agent or headers.
+
+Two bypass strategies are supported:
+
+### Option A — Headless browser (no extra infrastructure needed)
+
+```bash
+# .env
+USE_HEADLESS_BROWSER=true
+
+# or inline
+USE_HEADLESS_BROWSER=true SOURCE=srp RUN_ONCE=true go run ./cmd/scraper
+```
+
+This uses [go-rod](https://github.com/go-rod/rod) to drive a real headless Chromium instance. Rod auto-downloads Chromium on first use (~150 MB, cached at `~/.cache/rod/browser/`). Cloudflare sees a genuine Chrome TLS fingerprint and can solve JS challenges, so this works even from a data-center IP. Currently applied to **SRP only**.
+
+### Option B — Residential proxy (if available)
+
+```bash
+SCRAPER_PROXY_URL=http://user:pass@proxy.example.com:8080 SOURCE=srp RUN_ONCE=true go run ./cmd/scraper
+```
+
+`SCRAPER_PROXY_URL` is applied to **all five** HTML scrapers (Con Edison, PNM, Xcel Energy, SRP, Peninsula Clean Energy) for both sitemap fetches and Colly page visits. API-based scrapers (DSIRE, Rewiring America, Energy Star) are unaffected.
+
+> **Note:** API-based scrapers do not use `SCRAPER_PROXY_URL`. If you need a proxy for those, set `HTTP_PROXY` / `HTTPS_PROXY` in your shell — Go's `net/http` respects those automatically.
+
+---
+
 ## Adding a New Scraper
 
 See [adding-a-scraper.md](../adding-a-scraper.md) for a step-by-step guide.

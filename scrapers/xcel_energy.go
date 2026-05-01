@@ -320,7 +320,12 @@ type XcelEnergyScraper struct {
 	CollyBase
 	ScraperVersion string
 	Logger         *zap.Logger
-	HTTPClient     *http.Client
+	HTTPClient     *http.Client // optional override for tests
+
+	// ProxyURL routes sitemap fetches and Colly visits through a proxy.
+	// Format: "http://user:pass@host:port" or "socks5://host:port".
+	// Env var: SCRAPER_PROXY_URL
+	ProxyURL string
 }
 
 // Name implements Scraper.
@@ -591,7 +596,8 @@ func (s *XcelEnergyScraper) httpClient() *http.Client {
 	if s.HTTPClient != nil {
 		return s.HTTPClient
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	s.CollyBase.ProxyURL = s.ProxyURL
+	return s.CollyBase.NewHTTPClient(30 * time.Second)
 }
 
 func (s *XcelEnergyScraper) newCollector(domain string) *colly.Collector {
@@ -599,5 +605,6 @@ func (s *XcelEnergyScraper) newCollector(domain string) *colly.Collector {
 	s.CollyBase.Parallelism = 2
 	s.CollyBase.Delay = 600 * time.Millisecond
 	s.CollyBase.Logger = s.Logger
+	s.CollyBase.ProxyURL = s.ProxyURL
 	return s.CollyBase.NewCollector()
 }
