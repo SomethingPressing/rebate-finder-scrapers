@@ -184,6 +184,8 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = cfg.UtilityCompany
+	// HTML scrapers are always utility-level programs.
+	inc.Portfolio = []string{"Utility"}
 	inc.IncentiveDescription = models.PtrString(description)
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(cfg.DefaultApply)

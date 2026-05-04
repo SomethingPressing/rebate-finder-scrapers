@@ -317,13 +317,11 @@ func mapEnergyStarRecord(
 		}
 	}
 
-	// ── Building type ────────────────────────────────────────────────────────
-	if idata.IncentiveBuildingSector != nil {
-		if bs := idata.IncentiveBuildingSector.BestName(); bs != "" {
-			// Store building sector via Portfolio field to match schema
-			inc.Portfolio = []string{bs}
-		}
-	}
+	// ── Portfolio (program level) ─────────────────────────────────────────────
+	// Derive the program level from the utility name and nationwide flag rather
+	// than the building-sector field (which describes the building type, not
+	// whether the program is federal/state/utility-funded).
+	inc.Portfolio = []string{energyStarPortfolioLevel(utility, availNationwide)}
 
 	// ── Items (product sub-category) ─────────────────────────────────────────
 	// UnitType is used to note the applicable product items when not "All".
@@ -590,6 +588,39 @@ func parseIncentiveAmountInto(inc *models.Incentive, s string) {
 
 	// Fallback: narrative
 	inc.IncentiveFormat = models.PtrString("narrative")
+}
+
+// ── Portfolio (program level) helper ─────────────────────────────────────────
+
+// energyStarPortfolioLevel returns the canonical portfolio label for an Energy
+// Star record based on the utility name and the nationwide flag.
+//
+//   - availNationwide == true              → "Federal"
+//   - utility is empty / "Energy Star"     → "Federal" (the program itself is federal)
+//   - utility contains known state-agency
+//     indicators                           → "State"
+//   - everything else                      → "Utility"
+func energyStarPortfolioLevel(utility string, availNationwide bool) string {
+	if availNationwide {
+		return "Federal"
+	}
+	u := strings.TrimSpace(utility)
+	uLower := strings.ToLower(u)
+	if u == "" || u == "Energy Star" {
+		return "Federal"
+	}
+	// State-agency indicators: government departments and energy offices.
+	stateIndicators := []string{
+		"department of", "energy office", "state of ", " state gov",
+		"division of", "bureau of", "commission on", "authority",
+		"public utilities commission", " puc", " psc",
+	}
+	for _, ind := range stateIndicators {
+		if strings.Contains(uLower, ind) {
+			return "State"
+		}
+	}
+	return "Utility"
 }
 
 // ── Timestamp helper ──────────────────────────────────────────────────────────
