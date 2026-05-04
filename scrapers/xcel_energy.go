@@ -571,6 +571,7 @@ func (s *XcelEnergyScraper) extractPage(
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = xcelUtility
+	inc.Portfolio = []string{"Utility"}
 	inc.ServiceTerritory = models.PtrString(territory)
 	inc.IncentiveDescription = models.PtrString(description)
 	inc.IncentiveFormat = models.PtrString(format)

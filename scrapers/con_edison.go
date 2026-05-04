@@ -443,6 +443,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = conEdisonUtility
+	inc.Portfolio = []string{"Utility"}
 	inc.State = models.PtrString(conEdisonState)
 	inc.ZipCode = models.PtrString(conEdisonZIP)
 	inc.ServiceTerritory = models.PtrString(conEdisonTerritory)

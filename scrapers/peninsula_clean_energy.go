@@ -473,6 +473,7 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = pceUtility
+	inc.Portfolio = []string{"Utility"}
 	inc.State = models.PtrString(pceState)
 	inc.ZipCode = models.PtrString(pceZIP)
 	inc.ServiceTerritory = models.PtrString(pceTerritory)

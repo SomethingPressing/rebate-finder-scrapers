@@ -214,6 +214,7 @@ func ceToIncentive(spec ceIncentiveSpec, version string) models.Incentive {
 	inc.ID = models.DeterministicID("consumers_energy_pdf", spec.Key)
 	inc.ProgramName = spec.MeasureName
 	inc.UtilityCompany = "Consumers Energy"
+	inc.Portfolio = []string{"Utility"}
 	inc.State = models.PtrString("MI")
 	inc.IncentiveDescription = models.PtrString(spec.Description)
 	inc.IncentiveFormat = models.PtrString("tiered")

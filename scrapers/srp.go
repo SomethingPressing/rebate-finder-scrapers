@@ -460,6 +460,7 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = srpUtility
+	inc.Portfolio = []string{"Utility"}
 	inc.State = models.PtrString(srpState)
 	inc.ZipCode = models.PtrString(srpZIP)
 	inc.ServiceTerritory = models.PtrString(srpTerritory)
