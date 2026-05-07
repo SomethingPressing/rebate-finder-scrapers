@@ -199,7 +199,7 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 	case len(s.ZIPs) > 0:
 		zips = s.ZIPs
 	case len(s.StateZIPs) > 0:
-		zips = zipdata.Sample(s.StateZIPs, 1) // 1 ZIP per state (most populous)
+		zips = zipdata.Sample(s.StateZIPs, 0) // all ZIPs from the file
 	default:
 		zips = representativeZIPs
 	}
