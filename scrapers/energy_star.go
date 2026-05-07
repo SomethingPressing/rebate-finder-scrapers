@@ -255,6 +255,11 @@ func mapEnergyStarRecord(
 
 	inc := models.NewIncentive("Energy Star", scraperVersion)
 
+	if raw, err := json.Marshal(result); err == nil {
+		inc.RawResponse = string(raw)
+		inc.RawContentType = "application/json"
+	}
+
 	// ── Deterministic ID ───────────────────────────────────────────────────
 	inc.ID = models.DeterministicID("energy_star", result.IncentiveID)
 

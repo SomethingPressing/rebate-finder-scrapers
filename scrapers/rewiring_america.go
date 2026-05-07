@@ -398,6 +398,11 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		inc := models.NewIncentive(s.Name(), s.ScraperVersion)
 		inc.ID = id
 
+		if raw, err := json.Marshal(item); err == nil {
+			inc.RawResponse = string(raw)
+			inc.RawContentType = "application/json"
+		}
+
 		// ── Program identity ──────────────────────────────────────────────
 		inc.ProgramName = fmt.Sprintf("%s — %s", authorityName, item.Program)
 		inc.UtilityCompany = authorityName

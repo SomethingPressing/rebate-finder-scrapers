@@ -56,7 +56,8 @@ func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 		"contact_email", "contact_phone",
 		"image_url", "image_urls",
 		"contractor_required", "energy_audit_required",
-		"rate_tiers", "scraper_version", "stg_program_hash", "updated_at",
+		"rate_tiers", "scraper_version", "stg_program_hash",
+		"stg_raw_response", "stg_raw_content_type", "updated_at",
 	}
 
 	total := 0

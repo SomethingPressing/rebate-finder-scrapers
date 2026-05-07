@@ -265,6 +265,11 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 	inc := models.NewIncentive(s.Name(), s.ScraperVersion)
 	inc.ID = models.DeterministicID(s.Name(), strconv.Itoa(p.ID))
 
+	if raw, err := json.Marshal(p); err == nil {
+		inc.RawResponse = string(raw)
+		inc.RawContentType = "application/json"
+	}
+
 	// ── Core ──────────────────────────────────────────────────────────────────
 	inc.ProgramName = p.Name
 

@@ -103,6 +103,12 @@ type Incentive struct {
 	Processed            bool
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+
+	// RawResponse is the verbatim source payload that produced this incentive.
+	// API scrapers set this to the JSON-marshalled record; HTML scrapers set it
+	// to the full page HTML.  Stored in stg_raw_response for audit/replay.
+	RawResponse    string
+	RawContentType string // "application/json" or "text/html"
 }
 
 // NewIncentive returns an Incentive pre-filled with safe defaults.

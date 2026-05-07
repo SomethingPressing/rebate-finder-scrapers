@@ -181,6 +181,11 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	id := models.DeterministicID(cfg.Source, pageURL)
 
 	inc := models.NewIncentive(cfg.Source, cfg.ScraperVersion)
+
+	if rawHTML, err := doc.Html(); err == nil {
+		inc.RawResponse = rawHTML
+		inc.RawContentType = "text/html"
+	}
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = cfg.UtilityCompany

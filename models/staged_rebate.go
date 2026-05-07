@@ -108,6 +108,13 @@ type StagedRebate struct {
 	// Zipcode-agnostic dedup key.  Pre-computed by the scraper so the promoter
 	// can use it directly (and fall back to computing on-the-fly for older rows).
 	ProgramHash string `gorm:"column:stg_program_hash"`
+
+	// stg_raw_response: verbatim source payload (JSON record or full page HTML).
+	// stg_raw_content_type: "application/json" or "text/html".
+	// Populated by every scraper so you can replay or diff scrape runs without
+	// re-fetching.  NULL for rows written before this column was added.
+	StgRawResponse    *string `gorm:"column:stg_raw_response;type:text"`
+	StgRawContentType *string `gorm:"column:stg_raw_content_type"`
 }
 
 // TableName tells GORM which table to use.  The schema prefix comes from
@@ -156,5 +163,14 @@ func FromIncentive(inc Incentive) StagedRebate {
 		RateTiers:            RateTiersJSON(inc.RateTiers),
 		ScraperVersion:       inc.ScraperVersion,
 		PromotionStatus:      PromotionPending,
+		StgRawResponse:       ptrNonEmpty(inc.RawResponse),
+		StgRawContentType:    ptrNonEmpty(inc.RawContentType),
 	}
+}
+
+func ptrNonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
