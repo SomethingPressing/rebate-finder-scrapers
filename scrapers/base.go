@@ -57,6 +57,32 @@ func (r *Registry) Names() []string {
 	return names
 }
 
+// RunList executes a specific slice of scrapers sequentially.
+// Per-scraper errors are logged and do not abort the run.
+func RunList(ctx context.Context, list []Scraper, logger *zap.Logger) []models.Incentive {
+	var all []models.Incentive
+	for _, s := range list {
+		t0 := time.Now()
+		logger.Info("scraper starting", zap.String("source", s.Name()))
+		items, err := s.Scrape(ctx)
+		if err != nil {
+			logger.Error("scraper failed",
+				zap.String("source", s.Name()),
+				zap.Error(err),
+				zap.Duration("elapsed", time.Since(t0)),
+			)
+			continue
+		}
+		logger.Info("scraper finished",
+			zap.String("source", s.Name()),
+			zap.Int("count", len(items)),
+			zap.Duration("elapsed", time.Since(t0)),
+		)
+		all = append(all, items...)
+	}
+	return all
+}
+
 // RunAll executes every registered scraper sequentially.
 // Per-scraper errors are logged and do not abort the overall run —
 // partial results from successful scrapers are still returned.

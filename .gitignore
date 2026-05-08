@@ -10,6 +10,9 @@ vendor/
 # Environment — copy .env.example → .env and fill in your values
 .env
 
+# Tenant config — copy config/tenants.example.json → config/tenants.json and fill in your tenants
+config/tenants.json
+
 # macOS
 .DS_Store
 

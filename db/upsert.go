@@ -57,7 +57,7 @@ func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 		"image_url", "image_urls",
 		"contractor_required", "energy_audit_required",
 		"rate_tiers", "scraper_version", "stg_program_hash",
-		"stg_raw_response", "stg_raw_content_type", "updated_at",
+		"stg_raw_response", "stg_raw_content_type", "stg_tenant_ids", "updated_at",
 	}
 
 	total := 0
@@ -79,6 +79,70 @@ func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 			return UpsertResult{Upserted: total}, fmt.Errorf("upsert staging (batch %d-%d): %w", start, end, result.Error)
 		}
 		total += int(result.RowsAffected)
+	}
+
+	// ── Upsert rebate_tenant_status rows for multi-tenant tagging ────────────
+	// Collect all source IDs that have at least one tenant tag.
+	taggedSourceIDs := make([]string, 0, len(items))
+	for _, inc := range items {
+		if len(inc.TenantIDs) > 0 {
+			taggedSourceIDs = append(taggedSourceIDs, inc.ID)
+		}
+	}
+
+	if len(taggedSourceIDs) > 0 {
+		schema := models.ScraperSchema
+		stgTable := schema + ".rebates_staging"
+
+		// Look up staging row IDs by source ID so we can reference them.
+		var stagingRows []struct {
+			ID       uint   `gorm:"column:id"`
+			SourceID string `gorm:"column:stg_source_id"`
+		}
+		if err := d.gorm.
+			Table(stgTable).
+			Select("id, stg_source_id").
+			Where("stg_source_id IN ?", taggedSourceIDs).
+			Find(&stagingRows).Error; err != nil {
+			return UpsertResult{Upserted: total}, fmt.Errorf("upsert tenant status: lookup staging ids: %w", err)
+		}
+
+		sourceToStagingID := make(map[string]uint, len(stagingRows))
+		for _, r := range stagingRows {
+			sourceToStagingID[r.SourceID] = r.ID
+		}
+
+		// Build incentive TenantIDs lookup.
+		incTenants := make(map[string][]string, len(items))
+		for _, inc := range items {
+			if len(inc.TenantIDs) > 0 {
+				incTenants[inc.ID] = inc.TenantIDs
+			}
+		}
+
+		statusRows := make([]models.RebateTenantStatus, 0, len(taggedSourceIDs))
+		for sourceID, tenantIDs := range incTenants {
+			stagingID, ok := sourceToStagingID[sourceID]
+			if !ok {
+				continue
+			}
+			for _, tenantID := range tenantIDs {
+				statusRows = append(statusRows, models.RebateTenantStatus{
+					StagingID:       stagingID,
+					TenantID:        tenantID,
+					PromotionStatus: models.PromotionPending,
+				})
+			}
+		}
+
+		if len(statusRows) > 0 {
+			// ON CONFLICT DO NOTHING: never reset a row that's already promoted.
+			if err := d.gorm.
+				Clauses(clause.OnConflict{DoNothing: true}).
+				CreateInBatches(statusRows, 500).Error; err != nil {
+				return UpsertResult{Upserted: total}, fmt.Errorf("upsert tenant status: insert: %w", err)
+			}
+		}
 	}
 
 	return UpsertResult{Upserted: total}, nil

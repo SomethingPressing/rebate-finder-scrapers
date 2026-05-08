@@ -109,6 +109,11 @@ type Incentive struct {
 	// to the full page HTML.  Stored in stg_raw_response for audit/replay.
 	RawResponse    string
 	RawContentType string // "application/json" or "text/html"
+
+	// TenantIDs is set by cmd/scraper after scraping, not by individual scrapers.
+	// It lists the tenant IDs whose location filters match this incentive.
+	// Empty in single-tenant mode.
+	TenantIDs []string
 }
 
 // NewIncentive returns an Incentive pre-filled with safe defaults.

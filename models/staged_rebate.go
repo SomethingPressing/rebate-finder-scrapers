@@ -115,6 +115,11 @@ type StagedRebate struct {
 	// re-fetching.  NULL for rows written before this column was added.
 	StgRawResponse    *string `gorm:"column:stg_raw_response;type:text"`
 	StgRawContentType *string `gorm:"column:stg_raw_content_type"`
+
+	// stg_tenant_ids: tenant IDs whose location filters matched this incentive.
+	// Set by the scraper after tenant-matching; empty in single-tenant mode.
+	// Used by the promoter to route rows to the correct tenant databases.
+	TenantIDs StringSlice `gorm:"column:stg_tenant_ids;type:text[]"`
 }
 
 // TableName tells GORM which table to use.  The schema prefix comes from
@@ -165,6 +170,7 @@ func FromIncentive(inc Incentive) StagedRebate {
 		PromotionStatus:      PromotionPending,
 		StgRawResponse:       ptrNonEmpty(inc.RawResponse),
 		StgRawContentType:    ptrNonEmpty(inc.RawContentType),
+		TenantIDs:            StringSlice(inc.TenantIDs),
 	}
 }
 

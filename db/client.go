@@ -69,7 +69,7 @@ func Connect(dsn, logLevel, scraperSchema string) (*DB, error) {
 	// Auto-migrate first — creates the tables if they don't exist yet.
 	// Must run before pre-migrations because pre-migrations ALTER existing tables
 	// and will fail with "relation does not exist" on a fresh database.
-	if err := gormDB.AutoMigrate(&models.StagedRebate{}, &models.PDFScrapeRaw{}); err != nil {
+	if err := gormDB.AutoMigrate(&models.StagedRebate{}, &models.PDFScrapeRaw{}, &models.RebateTenantStatus{}); err != nil {
 		return nil, fmt.Errorf("db: automigrate: %w", err)
 	}
 
@@ -102,4 +102,33 @@ func (d *DB) Ping() error {
 		return err
 	}
 	return sqlDB.Ping()
+}
+
+// ConnectTenantDB opens a GORM connection to a tenant's dedicated database.
+// Unlike Connect(), it does NOT create scraper-owned tables, does NOT run
+// migrations, and does NOT modify models.ScraperSchema.
+// Use this for tenant DB connections that only write to public.rebates,
+// public.zipcodes, and related tables.
+func ConnectTenantDB(dsn, logLevel string) (*DB, error) {
+	if dsn == "" {
+		return nil, fmt.Errorf("tenant db: DSN is required")
+	}
+	dsn = sanitizePostgresDSN(dsn)
+
+	lvl := logger.Warn
+	switch logLevel {
+	case "silent":
+		lvl = logger.Silent
+	case "info":
+		lvl = logger.Info
+	}
+
+	gormDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(lvl),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tenant db: open: %w", err)
+	}
+
+	return &DB{gorm: gormDB, schema: "public"}, nil
 }

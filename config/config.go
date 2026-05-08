@@ -87,6 +87,15 @@ type Config struct {
 	// Env var: SCRAPER_PROXY_URL
 	// Default: "" (no proxy — direct connection).
 	ProxyURL string
+
+	// TenantsFile is the path to the tenants.json config file.
+	// When the file exists and contains active tenants, the scraper runs in
+	// multi-tenant mode: incentives are tagged per tenant and the promoter
+	// pushes data to each tenant's dedicated database.
+	// When the file is absent or has no active tenants, the scraper falls back
+	// to single-tenant mode using DATABASE_URL for both staging and live data.
+	// Env var: TENANTS_FILE — default: "config/tenants.json"
+	TenantsFile string
 }
 
 // Load reads configuration from the environment.
@@ -120,6 +129,7 @@ func Load() (*Config, error) {
 		ScraperDBSchema:        getEnv("SCRAPER_DB_SCHEMA", "scraper"),
 		PromoterSourcePriority: getCSVEnv("PROMOTER_SOURCE_PRIORITY", []string{"rewiring_america", "dsireusa", "energy_star"}),
 		ProxyURL:               getEnv("SCRAPER_PROXY_URL", ""),
+		TenantsFile:            getEnv("TENANTS_FILE", "config/tenants.json"),
 	}
 
 	return cfg, nil

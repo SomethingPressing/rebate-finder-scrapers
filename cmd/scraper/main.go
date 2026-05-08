@@ -4,6 +4,14 @@
 // It never writes directly to the live rebates table.  Run the companion
 // `cmd/promoter` after inspection to move approved rows into production.
 //
+// Multi-tenant mode (when TENANTS_FILE is set and has active tenants):
+//   - Scrapers run only for the union of tenant sources.
+//   - Each incentive is tagged with the IDs of tenants whose location filters match.
+//   - The promoter routes tagged rows to each tenant's dedicated database.
+//
+// Single-tenant mode (no TENANTS_FILE, or no active tenants):
+//   - Behaves exactly as before: all scrapers run, all rows go to DATABASE_URL.
+//
 // Usage:
 //
 //	# Run all scrapers once and exit
@@ -12,9 +20,6 @@
 //	# Run only one specific scraper once and exit
 //	RUN_ONCE=true SOURCE=dsireusa ./scraper
 //	RUN_ONCE=true ./scraper --source energy_star
-//
-//	# Run one scraper on a schedule
-//	SOURCE=rewiring_america ./scraper
 //
 //	# Scheduled (all scrapers, default: every 6 hours)
 //	./scraper
@@ -34,15 +39,12 @@ import (
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/logutil"
 	"github.com/incenva/rebate-scraper/internal/zipdata"
-	"github.com/incenva/rebate-scraper/models"
 	"github.com/incenva/rebate-scraper/scrapers"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
 
 func main() {
-	// ── CLI flags ─────────────────────────────────────────────────────────────
-	// --source can also be set via the SOURCE env var (env takes precedence).
 	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
 	flag.Parse()
 
@@ -52,7 +54,6 @@ func main() {
 		panic("failed to load config: " + err.Error())
 	}
 
-	// Env var SOURCE wins over --source flag; fall back to flag if env not set.
 	source := cfg.Source
 	if source == "" {
 		source = *sourceFlag
@@ -62,21 +63,33 @@ func main() {
 	// ── Logger ────────────────────────────────────────────────────────────────
 	logger := logutil.New(cfg.LogLevel, cfg.LogFormat)
 	defer logger.Sync() //nolint:errcheck
+
+	// ── Tenants ───────────────────────────────────────────────────────────────
+	tenants, err := config.LoadTenants(cfg.TenantsFile)
+	if err != nil {
+		logger.Fatal("failed to load tenants", zap.String("file", cfg.TenantsFile), zap.Error(err))
+	}
+	multiTenant := len(tenants) > 0
+	if multiTenant {
+		ids := make([]string, len(tenants))
+		for i, t := range tenants {
+			ids[i] = t.ID
+		}
+		logger.Info("multi-tenant mode", zap.Strings("tenants", ids))
+	} else {
+		logger.Info("single-tenant mode")
+	}
+
 	proxyActive := cfg.ProxyURL != ""
 	logger.Info("scraper service starting",
 		zap.String("log_level", cfg.LogLevel),
-		zap.String("log_format", cfg.LogFormat),
 		zap.Bool("run_once", cfg.RunOnce),
 		zap.String("source_filter", source),
 		zap.Bool("proxy_active", proxyActive),
+		zap.Bool("multi_tenant", multiTenant),
 	)
-	if proxyActive {
-		logger.Info("proxy configured for HTML scrapers",
-			zap.String("proxy_url", cfg.ProxyURL),
-		)
-	}
 
-	// ── Database (GORM) ───────────────────────────────────────────────────────
+	// ── Database (staging DB) ─────────────────────────────────────────────────
 	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
 	if err != nil {
 		logger.Fatal("db connect failed", zap.Error(err))
@@ -88,88 +101,69 @@ func main() {
 	}
 	logger.Info("database connected and staging table migrated")
 
-	// ── ZIP data (state → ZIPs lookup) ───────────────────────────────────────
-	// Load once, shared across all scrapers that need ZIP coverage per state.
-	// Non-fatal — scrapers still run without it; ZipCodes field will be empty.
+	// ── ZIP data ──────────────────────────────────────────────────────────────
 	stateZIPs, zipErr := zipdata.LoadPath(cfg.ZipCSVPath)
 	if zipErr != nil {
-		logger.Warn("uszips.csv not loaded — ZipCodes field will be empty",
-			zap.Error(zipErr),
-		)
+		logger.Warn("uszips.csv not loaded — ZipCodes field will be empty", zap.Error(zipErr))
 	} else {
-		logger.Info("uszips.csv loaded",
-			zap.Int("states", len(stateZIPs)),
-		)
+		logger.Info("uszips.csv loaded", zap.Int("states", len(stateZIPs)))
 	}
 
-	// ── Registry ──────────────────────────────────────────────────────────────
+	// ── Scraper registry ──────────────────────────────────────────────────────
 	reg := scrapers.NewRegistry()
 
 	reg.Register(&scrapers.DSIREScraper{
-		BaseURL:        cfg.DSIREBaseURL,
-		ScraperVersion: cfg.ScraperVersion,
-		PageDelay:      cfg.PageDelay,
-		StateZIPs:      stateZIPs,
-		Logger:         logger,
+		BaseURL: cfg.DSIREBaseURL, ScraperVersion: cfg.ScraperVersion,
+		PageDelay: cfg.PageDelay, StateZIPs: stateZIPs, Logger: logger,
 	})
-
 	reg.Register(&scrapers.RewiringAmericaScraper{
-		BaseURL:        cfg.RewiringAmericaBaseURL,
-		APIKey:         cfg.RewiringAmericaAPIKey,
-		ScraperVersion: cfg.ScraperVersion,
-		StateZIPs:      stateZIPs,
-		Concurrency:    cfg.RewiringAmericaConcurrency,
-		Logger:         logger,
+		BaseURL: cfg.RewiringAmericaBaseURL, APIKey: cfg.RewiringAmericaAPIKey,
+		ScraperVersion: cfg.ScraperVersion, StateZIPs: stateZIPs,
+		Concurrency: cfg.RewiringAmericaConcurrency, Logger: logger,
 	})
-
 	reg.Register(&scrapers.EnergyStarScraper{
-		BaseURL:        cfg.EnergyStarAPIBaseURL,
-		PageDelay:      cfg.PageDelay,
-		MaxConcurrency: cfg.MaxConcurrency,
-		ScraperVersion: cfg.ScraperVersion,
-		StateZIPs:      stateZIPs,
-		Logger:         logger,
+		BaseURL: cfg.EnergyStarAPIBaseURL, PageDelay: cfg.PageDelay,
+		MaxConcurrency: cfg.MaxConcurrency, ScraperVersion: cfg.ScraperVersion,
+		StateZIPs: stateZIPs, Logger: logger,
 	})
+	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
+	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
+	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
+	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
+	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
 
-	reg.Register(&scrapers.ConEdisonScraper{
-		ScraperVersion: cfg.ScraperVersion,
-		Logger:         logger,
-		ProxyURL:       cfg.ProxyURL,
-	})
-
-	reg.Register(&scrapers.PNMScraper{
-		ScraperVersion: cfg.ScraperVersion,
-		Logger:         logger,
-		ProxyURL:       cfg.ProxyURL,
-	})
-
-	reg.Register(&scrapers.XcelEnergyScraper{
-		ScraperVersion: cfg.ScraperVersion,
-		Logger:         logger,
-		ProxyURL:       cfg.ProxyURL,
-	})
-
-	reg.Register(&scrapers.SRPScraper{
-		ScraperVersion: cfg.ScraperVersion,
-		Logger:         logger,
-		ProxyURL:       cfg.ProxyURL,
-	})
-
-	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{
-		ScraperVersion: cfg.ScraperVersion,
-		Logger:         logger,
-		ProxyURL:       cfg.ProxyURL,
-	})
-
-	// ── Validate --source if provided ─────────────────────────────────────────
+	// ── Validate --source ─────────────────────────────────────────────────────
 	if source != "" {
 		if reg.Get(source) == nil {
-			logger.Fatal("unknown scraper name",
-				zap.String("source", source),
-				zap.Strings("available", reg.Names()),
-			)
+			fmt.Fprintf(os.Stderr, "Unknown scraper %q. Available: %s\n", source, strings.Join(reg.Names(), ", "))
+			os.Exit(1)
 		}
 		logger.Info("single-source mode", zap.String("source", source))
+	}
+
+	// ── Determine which scrapers to run ───────────────────────────────────────
+	// In multi-tenant mode: run the union of sources across all tenants.
+	// --source flag overrides and restricts to one scraper for all tenants.
+	var activeScrapers []scrapers.Scraper
+	if source != "" {
+		activeScrapers = []scrapers.Scraper{reg.Get(source)}
+	} else if multiTenant {
+		if allowed := config.ActiveSources(tenants); allowed != nil {
+			for _, name := range allowed {
+				if s := reg.Get(name); s != nil {
+					activeScrapers = append(activeScrapers, s)
+				}
+			}
+			names := make([]string, len(activeScrapers))
+			for i, s := range activeScrapers {
+				names[i] = s.Name()
+			}
+			logger.Info("tenant-filtered scrapers", zap.Strings("sources", names))
+		} else {
+			activeScrapers = reg.All()
+		}
+	} else {
+		activeScrapers = reg.All()
 	}
 
 	// ── Core run function ─────────────────────────────────────────────────────
@@ -178,33 +172,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
 
-		var items []models.Incentive
-
-		if source != "" {
-			// Single scraper
-			s := reg.Get(source)
-			t0 := time.Now()
-			logger.Info("scraper starting", zap.String("source", s.Name()))
-			result, err := s.Scrape(ctx)
-			if err != nil {
-				logger.Error("scraper failed",
-					zap.String("source", s.Name()),
-					zap.Error(err),
-					zap.Duration("elapsed", time.Since(t0)),
-				)
-				return
-			}
-			logger.Info("scraper finished",
-				zap.String("source", s.Name()),
-				zap.Int("count", len(result)),
-				zap.Duration("elapsed", time.Since(t0)),
-			)
-			items = append(items, result...)
-		} else {
-			// All scrapers
-			logger.Info("scrape run starting (all sources)")
-			items = scrapers.RunAll(ctx, reg, logger)
-		}
+		items := scrapers.RunList(ctx, activeScrapers, logger)
 
 		logger.Info("scrape run finished",
 			zap.Int("total_items", len(items)),
@@ -216,8 +184,29 @@ func main() {
 			return
 		}
 
+		// ── Tag incentives with matching tenant IDs ────────────────────────────
+		if multiTenant {
+			for i := range items {
+				for _, t := range tenants {
+					if t.MatchesIncentive(items[i].State, &items[i].UtilityCompany, items[i].ServiceTerritory, items[i].AvailableNationwide, items[i].ZipCodes) {
+						items[i].TenantIDs = append(items[i].TenantIDs, t.ID)
+					}
+				}
+			}
+			tagged := 0
+			for _, inc := range items {
+				if len(inc.TenantIDs) > 0 {
+					tagged++
+				}
+			}
+			logger.Info("tenant tagging complete",
+				zap.Int("total_items", len(items)),
+				zap.Int("tagged_items", tagged),
+			)
+		}
+
+		// ── Write to staging ──────────────────────────────────────────────────
 		dbStarted := time.Now()
-		// Scraped rows always go to rebates_staging only — never directly to rebates.
 		upsertResult, err := db.UpsertToStaging(database, items)
 		if err != nil {
 			logger.Error("staging upsert failed", zap.Error(err))
@@ -252,21 +241,10 @@ func main() {
 	}
 
 	c.Start()
-	if source != "" {
-		logger.Info("scraper scheduled (single source)",
-			zap.String("source", source),
-			zap.String("interval", cfg.ScraperInterval),
-		)
-	} else {
-		logger.Info("scraper scheduled (all sources)",
-			zap.String("interval", cfg.ScraperInterval),
-		)
-	}
+	logger.Info("scraper scheduled", zap.String("interval", cfg.ScraperInterval))
 
-	// Run immediately on startup so we don't wait for the first cron tick.
 	go runScrapers()
 
-	// ── Graceful shutdown ─────────────────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -277,7 +255,6 @@ func main() {
 	logger.Info("cron stopped cleanly")
 }
 
-// zapCronLogger adapts *zap.Logger to the robfig/cron logger interface.
 type zapCronLogger struct{ z *zap.Logger }
 
 func (l zapCronLogger) Info(msg string, keysAndValues ...interface{}) {
@@ -285,9 +262,4 @@ func (l zapCronLogger) Info(msg string, keysAndValues ...interface{}) {
 }
 func (l zapCronLogger) Error(err error, msg string, keysAndValues ...interface{}) {
 	l.z.Sugar().Errorw(msg, append(keysAndValues, "error", err)...)
-}
-
-// printHelp is called when an invalid --source is given.
-func printHelp(reg *scrapers.Registry) {
-	fmt.Fprintf(os.Stderr, "Available scrapers: %s\n", strings.Join(reg.Names(), ", "))
 }
