@@ -4,11 +4,30 @@
 
 | Mode | Best for |
 |------|----------|
-| [PM2 on Ubuntu VPS](#pm2-on-ubuntu-vps) | Production — same server as the consumer app |
+| [fly.io (multi-tenant)](#flyio-multi-tenant) | **Recommended** — one app serves all tenants |
+| [PM2 on Ubuntu VPS](#pm2-on-ubuntu-vps) | Single-tenant on the same VPS as the app |
 | [Docker / docker-compose](#docker--docker-compose) | Isolated container deployments |
 | [Cron / systemd](#cron--systemd) | Lightweight, no process manager |
 
-The scraper shares the same PostgreSQL database as the consumer app (`rebate-finder`). Both read from the same `DATABASE_URL`.
+---
+
+## fly.io (multi-tenant)
+
+See the full guide: **[docs/fly-deployment.md](./fly-deployment.md)**
+
+Quick start:
+
+```bash
+# First time only
+bash scripts/deploy-fly.sh   # after running setup-fly.sh from the deployment repo
+
+# Subsequent deploys
+bash scripts/deploy-fly.sh
+```
+
+---
+
+The PM2/VPS modes below are for **single-tenant** setups where the scraper runs on the same server as the Next.js app and shares its `DATABASE_URL`.
 
 For full server prerequisites (Node, Go, PostgreSQL, Nginx, SSL), see the consumer app's [deployment guide](../../rebate-finder/docs/deployment.md).
 

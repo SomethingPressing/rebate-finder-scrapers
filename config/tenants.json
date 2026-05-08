@@ -1,0 +1,10 @@
+[
+  {
+    "id": "acme",
+    "name": "ACME Corp (example — replace with real tenant)",
+    "active": false,
+    "sources": ["dsireusa", "rewiring_america", "energy_star"],
+    "db_url_env": "TENANT_ACME_DB_URL",
+    "scraper_db_schema": "scraper"
+  }
+]

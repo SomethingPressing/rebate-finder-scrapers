@@ -9,6 +9,11 @@ RUN go mod download
 
 COPY . .
 
+# Tenant config is bundled in the image (no secrets — only non-sensitive config).
+# Per-tenant DB URLs are injected at runtime via fly.io secrets (TENANT_<ID>_DB_URL).
+RUN mkdir -p /app/config
+COPY config/tenants.json /app/config/tenants.json
+
 # Build scraper binary
 # Note: the promoter (promote-staging.ts) is a TypeScript script that lives in
 # the consumer application — it is NOT part of this Go service.
@@ -18,11 +23,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/scraper ./cmd/scr
 FROM gcr.io/distroless/static-debian12 AS scraper
 
 COPY --from=builder /bin/scraper /scraper
+COPY --from=builder /app/config/tenants.json /app/config/tenants.json
 
 # Default env vars (override at runtime)
 ENV LOG_LEVEL=info \
     SCRAPER_INTERVAL="@every 6h" \
     RUN_ONCE=false \
-    SCRAPER_VERSION=1.0
+    SCRAPER_VERSION=1.0 \
+    TENANTS_FILE=/app/config/tenants.json
 
 ENTRYPOINT ["/scraper"]
