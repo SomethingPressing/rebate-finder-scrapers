@@ -152,6 +152,24 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 	isFeatured := false
 	processed := false
 
+	// Look up existing rebate IDs by program_hash — same rationale as promote_tenant.go.
+	type hashIDRow struct {
+		ID          string `gorm:"column:id"`
+		ProgramHash string `gorm:"column:program_hash"`
+	}
+	var existingHashRows []hashIDRow
+	if err := d.gorm.
+		Table("rebates").
+		Select("id, program_hash").
+		Where("program_hash IN ?", hashOrder).
+		Find(&existingHashRows).Error; err != nil {
+		return nil, fmt.Errorf("promote: lookup existing hashes: %w", err)
+	}
+	existingIDByHash := make(map[string]string, len(existingHashRows))
+	for _, r := range existingHashRows {
+		existingIDByHash[r.ProgramHash] = r.ID
+	}
+
 	type groupMeta struct {
 		hash    string
 		rows    []models.StagedRebate
@@ -168,8 +186,13 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		primary := g.rows[0]
 		hash := h
 
+		id := primary.SourceID
+		if existingID, ok := existingIDByHash[h]; ok {
+			id = existingID
+		}
+
 		lr := models.LiveRebate{
-			ID:          primary.SourceID,
+			ID:          id,
 			ProgramHash: &hash,
 
 			// INSERT defaults — excluded from ON CONFLICT update list.
@@ -221,11 +244,11 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 	}
 
 	// ── Phase 4: batch-upsert into public.rebates ────────────────────────────
-	// ON CONFLICT (program_hash) → update data columns only.
-	// status / is_featured / processed / created_at are never overwritten.
+	// Conflict target is "id" (primary key) — see promote_tenant.go Phase 4
+	// for the full explanation of why program_hash is not used here.
 	if err := d.gorm.
 		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "program_hash"}},
+			Columns:   []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns(models.LiveRebateUpdateCols()),
 		}).
 		CreateInBatches(rebates, 500).Error; err != nil {

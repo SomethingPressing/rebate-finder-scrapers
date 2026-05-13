@@ -33,15 +33,19 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 	statusTable := schema + ".rebate_tenant_status"
 
 	// ── Phase 1: fetch pending staging rows for this tenant ───────────────────
+	// Use Raw() instead of Table(...).Joins(...) to avoid GORM injecting its own
+	// `"rebates_staging"."deleted_at" IS NULL` clause that conflicts with the "rs" alias.
 	var pending []models.StagedRebate
-	if err := stagingDB.gorm.
-		Table(stgTable+" rs").
-		Joins("JOIN "+statusTable+" rts ON rts.staging_id = rs.id").
-		Where("rts.tenant_id = ? AND rts.promotion_status = ? AND rs.deleted_at IS NULL",
-			tenantID, models.PromotionPending).
-		Order("rs.id ASC").
-		Select("rs.*").
-		Find(&pending).Error; err != nil {
+	if err := stagingDB.gorm.Raw(`
+		SELECT rs.*
+		FROM `+stgTable+` rs
+		JOIN `+statusTable+` rts ON rts.staging_id = rs.id
+		WHERE rts.tenant_id = ?
+		  AND rts.promotion_status = ?
+		  AND rs.deleted_at IS NULL
+		ORDER BY rs.id ASC`,
+		tenantID, models.PromotionPending).
+		Scan(&pending).Error; err != nil {
 		return nil, fmt.Errorf("promote_tenant %s: fetch pending: %w", tenantID, err)
 	}
 
@@ -114,6 +118,28 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 	isFeatured := false
 	processed := false
 
+	// Look up which program_hashes already have a rebate row in the tenant DB
+	// so we can reuse the existing ID.  Without this, a re-promoted program
+	// whose primary source changed (and therefore has a different SourceID)
+	// would try to INSERT a new row that conflicts with the existing unique
+	// index on program_hash.
+	type hashIDRow struct {
+		ID          string `gorm:"column:id"`
+		ProgramHash string `gorm:"column:program_hash"`
+	}
+	var existingHashRows []hashIDRow
+	if err := tenantDB.gorm.
+		Table("rebates").
+		Select("id, program_hash").
+		Where("program_hash IN ?", hashOrder).
+		Find(&existingHashRows).Error; err != nil {
+		return nil, fmt.Errorf("promote_tenant %s: lookup existing hashes: %w", tenantID, err)
+	}
+	existingIDByHash := make(map[string]string, len(existingHashRows))
+	for _, r := range existingHashRows {
+		existingIDByHash[r.ProgramHash] = r.ID
+	}
+
 	type groupMeta struct {
 		hash    string
 		rows    []models.StagedRebate
@@ -130,8 +156,15 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		primary := g.rows[0]
 		hash := h
 
+		// Prefer the ID the tenant DB already has for this hash so the
+		// ON CONFLICT (id) clause updates rather than inserts.
+		id := primary.SourceID
+		if existingID, ok := existingIDByHash[h]; ok {
+			id = existingID
+		}
+
 		lr := models.LiveRebate{
-			ID:          primary.SourceID,
+			ID:          id,
 			ProgramHash: &hash,
 
 			Status:     &draft,
@@ -181,9 +214,17 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 	}
 
 	// ── Phase 4: batch-upsert into tenant's public.rebates ────────────────────
+	// Conflict target is "id" (primary key), not "program_hash".
+	// Using program_hash as the conflict target causes a PK violation when a
+	// staging row's SourceID already exists in rebates with a different hash
+	// (e.g. scraper re-fetched the same program and the name/utility changed
+	// slightly, producing a new hash). Targeting "id" ensures that any
+	// re-promoted row updates the existing rebate row regardless of hash drift.
+	// Cross-source deduplication is already handled upstream in Phase 2 by
+	// grouping pending rows by program_hash before building the rebates slice.
 	if err := tenantDB.gorm.
 		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "program_hash"}},
+			Columns:   []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns(models.LiveRebateUpdateCols()),
 		}).
 		CreateInBatches(rebates, 500).Error; err != nil {
