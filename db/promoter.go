@@ -255,27 +255,16 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		return result, fmt.Errorf("promote: upsert rebates: %w", err)
 	}
 
-	// ── Phase 5: fetch actual rebate IDs ─────────────────────────────────────
-	// ON CONFLICT may have kept the original ID on existing rows, so we can't
-	// assume the IDs we tried to insert are the ones that were used.
-	hashes := make([]string, len(hashOrder))
-	copy(hashes, hashOrder)
-
-	var idRows []struct {
-		ID          string `gorm:"column:id"`
-		ProgramHash string `gorm:"column:program_hash"`
-	}
-	if err := d.gorm.
-		Table("rebates").
-		Select("id, program_hash").
-		Where("program_hash IN ?", hashes).
-		Find(&idRows).Error; err != nil {
-		return result, fmt.Errorf("promote: fetch rebate ids: %w", err)
-	}
-
-	hashToID := make(map[string]string, len(idRows))
-	for _, r := range idRows {
-		hashToID[r.ProgramHash] = r.ID
+	// ── Phase 5: build hash→ID map from Phase 3 data ────────────────────────
+	// We already know exactly which ID each hash resolved to in Phase 3
+	// (existing rebate ID or primary.SourceID for new programs).
+	// A hash-based DB lookup would miss rows where program_hash drifted
+	// between scrape runs (program_hash is not in LiveRebateUpdateCols).
+	hashToID := make(map[string]string, len(rebates))
+	for _, lr := range rebates {
+		if lr.ProgramHash != nil {
+			hashToID[*lr.ProgramHash] = lr.ID
+		}
 	}
 
 	// ── Phase 6: bulk-upsert zipcodes, rebate_zipcodes, rebate_zipcode_sources ──

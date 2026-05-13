@@ -231,25 +231,17 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		return result, fmt.Errorf("promote_tenant %s: upsert rebates: %w", tenantID, err)
 	}
 
-	// ── Phase 5: fetch actual rebate IDs from tenant DB ───────────────────────
-	hashes := make([]string, len(hashOrder))
-	copy(hashes, hashOrder)
-
-	var idRows []struct {
-		ID          string `gorm:"column:id"`
-		ProgramHash string `gorm:"column:program_hash"`
-	}
-	if err := tenantDB.gorm.
-		Table("rebates").
-		Select("id, program_hash").
-		Where("program_hash IN ?", hashes).
-		Find(&idRows).Error; err != nil {
-		return result, fmt.Errorf("promote_tenant %s: fetch rebate ids: %w", tenantID, err)
-	}
-
-	hashToID := make(map[string]string, len(idRows))
-	for _, r := range idRows {
-		hashToID[r.ProgramHash] = r.ID
+	// ── Phase 5: build hash→ID map from Phase 3 data ────────────────────────
+	// We already know exactly which ID each hash resolved to in Phase 3
+	// (either an existing rebate ID or primary.SourceID for new programs).
+	// A hash-based DB lookup would miss rows where the hash drifted between
+	// scrape runs (program_hash is intentionally excluded from the update
+	// columns so admin edits are never overwritten).
+	hashToID := make(map[string]string, len(rebates))
+	for _, lr := range rebates {
+		if lr.ProgramHash != nil {
+			hashToID[*lr.ProgramHash] = lr.ID
+		}
 	}
 
 	// ── Phase 6: bulk-upsert zipcodes and rebate_zipcodes in tenant DB ────────
