@@ -355,6 +355,9 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		result.Promoted += len(meta.rows)
 	}
 
+	// Collect all staging row IDs that were successfully promoted (across all groups).
+	allPromotedStagingIDs := make([]uint, 0, result.Promoted)
+
 	for _, u := range stagingUpdates {
 		if err := stagingDB.gorm.
 			Table(statusTable).
@@ -366,6 +369,22 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 				"rebate_id":        u.rebateID,
 			}).Error; err != nil {
 			return result, fmt.Errorf("promote_tenant %s: update tenant status: %w", tenantID, err)
+		}
+		allPromotedStagingIDs = append(allPromotedStagingIDs, u.stagingIDs...)
+	}
+
+	// Also mark the staging rows themselves as promoted so the staging stats
+	// reflect the true state.  Without this, rebates_staging.stg_promotion_status
+	// stays 'pending' even after the tenant status is marked 'promoted'.
+	if len(allPromotedStagingIDs) > 0 {
+		if err := stagingDB.gorm.
+			Table(stgTable).
+			Where("id IN ?", allPromotedStagingIDs).
+			Updates(map[string]interface{}{
+				"stg_promotion_status": models.PromotionPromoted,
+				"stg_promoted_at":      now,
+			}).Error; err != nil {
+			return result, fmt.Errorf("promote_tenant %s: update staging status: %w", tenantID, err)
 		}
 	}
 
