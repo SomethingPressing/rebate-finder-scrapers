@@ -1,7 +1,7 @@
 [
   {
-    "id": "dev",
-    "name": "Local Dev",
+    "id": "Incenva",
+    "name": "Incenva",
     "active": true,
     "sources": [
       "dsireusa",
@@ -13,8 +13,8 @@
       "srp",
       "peninsula_clean_energy"
     ],
+    "max_incentives_per_source": 10,
     "db_url_env": "postgresql://postgres:Confirm2011@localhost:5432/rebatefinder.dev",
-    "scraper_db_schema": "scraper",
     "location_filter": {
       "states": [
         "AL",
