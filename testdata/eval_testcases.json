@@ -1,0 +1,121 @@
+[
+  {
+    "id": "con_edison_explore_clean_energy",
+    "source": "con_edison",
+    "description": "Con Edison explore clean energy programs hub",
+    "url": "https://www.coned.com/en/save-money/explore-clean-energy-programs",
+    "content_type": "text/html"
+  },
+  {
+    "id": "con_edison_business_incentive_rate",
+    "source": "con_edison",
+    "description": "Con Edison Business Incentive Rate program",
+    "url": "https://www.coned.com/en/commercial-industrial/economic-development/business-incentive-rate",
+    "content_type": "text/html"
+  },
+  {
+    "id": "pnm_save_money",
+    "source": "pnm",
+    "description": "PNM main savings and energy efficiency hub",
+    "url": "https://www.pnm.com/save-money-and-energy",
+    "content_type": "text/html"
+  },
+  {
+    "id": "pnm_good_neighbor_fund",
+    "source": "pnm",
+    "description": "PNM Good Neighbor Fund financial assistance",
+    "url": "https://www.pnm.com/goodneighborfund",
+    "content_type": "text/html"
+  },
+  {
+    "id": "pnm_tax_rebate_resources",
+    "source": "pnm",
+    "description": "PNM federal and state tax rebates resource page",
+    "url": "https://www.pnm.com/tax-rebate-resources",
+    "content_type": "text/html"
+  },
+  {
+    "id": "srp_demand_response",
+    "source": "srp",
+    "description": "SRP Business Demand Response Program (note: may 403 from CI)",
+    "url": "https://www.srpnet.com/energy-savings-rebates/business/rebates/demand-response",
+    "content_type": "text/html"
+  },
+  {
+    "id": "srp_tou",
+    "source": "srp",
+    "description": "SRP Time-of-Use residential price plan",
+    "url": "https://www.srpnet.com/price-plans/residential-electric/time-of-use",
+    "content_type": "text/html"
+  },
+  {
+    "id": "srp_ev_price_plan",
+    "source": "srp",
+    "description": "SRP Electric Vehicle price plan",
+    "url": "https://www.srpnet.com/price-plans/residential-electric/electric-vehicle",
+    "content_type": "text/html"
+  },
+  {
+    "id": "xcel_mn_thermostat",
+    "source": "xcel_energy",
+    "description": "Xcel Energy MN AC Rewards smart thermostat rebate",
+    "url": "https://mn.my.xcelenergy.com/s/residential/heating-cooling/ac-rewards",
+    "content_type": "text/html"
+  },
+  {
+    "id": "xcel_co_heat_pumps",
+    "source": "xcel_energy",
+    "description": "Xcel Energy CO residential heat pump rebates",
+    "url": "https://co.my.xcelenergy.com/s/residential/heating-cooling/heat-pumps",
+    "content_type": "text/html"
+  },
+  {
+    "id": "xcel_ev_home_wiring",
+    "source": "xcel_energy",
+    "description": "Xcel Energy EV home wiring rebate",
+    "url": "https://ev.xcelenergy.com/home-wiring-rebate",
+    "content_type": "text/html"
+  },
+  {
+    "id": "pce_schools_be",
+    "source": "peninsula_clean_energy",
+    "description": "PCE SchoolsBE building electrification program",
+    "url": "https://www.peninsulacleanenergy.com/public-organization/schoolbe-program-electrification-for-public-buildings/",
+    "content_type": "text/html"
+  },
+  {
+    "id": "pce_home_upgrade_services",
+    "source": "peninsula_clean_energy",
+    "description": "PCE home upgrade services hub",
+    "url": "https://www.peninsulacleanenergy.com/home-upgrade-services/",
+    "content_type": "text/html"
+  },
+  {
+    "id": "dsireusa_arlington_green_building",
+    "source": "dsireusa",
+    "description": "Arlington County Green Building Incentive Program",
+    "url": "https://www.arlingtonva.us/Government/Programs/Sustainability-and-Environment/Energy/Green-Building/Green-Building-New-Construction-Program",
+    "content_type": "text/html"
+  },
+  {
+    "id": "energy_star_focus_on_energy_hear",
+    "source": "Energy Star",
+    "description": "Focus on Energy Wisconsin Home Electrification Rebate Program",
+    "url": "https://focusonenergy.com/ira-hear",
+    "content_type": "text/html"
+  },
+  {
+    "id": "energy_star_xcel_mn_thermostat",
+    "source": "Energy Star",
+    "description": "Xcel Energy MN AC Rewards page (also in Energy Star catalog)",
+    "url": "https://mn.my.xcelenergy.com/s/residential/heating-cooling/ac-rewards",
+    "content_type": "text/html"
+  },
+  {
+    "id": "energy_star_xcel_co_heat_pumps",
+    "source": "Energy Star",
+    "description": "Xcel Energy CO heat pump rebates (also in Energy Star catalog)",
+    "url": "https://co.my.xcelenergy.com/s/residential/heating-cooling/heat-pumps",
+    "content_type": "text/html"
+  }
+]

@@ -363,8 +363,7 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 
 	// Skip navigation/generic pages.
 	titleLower := strings.ToLower(programName)
-	skipPhrases := []string{"page not found", "404", "error", "home", "login", "site map"}
-	for _, p := range skipPhrases {
+	for _, p := range DefaultSkipPhrases {
 		if strings.Contains(titleLower, p) {
 			return nil
 		}
@@ -447,7 +446,7 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	contactEmail := extractEmail(pageText)
 
 	// Infer category from URL and title.
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName))
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
 
 	// Build stable ID.
 	id := models.DeterministicID(srpSourceName, pageURL)

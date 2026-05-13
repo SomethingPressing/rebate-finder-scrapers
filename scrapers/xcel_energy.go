@@ -480,7 +480,7 @@ func (s *XcelEnergyScraper) extractPage(
 	}
 
 	titleLower := strings.ToLower(programName)
-	for _, p := range []string{"page not found", "404", "error", "home", "login"} {
+	for _, p := range DefaultSkipPhrases {
 		if strings.Contains(titleLower, p) {
 			return nil
 		}
@@ -559,7 +559,7 @@ func (s *XcelEnergyScraper) extractPage(
 	contactEmail := extractEmail(pageText)
 
 	// Category inference.
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName))
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
 
 	if format == "" {
 		format = "narrative"

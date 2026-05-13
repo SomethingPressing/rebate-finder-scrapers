@@ -71,6 +71,13 @@ var pnmFilterCfg = FilterConfig{
 		"/sign-in",
 		"/my-account",
 
+		// Notice / announcement pages (informational, not rebate programs)
+		"/notice-",
+		"/notice/",
+		"/customer-notice",
+		"/bill-insert",
+		"/insert",
+
 		// Operational / non-customer
 		"/outages",
 		"/outage-map",
@@ -346,8 +353,15 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		return nil
 	}
 
+	// PNM's CMS concatenates nav-link text into the h1 — strip the prefix.
+	programName = strings.TrimPrefix(programName, "Navigation")
+	programName = strings.TrimSpace(programName)
+	if len(programName) < 5 {
+		return nil
+	}
+
 	titleLower := strings.ToLower(programName)
-	for _, p := range []string{"page not found", "404", "error", "home", "login"} {
+	for _, p := range DefaultSkipPhrases {
 		if strings.Contains(titleLower, p) {
 			return nil
 		}
@@ -421,7 +435,7 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	contactEmail := extractEmail(pageText)
 
 	// Infer category from URL and title.
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName))
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
 
 	if format == "" {
 		format = "narrative"

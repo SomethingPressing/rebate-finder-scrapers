@@ -75,7 +75,7 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 
 	skipPhrases := cfg.SkipPhrases
 	if len(skipPhrases) == 0 {
-		skipPhrases = []string{"page not found", "404", "error", "home", "login", "site map"}
+		skipPhrases = DefaultSkipPhrases
 	}
 	titleLower := strings.ToLower(programName)
 	for _, p := range skipPhrases {
@@ -173,7 +173,7 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	endDate := extractEndDate(pageText)
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
-	categories := inferCategories(pageURL + " " + titleLower)
+	categories := inferCategories(pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
 
 	if format == "" {
 		format = "narrative"
