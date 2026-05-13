@@ -25,27 +25,29 @@ func (f LocationFilter) empty() bool {
 }
 
 // TenantConfig describes a single tenant served by this scraper instance.
+// It defines the destination database that scraped data is promoted into.
+// The scraper's own staging DB is configured separately via DATABASE_URL and
+// SCRAPER_DB_SCHEMA in the .env file — it is not a per-tenant concern.
 type TenantConfig struct {
-	ID             string         `json:"id"`                // lowercase slug, e.g. "acme"
-	Name           string         `json:"name"`              // display name for logs
-	Active         bool           `json:"active"`            // false = skip without removing
-	Sources        []string       `json:"sources"`           // scraper names; empty = all
-	DBURLEnv       string         `json:"db_url_env"`        // env var holding the tenant's DB URL
-	ScraperSchema  string         `json:"scraper_db_schema"` // default: "scraper"
-	LocationFilter LocationFilter `json:"location_filter"`   // geographic filter; empty = all
+	ID                    string         `json:"id"`                       // lowercase slug, e.g. "acme"
+	Name                  string         `json:"name"`                     // display name for logs
+	Active                bool           `json:"active"`                   // false = skip without removing
+	Sources               []string       `json:"sources"`                  // scraper names; empty = all
+	DBURLEnv              string         `json:"db_url_env"`               // DSN or env var name for the tenant's destination DB
+	LocationFilter        LocationFilter `json:"location_filter"`          // geographic filter; empty = all
+	MaxIncentivesPerSource int           `json:"max_incentives_per_source"` // 0 = unlimited
 }
 
-// DBUrl resolves the tenant's database URL from the environment.
+// DBUrl resolves the tenant's database URL.
+// If DBURLEnv already looks like a DSN (starts with "postgres"), it is used
+// directly. Otherwise it is treated as an environment variable name and
+// resolved via os.Getenv. This lets tenants.json hold either a raw connection
+// string or an env var name.
 func (t TenantConfig) DBUrl() string {
-	return os.Getenv(t.DBURLEnv)
-}
-
-// Schema returns the PostgreSQL schema used for scraper-owned tables.
-func (t TenantConfig) Schema() string {
-	if t.ScraperSchema == "" {
-		return "scraper"
+	if strings.HasPrefix(t.DBURLEnv, "postgres") {
+		return t.DBURLEnv
 	}
-	return t.ScraperSchema
+	return os.Getenv(t.DBURLEnv)
 }
 
 // MatchesIncentive returns true if this tenant should receive the incentive.

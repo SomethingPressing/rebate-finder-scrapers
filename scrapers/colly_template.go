@@ -209,3 +209,23 @@ func parseCommaFloat(s string) float64 {
 	}
 	return f
 }
+
+// countDistinctAmounts returns the number of distinct monetary values
+// (dollar amounts and percentages) found in text.
+// Used as a hub-page guard: pages with 4+ distinct values are listing pages
+// where any single amount is incidental to a sub-program, not the incentive
+// being described by this page.
+func countDistinctAmounts(text string) int {
+	seen := make(map[string]bool)
+	for _, m := range reDollar.FindAllStringSubmatch(text, -1) {
+		if len(m) >= 2 {
+			seen["$"+m[1]] = true
+		}
+	}
+	for _, m := range rePercent.FindAllStringSubmatch(text, -1) {
+		if len(m) >= 2 {
+			seen[m[1]+"%"] = true
+		}
+	}
+	return len(seen)
+}

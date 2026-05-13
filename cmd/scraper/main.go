@@ -39,6 +39,7 @@ import (
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/logutil"
 	"github.com/incenva/rebate-scraper/internal/zipdata"
+	"github.com/incenva/rebate-scraper/models"
 	"github.com/incenva/rebate-scraper/scrapers"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
@@ -172,53 +173,62 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
 
-		items := scrapers.RunList(ctx, activeScrapers, logger)
+		var totalUpserted int
 
-		logger.Info("scrape run finished",
-			zap.Int("total_items", len(items)),
-			zap.Duration("scrape_elapsed", time.Since(runStarted)),
-		)
-
-		if len(items) == 0 {
-			logger.Warn("no items scraped — staging table unchanged")
-			return
-		}
-
-		// ── Tag incentives with matching tenant IDs ────────────────────────────
-		if multiTenant {
-			for i := range items {
-				for _, t := range tenants {
-					if t.MatchesIncentive(items[i].State, &items[i].UtilityCompany, items[i].ServiceTerritory, items[i].AvailableNationwide, items[i].ZipCodes) {
-						items[i].TenantIDs = append(items[i].TenantIDs, t.ID)
+		// flush is called immediately after each scraper finishes so rows are
+		// persisted without waiting for the full run to complete.
+		flush := func(source string, items []models.Incentive) {
+			// Tag incentives with matching tenant IDs.
+			if multiTenant {
+				// tenantCount tracks how many items each tenant has been tagged
+				// for in this source batch, used to enforce max_incentives_per_source.
+				tenantCount := make(map[string]int)
+				tagged := 0
+				for i := range items {
+					for _, t := range tenants {
+						if t.MaxIncentivesPerSource > 0 && tenantCount[t.ID] >= t.MaxIncentivesPerSource {
+							continue
+						}
+						if t.MatchesIncentive(items[i].State, &items[i].UtilityCompany, items[i].ServiceTerritory, items[i].AvailableNationwide, items[i].ZipCodes) {
+							items[i].TenantIDs = append(items[i].TenantIDs, t.ID)
+							tenantCount[t.ID]++
+						}
+					}
+					if len(items[i].TenantIDs) > 0 {
+						tagged++
 					}
 				}
+				logger.Info("tenant tagging complete",
+					zap.String("source", source),
+					zap.Int("items", len(items)),
+					zap.Int("tagged", tagged),
+				)
 			}
-			tagged := 0
-			for _, inc := range items {
-				if len(inc.TenantIDs) > 0 {
-					tagged++
-				}
+
+			// Write to staging immediately.
+			dbStarted := time.Now()
+			result, err := db.UpsertToStaging(database, items)
+			if err != nil {
+				logger.Error("staging upsert failed",
+					zap.String("source", source),
+					zap.Error(err),
+				)
+				return
 			}
-			logger.Info("tenant tagging complete",
-				zap.Int("total_items", len(items)),
-				zap.Int("tagged_items", tagged),
+			totalUpserted += result.Upserted
+			logger.Info("staging upsert complete",
+				zap.String("source", source),
+				zap.Int("upserted", result.Upserted),
+				zap.Duration("db_elapsed", time.Since(dbStarted)),
 			)
 		}
 
-		// ── Write to staging ──────────────────────────────────────────────────
-		dbStarted := time.Now()
-		upsertResult, err := db.UpsertToStaging(database, items)
-		if err != nil {
-			logger.Error("staging upsert failed", zap.Error(err))
-			return
-		}
+		scrapers.RunListFlush(ctx, activeScrapers, logger, flush)
 
 		pending, _ := db.PendingCount(database)
-		logger.Info("staging upsert complete",
-			zap.String("table", "rebates_staging"),
-			zap.Int("upserted", upsertResult.Upserted),
+		logger.Info("scrape run finished",
+			zap.Int("total_upserted", totalUpserted),
 			zap.Int64("pending_total", pending),
-			zap.Duration("db_elapsed", time.Since(dbStarted)),
 			zap.Duration("total_elapsed", time.Since(runStarted)),
 		)
 	}

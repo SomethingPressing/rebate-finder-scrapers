@@ -529,6 +529,12 @@ func (s *XcelEnergyScraper) extractPage(
 		})
 	}
 
+	// Hub-page guard: 4+ distinct monetary values → listing page, not a single incentive.
+	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+		format = "narrative"
+		amount = nil
+	}
+
 	// Application URL.
 	applicationURL := ""
 	e.ForEach("a[href]", func(_ int, el *colly.HTMLElement) {
@@ -550,7 +556,7 @@ func (s *XcelEnergyScraper) extractPage(
 	// ── Boolean / structured field extraction (from html_helpers.go) ────────
 	contractorRequired := extractContractorRequired(pageText)
 	energyAuditRequired := extractEnergyAuditRequired(pageText)
-	customerType := extractCustomerType(pageURL + " " + programName)
+	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, pageText)
 	startDate := extractStartDate(pageText)
 	endDate := extractEndDate(pageText)
 

@@ -14,7 +14,7 @@
       "peninsula_clean_energy"
     ],
     "db_url_env": "TENANT_ACME_DB_URL",
-    "scraper_db_schema": "scraper",
+    "max_incentives_per_source": 0,
     "location_filter": {
       "states": [
         "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL",
@@ -51,7 +51,7 @@
     "active": true,
     "sources": ["dsireusa", "rewiring_america"],
     "db_url_env": "TENANT_BETA_DB_URL",
-    "scraper_db_schema": "scraper",
+    "max_incentives_per_source": 0,
     "location_filter": {
       "states": ["TX", "CO"],
       "utilities": ["Xcel Energy"],

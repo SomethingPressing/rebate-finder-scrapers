@@ -83,6 +83,34 @@ func RunList(ctx context.Context, list []Scraper, logger *zap.Logger) []models.I
 	return all
 }
 
+// RunListFlush executes scrapers one at a time and calls flush immediately
+// after each one finishes, rather than buffering all results until the full
+// run completes. This prevents data loss when a later scraper fails — each
+// scraper's rows are persisted as soon as they are fetched.
+func RunListFlush(ctx context.Context, list []Scraper, logger *zap.Logger, flush func(source string, items []models.Incentive)) {
+	for _, s := range list {
+		t0 := time.Now()
+		logger.Info("scraper starting", zap.String("source", s.Name()))
+		items, err := s.Scrape(ctx)
+		if err != nil {
+			logger.Error("scraper failed",
+				zap.String("source", s.Name()),
+				zap.Error(err),
+				zap.Duration("elapsed", time.Since(t0)),
+			)
+			continue
+		}
+		logger.Info("scraper finished",
+			zap.String("source", s.Name()),
+			zap.Int("count", len(items)),
+			zap.Duration("elapsed", time.Since(t0)),
+		)
+		if len(items) > 0 {
+			flush(s.Name(), items)
+		}
+	}
+}
+
 // RunAll executes every registered scraper sequentially.
 // Per-scraper errors are logged and do not abort the overall run —
 // partial results from successful scrapers are still returned.

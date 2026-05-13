@@ -389,6 +389,12 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		})
 	}
 
+	// Hub-page guard: 4+ distinct monetary values → listing page, not a single incentive.
+	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+		format = "narrative"
+		amount = nil
+	}
+
 	// Detect "up to" maximum amount.
 	var maxAmount *float64
 	if format == "dollar_amount" {
@@ -419,7 +425,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	// ── Boolean / structured field extraction (from html_helpers.go) ────────
 	contractorRequired := extractContractorRequired(pageText)
 	energyAuditRequired := extractEnergyAuditRequired(pageText)
-	customerType := extractCustomerType(pageURL + " " + programName)
+	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, pageText)
 	startDate := extractStartDate(pageText)
 	endDate := extractEndDate(pageText)
 

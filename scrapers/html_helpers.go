@@ -127,6 +127,63 @@ func extractCustomerType(urlAndTitle string) string {
 	return ""
 }
 
+// resPhrases and bizPhrases are specific body-text patterns for
+// extractCustomerTypeWithBody. Longer phrases are used to avoid false
+// positives from navigation or boilerplate text.
+var resPhrases = []string{
+	"residential customers", "residential customer",
+	"for homeowners", "for renters", "for your home",
+	"home energy", "single-family", "multifamily residential",
+	"apartment residents", "residential program", "residential rebate",
+	"residential rate", "residential electricity",
+	"qualifying households", "eligible households",
+}
+
+var bizPhrases = []string{
+	"business customers", "business customer",
+	"commercial customers", "commercial customer",
+	"for your business", "non-residential",
+	"commercial buildings", "commercial building",
+	"small business", "commercial and industrial",
+	"c&i customers", "business program",
+	"commercial program", "business rebate",
+	"commercial rebate", "commercial electricity",
+	"eligible businesses", "qualifying businesses",
+}
+
+// extractCustomerTypeWithBody extends extractCustomerType by also scanning
+// the first 2000 characters of page body text for specific eligibility phrases
+// when the URL and title do not contain a clear signal.
+func extractCustomerTypeWithBody(urlAndTitle, body string) string {
+	if ct := extractCustomerType(urlAndTitle); ct != "" {
+		return ct
+	}
+	lower := strings.ToLower(body[:min(len(body), 2000)])
+	var hasRes, hasBiz bool
+	for _, p := range resPhrases {
+		if strings.Contains(lower, p) {
+			hasRes = true
+			break
+		}
+	}
+	for _, p := range bizPhrases {
+		if strings.Contains(lower, p) {
+			hasBiz = true
+			break
+		}
+	}
+	if hasRes && hasBiz {
+		return "Residential, Commercial"
+	}
+	if hasBiz {
+		return "Commercial"
+	}
+	if hasRes {
+		return "Residential"
+	}
+	return ""
+}
+
 // extractRecipient returns a recipient label (schema field: recipient) from
 // the page text: "Homeowner", "Renter", "Business Owner", etc.
 func extractRecipient(text string) string {
@@ -585,7 +642,7 @@ func ExtractIncentiveFromPDFText(text, pageURL string, opts PDFIncentiveOpts) *m
 	// ── Boolean / structured fields ──────────────────────────────────────────
 	contractorRequired := extractContractorRequired(text)
 	energyAuditRequired := extractEnergyAuditRequired(text)
-	customerType := extractCustomerType(pageURL + " " + programName)
+	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, text)
 	startDate := extractStartDate(text)
 	endDate := extractEndDate(text)
 

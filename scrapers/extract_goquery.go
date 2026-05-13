@@ -137,6 +137,12 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 			return true
 		})
 	}
+	// Hub-page guard: 4+ distinct monetary values means this is a listing page.
+	// Any amount found is from a sub-program, not this page's own incentive.
+	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+		format = "narrative"
+		amount = nil
+	}
 
 	var maxAmount *float64
 	if format == "dollar_amount" {
@@ -168,7 +174,7 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	// ── Structured helpers (all string-based, from html_helpers.go) ──────────
 	contractorRequired := extractContractorRequired(pageText)
 	energyAuditRequired := extractEnergyAuditRequired(pageText)
-	customerType := extractCustomerType(pageURL + " " + programName)
+	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, pageText)
 	startDate := extractStartDate(pageText)
 	endDate := extractEndDate(pageText)
 	contactPhone := extractPhone(pageText)
