@@ -185,6 +185,27 @@ func main() {
 		// flush is called immediately after each scraper finishes so rows are
 		// persisted without waiting for the full run to complete.
 		flush := func(source string, items []models.Incentive) {
+			// Enforce max_incentives_per_source as a hard fetch limit:
+			// find the smallest non-zero limit across all tenants and truncate
+			// the items slice before staging. This keeps the staging table small
+			// and makes test runs with a low limit finish quickly.
+			if multiTenant {
+				limit := 0
+				for _, t := range tenants {
+					if t.MaxIncentivesPerSource > 0 && (limit == 0 || t.MaxIncentivesPerSource < limit) {
+						limit = t.MaxIncentivesPerSource
+					}
+				}
+				if limit > 0 && len(items) > limit {
+					logger.Debug("fetch limit applied",
+						zap.String("source", source),
+						zap.Int("fetched", len(items)),
+						zap.Int("limit", limit),
+					)
+					items = items[:limit]
+				}
+			}
+
 			// Tag incentives with matching tenant IDs.
 			if multiTenant {
 				// tenantCount tracks how many items each tenant has been tagged
