@@ -49,6 +49,8 @@ type EnergyStarScraper struct {
 	// When set, each incentive's ZipCodes field is populated from the program's
 	// service territory state so downstream systems can resolve ZIP coverage.
 	StateZIPs map[string][]string
+	// Limit caps how many pages are fetched. 0 means no limit.
+	Limit int
 
 	Logger     *zap.Logger
 	HTTPClient *http.Client
@@ -75,6 +77,12 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	}
 
 	totalPages := int(math.Ceil(float64(probe.ResultsCount) / float64(probe.PageSize)))
+	if s.Limit > 0 {
+		limitPages := int(math.Ceil(float64(s.Limit) / float64(probe.PageSize)))
+		if limitPages < totalPages {
+			totalPages = limitPages
+		}
+	}
 
 	s.Logger.Info("energy_star pages",
 		zap.Int("total_results", probe.ResultsCount),

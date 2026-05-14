@@ -174,6 +174,8 @@ type RewiringAmericaScraper struct {
 	// SweepProfiles is the list of (income, owner_status) pairs to query per ZIP.
 	// Defaults to defaultSweepProfiles if empty.
 	SweepProfiles []raSweepProfile
+	// Limit caps how many ZIPs are queried before stopping. 0 means no limit.
+	Limit int
 }
 
 // Name implements Scraper.
@@ -212,6 +214,10 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 	concurrency := s.Concurrency
 	if concurrency <= 0 {
 		concurrency = 3
+	}
+
+	if s.Limit > 0 && len(zips) > s.Limit {
+		zips = zips[:s.Limit]
 	}
 
 	// Build the full work queue: (zip, profile) pairs.

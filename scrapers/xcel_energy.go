@@ -327,6 +327,8 @@ type XcelEnergyScraper struct {
 	// Format: "http://user:pass@host:port" or "socks5://host:port".
 	// Env var: SCRAPER_PROXY_URL
 	ProxyURL string
+	// Limit caps how many URLs are visited. 0 means no limit.
+	Limit int
 }
 
 // xcelExtractCfg is the shared goquery extraction config for Xcel Energy.
@@ -375,6 +377,9 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		}
 	}
 
+	if s.Limit > 0 && len(urls) > s.Limit {
+		urls = urls[:s.Limit]
+	}
 	s.Logger.Info("xcel_energy: scraping URLs", zap.Int("count", len(urls)))
 
 	// Step 2: visit each page and extract incentive data.

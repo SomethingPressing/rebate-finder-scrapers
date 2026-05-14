@@ -218,6 +218,8 @@ type SRPScraper struct {
 	// ProxyURL is still honoured if set, but the headless browser is the
 	// preferred bypass for Cloudflare.
 	ProxyURL string
+	// Limit caps how many URLs are visited. 0 means no limit.
+	Limit int
 }
 
 // Name implements Scraper.
@@ -257,6 +259,9 @@ func (s *SRPScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		}
 	}
 
+	if s.Limit > 0 && len(urls) > s.Limit {
+		urls = urls[:s.Limit]
+	}
 	s.Logger.Info("srp: scraping URLs", zap.Int("count", len(urls)))
 
 	// Step 2: visit each page with the browser.

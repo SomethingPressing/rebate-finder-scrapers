@@ -136,6 +136,9 @@ type DSIREScraper struct {
 	// its state so downstream systems can associate the program with specific areas.
 	// Load from data/uszips.csv via the zipdata package.
 	StateZIPs map[string][]string
+	// Limit caps how many unique programs are collected before stopping the
+	// state loop early. 0 means no limit (collect all states).
+	Limit int
 }
 
 // Name implements Scraper.
@@ -199,6 +202,16 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		)
 
 		bar.Add(1) //nolint:errcheck
+
+		if s.Limit > 0 && len(all) >= s.Limit {
+			s.Logger.Debug("dsireusa: fetch limit reached, stopping early",
+				zap.Int("limit", s.Limit),
+				zap.Int("collected", len(all)),
+				zap.String("stopped_at_state", state),
+			)
+			break
+		}
+
 		time.Sleep(s.pageDelay())
 	}
 	bar.Finish() //nolint:errcheck

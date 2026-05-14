@@ -208,6 +208,8 @@ type PeninsulaCleanEnergyScraper struct {
 	// Format: "http://user:pass@host:port" or "socks5://host:port".
 	// Env var: SCRAPER_PROXY_URL
 	ProxyURL string
+	// Limit caps how many URLs are visited. 0 means no limit.
+	Limit int
 }
 
 // pceExtractCfg is the shared goquery extraction config for PCE.
@@ -267,6 +269,9 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 		}
 	}
 
+	if s.Limit > 0 && len(urls) > s.Limit {
+		urls = urls[:s.Limit]
+	}
 	s.Logger.Info("peninsula_clean_energy: scraping URLs", zap.Int("count", len(urls)))
 
 	// Step 2: visit each page and extract incentive data.

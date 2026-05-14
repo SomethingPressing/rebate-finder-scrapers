@@ -206,6 +206,8 @@ type PNMScraper struct {
 	// Format: "http://user:pass@host:port" or "socks5://host:port".
 	// Env var: SCRAPER_PROXY_URL
 	ProxyURL string
+	// Limit caps how many URLs are visited. 0 means no limit.
+	Limit int
 }
 
 // pnmExtractCfg is the shared goquery extraction config for PNM.
@@ -252,6 +254,9 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 		}
 	}
 
+	if s.Limit > 0 && len(urls) > s.Limit {
+		urls = urls[:s.Limit]
+	}
 	s.Logger.Info("pnm: scraping URLs", zap.Int("count", len(urls)))
 
 	seen := make(map[string]bool)

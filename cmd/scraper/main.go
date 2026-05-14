@@ -118,27 +118,39 @@ func main() {
 	}
 
 	// ── Scraper registry ──────────────────────────────────────────────────────
+	// Compute the effective per-source fetch limit from tenants: use the
+	// smallest non-zero MaxIncentivesPerSource across all active tenants.
+	effectiveLimit := 0
+	for _, t := range tenants {
+		if t.MaxIncentivesPerSource > 0 && (effectiveLimit == 0 || t.MaxIncentivesPerSource < effectiveLimit) {
+			effectiveLimit = t.MaxIncentivesPerSource
+		}
+	}
+
 	reg := scrapers.NewRegistry()
 
 	reg.Register(&scrapers.DSIREScraper{
 		BaseURL: cfg.DSIREBaseURL, ScraperVersion: cfg.ScraperVersion,
 		PageDelay: cfg.PageDelay, StateZIPs: stateZIPs, Logger: logger,
+		Limit: effectiveLimit,
 	})
 	reg.Register(&scrapers.RewiringAmericaScraper{
 		BaseURL: cfg.RewiringAmericaBaseURL, APIKey: cfg.RewiringAmericaAPIKey,
 		ScraperVersion: cfg.ScraperVersion, StateZIPs: stateZIPs,
 		Concurrency: cfg.RewiringAmericaConcurrency, Logger: logger,
+		Limit: effectiveLimit,
 	})
 	reg.Register(&scrapers.EnergyStarScraper{
 		BaseURL: cfg.EnergyStarAPIBaseURL, PageDelay: cfg.PageDelay,
 		MaxConcurrency: cfg.MaxConcurrency, ScraperVersion: cfg.ScraperVersion,
 		StateZIPs: stateZIPs, Logger: logger,
+		Limit: effectiveLimit,
 	})
-	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
-	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
-	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
-	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
-	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL})
+	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
+	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
+	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
+	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
+	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
 
 	// ── Validate --source ─────────────────────────────────────────────────────
 	if source != "" {
