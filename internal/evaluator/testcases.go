@@ -38,7 +38,7 @@ func RunTestcases(cfg Config, filter string) ([]EvalResult, error) {
 		return nil, fmt.Errorf("load testcases: %w", err)
 	}
 
-	client := llm.NewClient(cfg.OpenAIKey)
+	client := llm.NewClient(cfg.OpenAIKey).WithDebug(cfg.Debug)
 	var results []EvalResult
 
 	for i, tc := range cases {
@@ -61,6 +61,15 @@ func RunTestcases(cfg Config, filter string) ([]EvalResult, error) {
 			continue
 		}
 		res.ContentType = ct
+
+		if cfg.Debug {
+			preview := body
+			if len(preview) > 1000 {
+				preview = preview[:1000] + fmt.Sprintf("\n... [%d more bytes]", len(body)-1000)
+			}
+			log.Printf("[DEBUG] fetched content for testcase %s (%s, %d bytes):\n%s\n",
+				tc.ID, ct, len(body), preview)
+		}
 
 		ext, err := client.ExtractIncentive(body, ct)
 		if err != nil {

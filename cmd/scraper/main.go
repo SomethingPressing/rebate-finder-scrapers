@@ -47,6 +47,7 @@ import (
 
 func main() {
 	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
+	debugFlag  := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -60,6 +61,12 @@ func main() {
 		source = *sourceFlag
 	}
 	source = strings.TrimSpace(strings.ToLower(source))
+
+	// --debug / DEBUG=true both force log level to debug.
+	if *debugFlag || cfg.Debug {
+		cfg.LogLevel = "debug"
+		cfg.LogFormat = "console" // console format is far more readable for debug sessions
+	}
 
 	// ── Logger ────────────────────────────────────────────────────────────────
 	logger := logutil.New(cfg.LogLevel, cfg.LogFormat)

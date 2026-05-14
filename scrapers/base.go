@@ -2,6 +2,7 @@ package scrapers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/incenva/rebate-scraper/models"
@@ -78,6 +79,7 @@ func RunList(ctx context.Context, list []Scraper, logger *zap.Logger) []models.I
 			zap.Int("count", len(items)),
 			zap.Duration("elapsed", time.Since(t0)),
 		)
+		logItemsDebug(logger, s.Name(), items)
 		all = append(all, items...)
 	}
 	return all
@@ -105,8 +107,54 @@ func RunListFlush(ctx context.Context, list []Scraper, logger *zap.Logger, flush
 			zap.Int("count", len(items)),
 			zap.Duration("elapsed", time.Since(t0)),
 		)
+		logItemsDebug(logger, s.Name(), items)
 		if len(items) > 0 {
 			flush(s.Name(), items)
+		}
+	}
+}
+
+// logItemsDebug emits one zap.Debug entry per scraped item with all key fields
+// and a raw-response preview. These calls are no-ops when the logger level is
+// higher than debug, so there is no performance cost in production runs.
+func logItemsDebug(logger *zap.Logger, source string, items []models.Incentive) {
+	for i, item := range items {
+		logger.Debug("scraped item",
+			zap.String("source", source),
+			zap.Int("index", i),
+			zap.String("program_name", item.ProgramName),
+			zap.String("utility_company", item.UtilityCompany),
+			zap.Stringp("state", item.State),
+			zap.Stringp("incentive_format", item.IncentiveFormat),
+			zap.Float64p("incentive_amount", item.IncentiveAmount),
+			zap.Float64p("maximum_amount", item.MaximumAmount),
+			zap.Float64p("percent_value", item.PercentValue),
+			zap.Float64p("per_unit_amount", item.PerUnitAmount),
+			zap.Stringp("unit_type", item.UnitType),
+			zap.Strings("category_tags", item.CategoryTag),
+			zap.Stringp("customer_type", item.CustomerType),
+			zap.Stringp("service_territory", item.ServiceTerritory),
+			zap.Stringp("program_url", item.ProgramURL),
+			zap.Stringp("application_url", item.ApplicationURL),
+			zap.Stringp("contact_email", item.ContactEmail),
+			zap.Stringp("contact_phone", item.ContactPhone),
+			zap.Stringp("start_date", item.StartDate),
+			zap.Stringp("end_date", item.EndDate),
+			zap.Int("raw_response_bytes", len(item.RawResponse)),
+			zap.String("raw_content_type", item.RawContentType),
+		)
+
+		if item.RawResponse != "" && logger.Core().Enabled(zap.DebugLevel) {
+			preview := item.RawResponse
+			if len(preview) > 1000 {
+				preview = preview[:1000] + fmt.Sprintf(" ... [%d more bytes]", len(item.RawResponse)-1000)
+			}
+			logger.Debug("raw response",
+				zap.String("source", source),
+				zap.String("program_name", item.ProgramName),
+				zap.String("content_type", item.RawContentType),
+				zap.String("raw_response", preview),
+			)
 		}
 	}
 }
@@ -136,6 +184,7 @@ func RunAll(ctx context.Context, reg *Registry, logger *zap.Logger) []models.Inc
 			zap.Int("count", len(items)),
 			zap.Duration("elapsed", time.Since(t0)),
 		)
+		logItemsDebug(logger, s.Name(), items)
 		all = append(all, items...)
 	}
 

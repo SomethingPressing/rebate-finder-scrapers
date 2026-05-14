@@ -96,6 +96,14 @@ type Config struct {
 	// to single-tenant mode using DATABASE_URL for both staging and live data.
 	// Env var: TENANTS_FILE — default: "config/tenants.json"
 	TenantsFile string
+
+	// Debug enables verbose per-item logging: every scraped incentive is logged
+	// at debug level with all fields and a raw response preview.
+	// Equivalent to setting LOG_LEVEL=debug but also enables structured
+	// per-incentive debug output in the scraper and detailed LLM input/output
+	// logging in the evaluator.
+	// Env var: DEBUG — default: false
+	Debug bool
 }
 
 // Load reads configuration from the environment.
@@ -130,6 +138,7 @@ func Load() (*Config, error) {
 		PromoterSourcePriority: getCSVEnv("PROMOTER_SOURCE_PRIORITY", []string{"rewiring_america", "dsireusa", "energy_star"}),
 		ProxyURL:               getEnv("SCRAPER_PROXY_URL", ""),
 		TenantsFile:            getEnv("TENANTS_FILE", "config/tenants.json"),
+		Debug:                  getBoolEnv("DEBUG", false),
 	}
 
 	return cfg, nil

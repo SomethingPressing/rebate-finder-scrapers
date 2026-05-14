@@ -41,6 +41,7 @@ func main() {
 	source := flag.String("source", "",      "filter by scraper source (e.g. con_edison, dsireusa)")
 	n      := flag.Int("n",         2,       "rows to sample per source (db mode only)")
 	output := flag.String("output", "table", "output format: table or json")
+	debug  := flag.Bool("debug",    false,   "print raw content sent to LLM and full LLM response to stderr")
 	flag.Parse()
 
 	_ = godotenv.Load()
@@ -71,6 +72,7 @@ func main() {
 		Source:       *source,
 		SampleN:      *n,
 		OutputFormat: *output,
+		Debug:        *debug,
 	}
 
 	var results []evaluator.EvalResult

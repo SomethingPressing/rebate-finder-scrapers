@@ -24,6 +24,9 @@ type Config struct {
 	Source       string // restrict to one scraper source; empty = all sources
 	SampleN      int    // rows to sample per source (default 2)
 	OutputFormat string // "table" or "json"
+	// Debug enables verbose output: raw content preview sent to the LLM and the
+	// full LLM JSON response are printed to stderr for each evaluated program.
+	Debug bool
 }
 
 // EvalResult is the comparison result for one staging row.
@@ -48,7 +51,7 @@ func Run(cfg Config) ([]EvalResult, error) {
 		return nil, fmt.Errorf("no staging rows found — run the scraper first")
 	}
 
-	client := llm.NewClient(cfg.OpenAIKey)
+	client := llm.NewClient(cfg.OpenAIKey).WithDebug(cfg.Debug)
 	results := make([]EvalResult, 0, len(rows))
 
 	for i, row := range rows {
@@ -67,6 +70,15 @@ func Run(cfg Config) ([]EvalResult, error) {
 			continue
 		}
 		res.ContentType = ct
+
+		if cfg.Debug {
+			preview := rawContent
+			if len(preview) > 1000 {
+				preview = preview[:1000] + fmt.Sprintf("\n... [%d more bytes]", len(rawContent)-1000)
+			}
+			log.Printf("[DEBUG] resolved content for %q (%s, %d bytes):\n%s\n",
+				row.ProgramName, ct, len(rawContent), preview)
+		}
 
 		ext, err := client.ExtractIncentive(rawContent, ct)
 		if err != nil {

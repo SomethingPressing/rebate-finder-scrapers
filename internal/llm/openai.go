@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -103,6 +104,9 @@ Content:
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+	// Debug, when true, prints the prepared content and raw LLM response to
+	// stderr so callers can see exactly what was sent and received.
+	Debug bool
 }
 
 // NewClient returns a Client using the given OpenAI API key.
@@ -113,9 +117,24 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+// WithDebug enables or disables debug output and returns the client for chaining.
+func (c *Client) WithDebug(debug bool) *Client {
+	c.Debug = debug
+	return c
+}
+
 // ExtractIncentive sends raw content to GPT-4o and returns a structured extraction.
 func (c *Client) ExtractIncentive(rawContent, contentType string) (*LLMExtraction, error) {
 	content := prepareContent(rawContent, contentType)
+
+	if c.Debug {
+		preview := content
+		if len(preview) > 800 {
+			preview = preview[:800] + fmt.Sprintf("\n... [%d more chars]", len(content)-800)
+		}
+		fmt.Fprintf(os.Stderr, "\n[LLM DEBUG] prepared content (%s, %d chars):\n─────────────────────────────────────────\n%s\n─────────────────────────────────────────\n\n",
+			contentType, len(content), preview)
+	}
 
 	body, err := json.Marshal(map[string]any{
 		"model":           "gpt-4o",
@@ -151,6 +170,11 @@ func (c *Client) ExtractIncentive(rawContent, contentType string) (*LLMExtractio
 		return nil, fmt.Errorf("openai HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	if c.Debug {
+		fmt.Fprintf(os.Stderr, "[LLM DEBUG] raw API response:\n─────────────────────────────────────────\n%s\n─────────────────────────────────────────\n\n",
+			string(respBody))
+	}
+
 	var apiResp struct {
 		Choices []struct {
 			Message struct {
@@ -169,5 +193,12 @@ func (c *Client) ExtractIncentive(rawContent, contentType string) (*LLMExtractio
 	if err := json.Unmarshal([]byte(apiResp.Choices[0].Message.Content), &ext); err != nil {
 		return nil, fmt.Errorf("parse extraction JSON: %w", err)
 	}
+
+	if c.Debug {
+		pretty, _ := json.MarshalIndent(ext, "", "  ")
+		fmt.Fprintf(os.Stderr, "[LLM DEBUG] parsed extraction:\n─────────────────────────────────────────\n%s\n─────────────────────────────────────────\n\n",
+			string(pretty))
+	}
+
 	return &ext, nil
 }
