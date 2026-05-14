@@ -13,9 +13,19 @@ import (
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/models"
+	"github.com/incenva/rebate-scraper/scrapers"
 )
 
 var fetchClient = &http.Client{Timeout: 15 * time.Second}
+
+// apiSources are scrapers whose raw response is an API JSON blob, not an HTML
+// page. For these, we re-use the cached stg_raw_response rather than fetching
+// the program URL (which points to the public website, not the API endpoint).
+var apiSources = map[string]bool{
+	"dsireusa":    true,
+	"Energy Star": true,
+	"energy_star": true,
+}
 
 // Config controls the evaluation run.
 type Config struct {
@@ -41,7 +51,14 @@ type EvalResult struct {
 	Error         string       `json:"error,omitempty"`
 }
 
-// Run fetches a sample of staging rows, sends each to GPT-4o, and returns per-row results.
+// Run fetches a sample of staging rows, sends each program's content to GPT-4o,
+// re-runs the current scraper extraction on the same content, then diffs the two.
+//
+// For HTML-based scrapers the program URL is always fetched live so the
+// evaluation reflects both current page content and current extraction code.
+// For API-based scrapers (dsireusa, energy_star) the cached stg_raw_response is
+// re-used (the live API is not easily re-callable by URL alone) but the
+// extraction logic is re-run so code fixes are reflected immediately.
 func Run(cfg Config) ([]EvalResult, error) {
 	rows, err := fetchSample(cfg.DB, cfg.Source, cfg.SampleN)
 	if err != nil {
@@ -63,7 +80,10 @@ func Run(cfg Config) ([]EvalResult, error) {
 			SourceID:    row.SourceID,
 		}
 
-		rawContent, ct, fetchErr := resolveContent(row)
+		// Resolve content:
+		// - API-based scrapers: use cached JSON (re-extracting is sufficient).
+		// - HTML scrapers: always fetch live so the eval reflects current page content.
+		rawContent, ct, fetchErr := resolveContentFresh(row)
 		if fetchErr != nil {
 			res.Error = fetchErr.Error()
 			results = append(results, res)
@@ -76,10 +96,11 @@ func Run(cfg Config) ([]EvalResult, error) {
 			if len(preview) > 1000 {
 				preview = preview[:1000] + fmt.Sprintf("\n... [%d more bytes]", len(rawContent)-1000)
 			}
-			log.Printf("[DEBUG] resolved content for %q (%s, %d bytes):\n%s\n",
+			log.Printf("[DEBUG] content for %q (%s, %d bytes):\n%s\n",
 				row.ProgramName, ct, len(rawContent), preview)
 		}
 
+		// LLM extraction.
 		ext, err := client.ExtractIncentive(rawContent, ct)
 		if err != nil {
 			res.Error = fmt.Sprintf("LLM extraction failed: %v", err)
@@ -87,7 +108,20 @@ func Run(cfg Config) ([]EvalResult, error) {
 			continue
 		}
 
-		scores := DiffFields(row, ext)
+		// Fresh scraper extraction — re-runs current code on the same content.
+		pageURL := ""
+		if row.ProgramURL != nil {
+			pageURL = *row.ProgramURL
+		}
+		fresh := scrapers.Reextract(row.Source, rawContent, ct, pageURL, row.ScraperVersion, nil)
+
+		var scores []FieldScore
+		if fresh != nil {
+			scores = DiffFieldsFresh(fresh, ext)
+		} else {
+			// Fallback: diff against DB row when re-extraction is unsupported.
+			scores = DiffFields(row, ext)
+		}
 		res.FieldScores = scores
 		res.OverallScore = OverallScore(scores)
 		res.MissingFields = MissingFields(scores)
@@ -96,6 +130,66 @@ func Run(cfg Config) ([]EvalResult, error) {
 	}
 
 	return results, nil
+}
+
+// resolveContentFresh returns the raw content to evaluate.
+// HTML scrapers always fetch live; API-based scrapers re-use the cached response.
+func resolveContentFresh(row models.StagedRebate) (content, contentType string, err error) {
+	if apiSources[row.Source] {
+		// API-based: cached response IS the API payload — use it.
+		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
+			ct := "application/json"
+			if row.StgRawContentType != nil && *row.StgRawContentType != "" {
+				ct = *row.StgRawContentType
+			}
+			return *row.StgRawResponse, ct, nil
+		}
+	}
+
+	// HTML-based (or API-based with no cache): fetch the program URL live.
+	url := ""
+	if row.ProgramURL != nil && *row.ProgramURL != "" {
+		url = *row.ProgramURL
+	} else if row.ApplicationURL != nil && *row.ApplicationURL != "" {
+		url = *row.ApplicationURL
+	}
+	if url == "" {
+		return "", "", fmt.Errorf("no URL to fetch for %q", row.ProgramName)
+	}
+
+	log.Printf("  → fetching live: %s", url)
+	return fetchLiveURL(url)
+}
+
+// fetchLiveURL fetches a URL and returns its body and detected content type.
+func fetchLiveURL(url string) (string, string, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; IncenvaEvaluator/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json")
+
+	resp, err := fetchClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("fetch %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return "", "", fmt.Errorf("fetch %s returned HTTP %d", url, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return "", "", fmt.Errorf("read body: %w", err)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "text/html"
+	}
+	return string(body), ct, nil
 }
 
 // junkNamePatterns are program_name substrings that indicate a non-incentive page
@@ -168,54 +262,3 @@ func isJunkRow(row models.StagedRebate) bool {
 	return false
 }
 
-// resolveContent returns the raw content and content-type for a staged row.
-// Uses the stored stg_raw_response if available, otherwise fetches program_url.
-func resolveContent(row models.StagedRebate) (content, contentType string, err error) {
-	if row.StgRawResponse != nil && *row.StgRawResponse != "" {
-		ct := "text/html"
-		if row.StgRawContentType != nil && *row.StgRawContentType != "" {
-			ct = *row.StgRawContentType
-		}
-		return *row.StgRawResponse, ct, nil
-	}
-
-	// Fall back: fetch the program URL live.
-	url := ""
-	if row.ProgramURL != nil && *row.ProgramURL != "" {
-		url = *row.ProgramURL
-	} else if row.ApplicationURL != nil && *row.ApplicationURL != "" {
-		url = *row.ApplicationURL
-	}
-	if url == "" {
-		return "", "", fmt.Errorf("no raw response and no program_url to fetch")
-	}
-
-	log.Printf("  → no stored response; fetching %s", url)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return "", "", fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; IncenvaEvaluator/1.0)")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json")
-
-	resp, err := fetchClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("fetch %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return "", "", fmt.Errorf("fetch %s returned HTTP %d", url, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024)) // cap at 512 KB
-	if err != nil {
-		return "", "", fmt.Errorf("read body: %w", err)
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "text/html"
-	}
-	return string(body), ct, nil
-}

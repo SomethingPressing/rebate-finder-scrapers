@@ -30,6 +30,32 @@ type FieldScore struct {
 	Weight       float64
 }
 
+// DiffFieldsFresh compares a freshly re-extracted Incentive against an LLM
+// extraction.  Use this instead of DiffFields when the scraper side has been
+// re-computed from live content so scores always reflect current code.
+func DiffFieldsFresh(inc *models.Incentive, ext *llm.LLMExtraction) []FieldScore {
+	return []FieldScore{
+		cmpStr("program_name", inc.ProgramName, ext.ProgramName, 2.0),
+		cmpStr("utility_company", inc.UtilityCompany, ext.UtilityCompany, 1.5),
+		cmpStrPtr("incentive_description", inc.IncentiveDescription, ext.IncentiveDescription, 1.0),
+		cmpFloat("incentive_amount", inc.IncentiveAmount, ext.IncentiveAmount, 2.0),
+		cmpFloat("maximum_amount", inc.MaximumAmount, ext.MaximumAmount, 1.5),
+		cmpFloat("percent_value", inc.PercentValue, ext.PercentValue, 1.5),
+		cmpFloat("per_unit_amount", inc.PerUnitAmount, ext.PerUnitAmount, 1.5),
+		cmpStrPtr("incentive_format", inc.IncentiveFormat, ext.IncentiveFormat, 1.0),
+		cmpStrPtr("state", inc.State, ext.State, 1.0),
+		cmpSlice("categories", inc.CategoryTag, ext.Categories, 1.5),
+		cmpStrPtr("customer_type", inc.CustomerType, ext.CustomerType, 1.0),
+		cmpStrPtr("start_date", inc.StartDate, ext.StartDate, 1.0),
+		cmpStrPtr("end_date", inc.EndDate, ext.EndDate, 1.0),
+		cmpStrPtr("application_url", inc.ApplicationURL, ext.ApplicationURL, 1.0),
+		cmpStrPtr("contact_email", inc.ContactEmail, ext.ContactEmail, 0.5),
+		cmpStrPtr("contact_phone", inc.ContactPhone, ext.ContactPhone, 0.5),
+		cmpBool("contractor_required", inc.ContractorRequired, ext.ContractorRequired, 0.5),
+		cmpBool("energy_audit_required", inc.EnergyAuditRequired, ext.EnergyAuditRequired, 0.5),
+	}
+}
+
 // DiffFields compares a staged row against an LLM extraction and returns per-field scores.
 func DiffFields(staged models.StagedRebate, ext *llm.LLMExtraction) []FieldScore {
 	return []FieldScore{
