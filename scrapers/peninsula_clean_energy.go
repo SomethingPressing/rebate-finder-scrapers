@@ -360,8 +360,9 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 // extractPage extracts a single Incentive from a PCE rebate page.
 // Returns nil if the page doesn't look like a meaningful incentive program.
 func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.Incentive {
-	// Extract page title (h1 first, then <title>).
-	programName := strings.TrimSpace(e.ChildText("h1"))
+	// Extract page title: use the FIRST <h1> only to avoid concatenating
+	// multiple headings that appear as separate h1 elements on some pages.
+	programName := strings.Join(strings.Fields(e.DOM.Find("h1").First().Text()), " ")
 	if programName == "" {
 		programName = strings.TrimSpace(e.ChildText("title"))
 		if idx := strings.Index(programName, "|"); idx > 0 {
@@ -410,14 +411,14 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 	// Full page text for regex extractions.
 	pageText := e.Text
 
-	// Extract dollar amounts.
-	format, amount := ParseAmount(pageText)
+	// Extract dollar amounts — only when incentive keywords are present on the page.
+	format, amount := ParseAmountContextual(pageText)
 	if format == "narrative" {
 		e.ForEach("p, li, td, h2, h3", func(_ int, el *colly.HTMLElement) {
 			if format != "narrative" {
 				return
 			}
-			f, a := ParseAmount(el.Text)
+			f, a := ParseAmountContextual(el.Text)
 			if f != "narrative" {
 				format = f
 				amount = a
@@ -425,8 +426,8 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 		})
 	}
 
-	// Hub-page guard: 4+ distinct monetary values → listing page, not a single incentive.
-	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+	// Hub-page guard: 3+ distinct monetary values → listing page, not a single incentive.
+	if format != "narrative" && countDistinctAmounts(pageText) >= 3 {
 		format = "narrative"
 		amount = nil
 	}

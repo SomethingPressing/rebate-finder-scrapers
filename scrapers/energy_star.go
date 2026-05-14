@@ -308,17 +308,21 @@ func mapEnergyStarRecord(
 		}
 	}
 
-	inc.ProgramName = fmt.Sprintf("%s %s Rebate", utility, productGeneralName)
+	// Omit utility from the name — it lives in utility_company already.
+	if productGeneralName != "" {
+		inc.ProgramName = productGeneralName + " Rebate"
+	} else {
+		inc.ProgramName = "Rebate Program"
+	}
 
 	// ── Category / type ─────────────────────────────────────────────────────
 	inc.ProductCategory = models.PtrString(result.ProductCategory)
 
-	if idata.IncentiveType != nil {
-		if t := idata.IncentiveType.BestName(); t != "" {
-			inc.CategoryTag = []string{t}
-		}
-	}
-	if len(inc.CategoryTag) == 0 && result.ProductCategory != "" {
+	// Derive tech-category tags from the product name/category rather than
+	// from IncentiveType (which returns delivery mechanism names like "Rebate").
+	if tags := inferCategories(productGeneralName + " " + result.ProductCategory); len(tags) > 0 {
+		inc.CategoryTag = tags
+	} else if result.ProductCategory != "" {
 		inc.CategoryTag = []string{result.ProductCategory}
 	}
 
@@ -549,11 +553,11 @@ func parseIncentiveAmountInto(inc *models.Incentive, s string) {
 		return
 	}
 
-	// Range: "$100 - $500"
+	// Range: "$100 - $500" — a range implies tiered amounts by product/tier.
 	if m := esReRange.FindStringSubmatch(s); len(m) == 3 {
 		lo := parseCommaFloat(m[1])
 		hi := parseCommaFloat(m[2])
-		inc.IncentiveFormat = models.PtrString("dollar_amount")
+		inc.IncentiveFormat = models.PtrString("tiered")
 		if lo != 0 {
 			inc.IncentiveAmount = models.PtrFloat(lo)
 		}

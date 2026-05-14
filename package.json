@@ -22,6 +22,7 @@
     "staging:stats": "node scripts/run-staging-stats.mjs",
     "scraper:promote": "node scripts/run-promoter.mjs",
     "scraper:promote:dry": "node scripts/run-promoter.mjs --dry-run",
+    "eval": "node scripts/run-evaluator.mjs",
 
     "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql"
   },

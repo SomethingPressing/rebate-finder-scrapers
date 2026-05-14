@@ -125,10 +125,10 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 		amtSel += ", " + cfg.AmountSelectors
 	}
 
-	format, amount := ParseAmount(pageText)
+	format, amount := ParseAmountContextual(pageText)
 	if format == "narrative" {
 		doc.Find(amtSel).EachWithBreak(func(_ int, s *goquery.Selection) bool {
-			f, a := ParseAmount(s.Text())
+			f, a := ParseAmountContextual(s.Text())
 			if f != "narrative" {
 				format = f
 				amount = a
@@ -137,16 +137,16 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 			return true
 		})
 	}
-	// Hub-page guard: 4+ distinct monetary values means this is a listing page.
+	// Hub-page guard: 3+ distinct monetary values means this is a listing page.
 	// Any amount found is from a sub-program, not this page's own incentive.
-	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+	if format != "narrative" && countDistinctAmounts(pageText) >= 3 {
 		format = "narrative"
 		amount = nil
 	}
 
 	var maxAmount *float64
 	if format == "dollar_amount" {
-		_, upToAmt := ParseAmount(pageText)
+		_, upToAmt := ParseAmountContextual(pageText)
 		if upToAmt != nil && amount != nil && *upToAmt > *amount {
 			maxAmount = upToAmt
 		}

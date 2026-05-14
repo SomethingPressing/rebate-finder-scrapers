@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -341,6 +342,12 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 
 	// ── Amount / format from parameterSets ────────────────────────────────────
 	format, incAmt, maxAmt, pctVal, perUnit, unitType := parseParameterSets(p.ParameterSets)
+	// When parameters are ambiguous (narrative or dollar_amount), let the
+	// program type narrow the format down to financing/tax_credit/etc.
+	if typeFormat := formatFromProgramType(p.TypeObj.Name); typeFormat != "" &&
+		(format == "narrative" || format == "dollar_amount") {
+		format = typeFormat
+	}
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.IncentiveAmount = incAmt
 	inc.MaximumAmount = maxAmt
@@ -438,10 +445,18 @@ func (s *DSIREScraper) applyDetail(inc *models.Incentive, d dsireDetail) {
 	if d.ContactPhone != "" {
 		inc.ContactPhone = models.PtrString(d.ContactPhone)
 	}
-	if d.Requirements != "" && inc.IncentiveDescription != nil {
-		// Append requirements to description so it surfaces in search.
-		merged := *inc.IncentiveDescription + " Requirements: " + d.Requirements
-		inc.IncentiveDescription = models.PtrString(merged)
+	if d.Requirements != "" {
+		reqLow := strings.ToLower(d.Requirements)
+		if strings.Contains(reqLow, "energy audit") {
+			inc.EnergyAuditRequired = models.PtrBool(true)
+		}
+		if strings.Contains(reqLow, "contractor") || strings.Contains(reqLow, "certified installer") {
+			inc.ContractorRequired = models.PtrBool(true)
+		}
+		if inc.IncentiveDescription != nil {
+			merged := *inc.IncentiveDescription + " Requirements: " + d.Requirements
+			inc.IncentiveDescription = models.PtrString(merged)
+		}
 	}
 }
 
@@ -533,9 +548,16 @@ func extractTechnologies(sets []dsireParameterSet) []string {
 	var out []string
 	for _, ps := range sets {
 		for _, t := range ps.Technologies {
-			if t.Name != "" && !seen[t.Name] {
-				seen[t.Name] = true
-				out = append(out, t.Name)
+			// Use the normalized category label for consistent filtering
+			// (e.g. "Heat pumps" → "HVAC", "Building Insulation" → "Weatherization").
+			// Fall back to the specific technology name when no category is set.
+			label := t.Name
+			if t.Category != "" {
+				label = techCategoryLabel(t.Category)
+			}
+			if label != "" && !seen[label] {
+				seen[label] = true
+				out = append(out, label)
 			}
 		}
 	}
@@ -700,12 +722,37 @@ func stripHTML(s string) string {
 		}
 	}
 
-	// Collapse multiple spaces
-	result := out.String()
+	// Decode HTML entities (e.g. &#10; → newline, &amp; → &) then collapse whitespace.
+	result := html.UnescapeString(out.String())
+	result = strings.ReplaceAll(result, "\n", " ")
+	result = strings.ReplaceAll(result, "\t", " ")
 	for strings.Contains(result, "  ") {
 		result = strings.ReplaceAll(result, "  ", " ")
 	}
 	return strings.TrimSpace(result)
+}
+
+// formatFromProgramType maps a DSIRE program type name to an incentive_format
+// value when parameters alone are ambiguous. Returns "" when the type doesn't
+// imply a specific format (let parseParameterSets decide).
+func formatFromProgramType(typeName string) string {
+	low := strings.ToLower(typeName)
+	switch {
+	case strings.Contains(low, "loan"):
+		return "financing"
+	case strings.Contains(low, "tax credit"):
+		return "tax_credit"
+	case strings.Contains(low, "tax deduction"):
+		return "tax_deduction"
+	case strings.Contains(low, "tax exemption"):
+		return "tax_exemption"
+	case strings.Contains(low, "performance"):
+		return "performance"
+	case strings.Contains(low, "grant"):
+		return "dollar_amount"
+	default:
+		return ""
+	}
 }
 
 // ── HTTP client helper ────────────────────────────────────────────────────────

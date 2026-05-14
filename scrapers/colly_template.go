@@ -215,6 +215,27 @@ func parseCommaFloat(s string) float64 {
 // Used as a hub-page guard: pages with 4+ distinct values are listing pages
 // where any single amount is incidental to a sub-program, not the incentive
 // being described by this page.
+// incentiveContextWords are keywords that signal a monetary value on the page
+// represents the actual rebate/incentive amount rather than a reference figure.
+var incentiveContextWords = []string{
+	"rebate", "incentive", "up to $", "receive up to", "save up to",
+	"earn up to", "tax credit", "grant", "award", "discount", "reimburs",
+	"you could receive", "you may receive", "qualifying purchase",
+}
+
+// ParseAmountContextual is like ParseAmount but returns ("narrative", nil)
+// when none of the incentive context keywords appear in text.
+// Use this for full-page scans where hub/guide pages may contain stray amounts.
+func ParseAmountContextual(text string) (format string, amount *float64) {
+	lower := strings.ToLower(text)
+	for _, kw := range incentiveContextWords {
+		if strings.Contains(lower, kw) {
+			return ParseAmount(text)
+		}
+	}
+	return "narrative", nil
+}
+
 func countDistinctAmounts(text string) int {
 	seen := make(map[string]bool)
 	for _, m := range reDollar.FindAllStringSubmatch(text, -1) {

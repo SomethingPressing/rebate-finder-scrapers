@@ -519,14 +519,14 @@ func (s *XcelEnergyScraper) extractPage(
 	territory := xcelTerritoryFromState(state)
 	repZIP := xcelZIPFromState(state)
 
-	// Amount extraction.
-	format, amount := ParseAmount(pageText)
+	// Amount extraction — only when incentive keywords are present on the page.
+	format, amount := ParseAmountContextual(pageText)
 	if format == "narrative" {
 		e.ForEach("p, li, td, h2, h3, strong", func(_ int, el *colly.HTMLElement) {
 			if format != "narrative" {
 				return
 			}
-			f, a := ParseAmount(el.Text)
+			f, a := ParseAmountContextual(el.Text)
 			if f != "narrative" {
 				format = f
 				amount = a
@@ -534,8 +534,8 @@ func (s *XcelEnergyScraper) extractPage(
 		})
 	}
 
-	// Hub-page guard: 4+ distinct monetary values → listing page, not a single incentive.
-	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+	// Hub-page guard: 3+ distinct monetary values → listing page, not a single incentive.
+	if format != "narrative" && countDistinctAmounts(pageText) >= 3 {
 		format = "narrative"
 		amount = nil
 	}

@@ -343,8 +343,9 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 
 // extractPage extracts a single Incentive from a PNM rebate page.
 func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.Incentive {
-	// Page title.
-	programName := strings.TrimSpace(e.ChildText("h1"))
+	// Extract page title: use the FIRST <h1> only to avoid concatenating
+	// multiple headings that appear as separate h1 elements on some pages.
+	programName := strings.Join(strings.Fields(e.DOM.Find("h1").First().Text()), " ")
 	if programName == "" {
 		programName = strings.TrimSpace(e.ChildText("title"))
 		if idx := strings.Index(programName, "|"); idx > 0 {
@@ -395,14 +396,14 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	// Full page text for all regex extractions.
 	pageText := e.Text
 
-	// Amount extraction — PNM often shows "Save $X" or "$X rebate".
-	format, amount := ParseAmount(pageText)
+	// Amount extraction — only when incentive keywords are present on the page.
+	format, amount := ParseAmountContextual(pageText)
 	if format == "narrative" {
 		e.ForEach("p, li, td, h2, h3, strong", func(_ int, el *colly.HTMLElement) {
 			if format != "narrative" {
 				return
 			}
-			f, a := ParseAmount(el.Text)
+			f, a := ParseAmountContextual(el.Text)
 			if f != "narrative" {
 				format = f
 				amount = a
@@ -410,8 +411,8 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		})
 	}
 
-	// Hub-page guard: 4+ distinct monetary values → listing page, not a single incentive.
-	if format != "narrative" && countDistinctAmounts(pageText) >= 4 {
+	// Hub-page guard: 3+ distinct monetary values → listing page, not a single incentive.
+	if format != "narrative" && countDistinctAmounts(pageText) >= 3 {
 		format = "narrative"
 		amount = nil
 	}
