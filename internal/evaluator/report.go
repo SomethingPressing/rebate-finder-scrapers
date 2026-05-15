@@ -65,6 +65,9 @@ func printResult(r EvalResult) {
 	scoreBar := scoreToBar(r.OverallScore)
 	fmt.Printf("│\n")
 	fmt.Printf("│  Program : %s\n", r.ProgramName)
+	if r.ProgramURL != "" {
+		fmt.Printf("│  URL     : %s\n", r.ProgramURL)
+	}
 	fmt.Printf("│  Score   : %s  %.0f%%\n", scoreBar, r.OverallScore*100)
 
 	if r.Error != "" {

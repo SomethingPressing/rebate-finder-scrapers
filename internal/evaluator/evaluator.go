@@ -44,6 +44,7 @@ type EvalResult struct {
 	Source        string       `json:"source"`
 	ProgramName   string       `json:"program_name"`
 	SourceID      string       `json:"source_id"`
+	ProgramURL    string       `json:"program_url,omitempty"`
 	ContentType   string       `json:"content_type"`
 	OverallScore  float64      `json:"overall_score"`
 	FieldScores   []FieldScore `json:"field_scores"`
@@ -80,10 +81,19 @@ func Run(cfg Config) ([]EvalResult, error) {
 
 		log.Printf("[%d/%d] evaluating: %q  (source=%s)", i+1, len(rows), row.ProgramName, row.Source)
 
+		// Resolve the best URL to show for visual inspection.
+		programURL := ""
+		if row.ProgramURL != nil && *row.ProgramURL != "" {
+			programURL = *row.ProgramURL
+		} else if row.ApplicationURL != nil && *row.ApplicationURL != "" {
+			programURL = *row.ApplicationURL
+		}
+
 		res := EvalResult{
 			Source:      row.Source,
 			ProgramName: row.ProgramName,
 			SourceID:    row.SourceID,
+			ProgramURL:  programURL,
 		}
 
 		// Resolve content:
