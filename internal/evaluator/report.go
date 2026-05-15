@@ -69,7 +69,7 @@ var dbFieldOrder = []string{
 	"incentive_format", "incentive_amount", "maximum_amount", "percent_value", "per_unit_amount", "unit_type",
 	"incentive_description",
 	"state", "zip_code", "service_territory", "available_nationwide",
-	"categories", "portfolio", "implementing_sector", "segment", "customer_type", "product_category", "administrator",
+	"categories", "portfolio", "implementing_sector", "segment", "customer_type", "administrator",
 	"start_date", "end_date", "while_funds_last",
 	"source_url", "program_url", "application_url", "application_process",
 	"contact_email", "contact_phone",

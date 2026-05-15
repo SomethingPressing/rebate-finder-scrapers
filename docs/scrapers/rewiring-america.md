@@ -93,7 +93,8 @@ GET https://api.rewiringamerica.org/api/v1/calculator
 | `StartDate` | `item.start_date` (normalized via `normalizeRADate`) |
 | `EndDate` | `item.end_date` (normalized via `normalizeRADate`) |
 | `ServiceTerritory` | `"Nationwide"` (federal) / `"[Authority] Statewide"` (state) / `"[Authority] Service Area"` (utility/city/county) |
-| `Portfolio` | `["Federal"]` / `["State"]` / `["Utility"]` / `["Local"]` from `authority_type` |
+| `Portfolio` | Derived from `CategoryTag` via `derivePortfolios()` — WHAT the program does (e.g. `Energy Efficiency`, `Electric Vehicles`) |
+| `ImplementingSector` | Derived from `authority_type` — `Federal` / `State` / `Utility` / `Local Government` |
 | `Segment` | `item.owner_status` (e.g. `["homeowner", "renter"]`) |
 | `CategoryTag` | Human-readable labels from `item.items` via `raItemHuman` |
 | `ProductCategory` | `raProductCategory(items[0])` — maps first item key to category tag |

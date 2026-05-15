@@ -184,11 +184,9 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 			State:                merged.state,
 			ServiceTerritory:     merged.serviceTerritory,
 			AvailableNationwide:  merged.availableNationwide,
-			CategoryTag:          models.StringSlice(merged.categoryTag),
 			Segment:              models.StringSlice(merged.segment),
 			Portfolio:            models.StringSlice(merged.portfolio),
 			CustomerType:         merged.customerType,
-			ProductCategory:      merged.productCategory,
 			Administrator:        merged.administrator,
 			Source:               ptrStr(primary.Source),
 			Sources:              models.StringSlice(merged.sources),
@@ -335,7 +333,20 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		}
 	}
 
-	// ── Phase 7: update rebate_tenant_status in staging DB ───────────────────
+	// ── Phase 7: sync rebate_categories in tenant DB ────────────────────────
+	tenantCategoryTags := make(map[string][]string, len(hashOrder))
+	for _, h := range hashOrder {
+		rebateID, ok := hashToID[h]
+		if !ok {
+			continue
+		}
+		tenantCategoryTags[rebateID] = mergePromoterGroup(groupMap[h].rows).categoryTag
+	}
+	if err := syncRebateCategories(tenantDB, tenantCategoryTags); err != nil {
+		_ = err // non-fatal
+	}
+
+	// ── Phase 8: update rebate_tenant_status in staging DB ───────────────────
 	type stagingUpdate struct {
 		rebateID   string
 		stagingIDs []uint

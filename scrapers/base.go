@@ -20,6 +20,19 @@ type Scraper interface {
 	Scrape(ctx context.Context) ([]models.Incentive, error)
 }
 
+// StreamScraper is an optional interface for scrapers that can emit results
+// incrementally. When implemented, RunListFlush calls ScrapeStream so each
+// batch is upserted to the staging DB as soon as it is ready — no waiting
+// for the full scrape to complete.
+//
+// Scrapers should call sink with the smallest natural batch (one state for
+// DSIRE, one page for Energy Star, a worker-pool flush for Rewiring America).
+// sink is safe to call from goroutines as long as the caller serialises access.
+type StreamScraper interface {
+	Scraper
+	ScrapeStream(ctx context.Context, sink func([]models.Incentive)) error
+}
+
 // Registry holds all registered scrapers.
 type Registry struct {
 	scrapers []Scraper
@@ -88,31 +101,58 @@ func RunList(ctx context.Context, list []Scraper, logger *zap.Logger) []models.I
 	return all
 }
 
-// RunListFlush executes scrapers one at a time and calls flush immediately
-// after each one finishes, rather than buffering all results until the full
-// run completes. This prevents data loss when a later scraper fails — each
-// scraper's rows are persisted as soon as they are fetched.
+// RunListFlush executes scrapers one at a time and calls flush as results
+// arrive. Scrapers that implement StreamScraper flush per-batch (per state,
+// per page, etc.); others flush once after all items are collected.
 func RunListFlush(ctx context.Context, list []Scraper, logger *zap.Logger, flush func(source string, items []models.Incentive)) {
 	for _, s := range list {
 		t0 := time.Now()
 		logger.Info("scraper starting", zap.String("source", s.Name()))
-		items, err := s.Scrape(ctx)
-		if err != nil {
-			logger.Error("scraper failed",
+
+		if ss, ok := s.(StreamScraper); ok {
+			// Streaming path: flush is called per batch as the scraper produces results.
+			total := 0
+			err := ss.ScrapeStream(ctx, func(batch []models.Incentive) {
+				if len(batch) == 0 {
+					return
+				}
+				logItemsDebug(logger, s.Name(), batch)
+				flush(s.Name(), batch)
+				total += len(batch)
+			})
+			if err != nil {
+				logger.Error("scraper failed",
+					zap.String("source", s.Name()),
+					zap.Error(err),
+					zap.Duration("elapsed", time.Since(t0)),
+				)
+				continue
+			}
+			logger.Info("scraper finished",
 				zap.String("source", s.Name()),
-				zap.Error(err),
+				zap.Int("count", total),
 				zap.Duration("elapsed", time.Since(t0)),
 			)
-			continue
-		}
-		logger.Info("scraper finished",
-			zap.String("source", s.Name()),
-			zap.Int("count", len(items)),
-			zap.Duration("elapsed", time.Since(t0)),
-		)
-		logItemsDebug(logger, s.Name(), items)
-		if len(items) > 0 {
-			flush(s.Name(), items)
+		} else {
+			// Batch path: collect all items, then flush once.
+			items, err := s.Scrape(ctx)
+			if err != nil {
+				logger.Error("scraper failed",
+					zap.String("source", s.Name()),
+					zap.Error(err),
+					zap.Duration("elapsed", time.Since(t0)),
+				)
+				continue
+			}
+			logger.Info("scraper finished",
+				zap.String("source", s.Name()),
+				zap.Int("count", len(items)),
+				zap.Duration("elapsed", time.Since(t0)),
+			)
+			logItemsDebug(logger, s.Name(), items)
+			if len(items) > 0 {
+				flush(s.Name(), items)
+			}
 		}
 	}
 }

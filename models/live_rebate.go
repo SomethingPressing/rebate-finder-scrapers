@@ -45,16 +45,15 @@ type LiveRebate struct {
 	AvailableNationwide *bool   `gorm:"column:available_nationwide"`
 
 	// ── Array fields ──────────────────────────────────────────────────────────
-	CategoryTag StringSlice `gorm:"column:category_tag;type:text[]"`
 	Segment     StringSlice `gorm:"column:segment;type:text[]"`
 	Portfolio   StringSlice `gorm:"column:portfolio;type:text[]"`
 	ImageURLs   StringSlice `gorm:"column:image_urls;type:text[]"`
 	Sources     StringSlice `gorm:"column:sources;type:text[]"`
 
 	// ── Audience / metadata ───────────────────────────────────────────────────
-	CustomerType    *string `gorm:"column:customer_type"`
-	ProductCategory *string `gorm:"column:product_category"`
-	Administrator   *string `gorm:"column:administrator"`
+	CustomerType       *string `gorm:"column:customer_type"`
+	Administrator      *string `gorm:"column:administrator"`
+	ImplementingSector   *string `gorm:"column:implementing_sector"`
 
 	// ── Source tracking ───────────────────────────────────────────────────────
 	Source         *string `gorm:"column:source"`
@@ -98,8 +97,8 @@ var liveRebateUpdateCols = []string{
 	"incentive_amount", "maximum_amount", "percent_value", "per_unit_amount",
 	"incentive_format", "unit_type",
 	"state", "service_territory", "available_nationwide",
-	"category_tag", "segment", "portfolio",
-	"customer_type", "product_category", "administrator",
+	"segment", "portfolio",
+	"customer_type", "administrator", "implementing_sector",
 	"source", "sources",
 	"start_date", "end_date", "while_funds_last",
 	"application_url", "application_process", "program_url",

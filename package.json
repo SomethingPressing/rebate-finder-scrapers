@@ -24,6 +24,11 @@
     "scraper:promote:dry": "node scripts/run-promoter.mjs --dry-run",
     "eval": "node scripts/run-evaluator.mjs",
 
+    "refresh": "node scripts/run.mjs all --force-refresh",
+    "refresh:dsireusa": "node scripts/run.mjs dsireusa --force-refresh",
+    "refresh:rewiring_america": "node scripts/run.mjs rewiring_america --force-refresh",
+    "refresh:energy_star": "node scripts/run.mjs energy_star --force-refresh",
+
     "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql"
   },
   "engines": {

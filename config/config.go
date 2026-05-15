@@ -112,6 +112,15 @@ type Config struct {
 	// stg_promotion_status, stg_promoted_at, stg_rebate_id — is unchanged.
 	// Env var: FORCE_URL_UPDATE — CLI flag: --force-url-update — default: false
 	ForceURLUpdate bool
+
+	// ForceRefresh, when true, resets stg_promotion_status back to "pending"
+	// (and clears stg_promoted_at) for every row that was just upserted.
+	// This causes the promoter to re-process those rows on its next run,
+	// pushing the freshly scraped data into the live rebates table.
+	// Safe to use repeatedly — the promoter upsert is idempotent (ON CONFLICT
+	// on rebate id), so no duplicates are created.
+	// Env var: FORCE_REFRESH — CLI flag: --force-refresh — default: false
+	ForceRefresh bool
 }
 
 // Load reads configuration from the environment.
@@ -148,6 +157,7 @@ func Load() (*Config, error) {
 		TenantsFile:            getEnv("TENANTS_FILE", "config/tenants.json"),
 		Debug:                  getBoolEnv("DEBUG", false),
 		ForceURLUpdate:         getBoolEnv("FORCE_URL_UPDATE", false),
+		ForceRefresh:           getBoolEnv("FORCE_REFRESH", false),
 	}
 
 	return cfg, nil

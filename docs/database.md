@@ -36,7 +36,8 @@ Staging area for all scraped incentives. Scrapers only write here — never to t
 | `available_nationwide` | `boolean` | True for federal programs |
 | `category_tag` | `text[]` | Category labels |
 | `segment` | `text[]` | `Residential`, `Commercial`, `Industrial`, etc. |
-| `portfolio` | `text[]` | `Federal`, `State`, `Utility`, etc. |
+| `portfolio` | `text[]` | WHAT the program does — `Energy Efficiency`, `Electric Vehicles`, `Distributed Energy Resources`, `Demand Response`, `Building Electrification`, `Income Qualified`, `Financing`. Derived from `category_tag` via `derivePortfolios()`. |
+| `implementing_sector` | `text` | WHO offers the program — `Utility`, `State`, `Federal`, `Local Government`. Source-specific: DSIRE uses `sectorObj.name`; Rewiring America derives from `authority_type`; Energy Star is hardcoded `"Federal"`; utility HTML scrapers are hardcoded `"Utility"`. |
 | `customer_type` | `text` | Target customer |
 | `product_category` | `text` | Product/equipment category |
 | `administrator` | `text` | Program administrator name |
@@ -77,6 +78,42 @@ Staging area for all scraped incentives. Scrapers only write here — never to t
   }
 ]
 ```
+
+---
+
+### `stg_promotion_status` lifecycle and force refresh
+
+| Status | Set by | Meaning |
+|--------|--------|---------|
+| `pending` | Scraper on insert | Not yet promoted |
+| `promoted` | Promoter on success | Live in `public.rebates` |
+| `skipped` | Promoter or manual SQL | Deliberately excluded |
+| `pending` (reset) | `--force-refresh` flag | Previously promoted row reset so the promoter re-processes it |
+
+When `--force-refresh` is active, `db.ResetToPending()` is called after every upsert batch. It sets `stg_promotion_status = 'pending'` and `stg_promoted_at = NULL` for each row that was just written, without touching any other column.
+
+---
+
+## `public.rebates` — columns written by the promoter
+
+The promoter (`db/promoter.go`) writes the following additional columns to the live `rebates` table that are not present in the old staging-only reference above:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `implementing_sector` | `text` | WHO offers the program — `Utility`, `State`, `Federal`, `Local Government` |
+| `portfolio` | `text[]` | WHAT the program does — derived from `category_tag` via `derivePortfolios()` |
+| `sources` | `text[]` | All scraper names that contributed data for this rebate (union across merged rows) |
+
+### `rebate_categories` join table sync
+
+After each promotion run the promoter calls `syncRebateCategories()`, which:
+
+1. Collects all distinct `category_tag` values from the promoted rebates.
+2. Looks up matching rows in `public.categories` by `name`.
+3. Deletes all existing `rebate_categories` rows for the affected rebates.
+4. Inserts fresh join rows for each `(rebate_id, category_id)` pair.
+
+Unknown `category_tag` values (those with no matching row in `categories`) are silently skipped. Categories must be seeded via the admin UI or a seed script before the promoter can link them. This step is non-fatal — if it fails, the rest of promotion continues.
 
 ---
 

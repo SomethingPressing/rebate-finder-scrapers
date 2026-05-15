@@ -16,7 +16,6 @@ import (
 
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // scraperVersion is bumped whenever the mapping logic changes.
@@ -59,21 +58,29 @@ type EnergyStarScraper struct {
 // Name implements Scraper.
 func (s *EnergyStarScraper) Name() string { return "energy_star" }
 
-// Scrape implements Scraper.
-// It fetches all Energy Star rebates by paginating the full result set without
-// any geographic filter.
+// Scrape implements Scraper (collects all results then returns).
 func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
+	var all []models.Incentive
+	err := s.ScrapeStream(ctx, func(batch []models.Incentive) {
+		all = append(all, batch...)
+	})
+	return all, err
+}
+
+// ScrapeStream implements StreamScraper — flushes each page's programs to the
+// sink immediately after it is fetched and parsed so staging is updated
+// page-by-page rather than waiting for all ~60 pages to finish.
+func (s *EnergyStarScraper) ScrapeStream(ctx context.Context, sink func([]models.Incentive)) error {
 	s.Logger.Info("energy_star scrape starting — fetching all programs without ZIP filter")
 
-	// ── Phase 1: probe page 0 to get total count ──────────────────────────────
+	// ── Phase 1: probe page 0 ─────────────────────────────────────────────────
 	probe, err := s.fetchPage(ctx, 0)
 	if err != nil {
-		return nil, fmt.Errorf("energy_star: probe page 0: %w", err)
+		return fmt.Errorf("energy_star: probe page 0: %w", err)
 	}
-
 	if probe.ResultsCount == 0 || probe.PageSize == 0 {
 		s.Logger.Warn("energy_star: empty result set")
-		return nil, nil
+		return nil
 	}
 
 	totalPages := int(math.Ceil(float64(probe.ResultsCount) / float64(probe.PageSize)))
@@ -90,82 +97,111 @@ func (s *EnergyStarScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 		zap.Int("total_pages", totalPages),
 	)
 
-	// ── Phase 2: full fetch (bounded concurrency) ─────────────────────────────
-	rawPages := make([][]models.EnergyStarRawResult, totalPages)
-	rawPages[0] = probe.Results
-
-	bar := NewProgressBar(totalPages, "energy_star")
-	bar.Add(1) //nolint:errcheck — page 0 already fetched
-
-	if totalPages > 1 {
-		conc := s.maxConcurrency()
-		sem := make(chan struct{}, conc)
-		g, gctx := errgroup.WithContext(ctx)
-
-		for page := 1; page < totalPages; page++ {
-			page := page
-			sem <- struct{}{}
-			g.Go(func() error {
-				defer func() { <-sem }()
-
-				if s.pageDelay() > 0 {
-					select {
-					case <-gctx.Done():
-						return gctx.Err()
-					case <-time.After(s.pageDelay()):
-					}
-				}
-
-				resp, err := s.fetchPage(gctx, page)
-				if err != nil {
-					return fmt.Errorf("page %d: %w", page, err)
-				}
-				rawPages[page] = resp.Results
-				bar.Add(1) //nolint:errcheck
-				s.Logger.Info("energy_star: page fetched",
-					zap.Int("page", page+1),
-					zap.Int("total_pages", totalPages),
-					zap.Int("results_on_page", len(resp.Results)),
-				)
-				return nil
-			})
-		}
-
-		if err := g.Wait(); err != nil {
-			return nil, fmt.Errorf("energy_star: fetch pages: %w", err)
-		}
-	}
-	bar.Finish() //nolint:errcheck
-
-	// ── Phase 3: parse + map ──────────────────────────────────────────────────
 	version := s.ScraperVersion
 	if version == "" {
 		version = energyStarScraperVersion
 	}
 
+	// Dedup across pages.
 	seen := make(map[string]bool)
-	var incentives []models.Incentive
-	for _, page := range rawPages {
-		for _, result := range page {
+	uniqueTotal := 0
+
+	// Helper: parse a raw page and call sink with new unique incentives.
+	flushPage := func(results []models.EnergyStarRawResult) {
+		var batch []models.Incentive
+		for _, result := range results {
 			inc, ok := mapEnergyStarRecord(result, version, s.StateZIPs, s.Logger)
-			if !ok {
-				continue
-			}
-			if seen[inc.ID] {
+			if !ok || seen[inc.ID] {
 				continue
 			}
 			seen[inc.ID] = true
-			incentives = append(incentives, inc)
+			batch = append(batch, inc)
+		}
+		if len(batch) > 0 {
+			sink(batch)
+			uniqueTotal += len(batch)
 		}
 	}
 
+	// ── Phase 2: page 0 already fetched — flush it, then fetch the rest ───────
+	bar := NewProgressBar(totalPages, "energy_star")
+	flushPage(probe.Results)
+	bar.Add(1) //nolint:errcheck
+
+	if totalPages > 1 {
+		conc := s.maxConcurrency()
+		// Process remaining pages sequentially (one goroutine per page would
+		// require a mutex around sink; sequential keeps the sink call simple).
+		sem := make(chan struct{}, conc)
+		type pageResult struct {
+			page    int
+			results []models.EnergyStarRawResult
+			err     error
+		}
+		resultCh := make(chan pageResult, totalPages)
+
+		for page := 1; page < totalPages; page++ {
+			page := page
+			sem <- struct{}{}
+			go func() {
+				defer func() { <-sem }()
+				if s.pageDelay() > 0 {
+					select {
+					case <-ctx.Done():
+						resultCh <- pageResult{page: page, err: ctx.Err()}
+						return
+					case <-time.After(s.pageDelay()):
+					}
+				}
+				resp, fetchErr := s.fetchPage(ctx, page)
+				if fetchErr != nil {
+					resultCh <- pageResult{page: page, err: fmt.Errorf("page %d: %w", page, fetchErr)}
+					return
+				}
+				resultCh <- pageResult{page: page, results: resp.Results}
+			}()
+		}
+
+		// Collect results in order so dedup and sink are single-threaded.
+		pending := make(map[int][]models.EnergyStarRawResult)
+		nextExpected := 1
+		received := 0
+		total := totalPages - 1
+
+		for received < total {
+			r := <-resultCh
+			received++
+			if r.err != nil {
+				s.Logger.Warn("energy_star: page error", zap.Int("page", r.page), zap.Error(r.err))
+				nextExpected = r.page + 1 // skip the failed page
+				continue
+			}
+			pending[r.page] = r.results
+			// Flush in-order pages.
+			for {
+				results, ok := pending[nextExpected]
+				if !ok {
+					break
+				}
+				flushPage(results)
+				bar.Add(1) //nolint:errcheck
+				s.Logger.Info("energy_star: page flushed",
+					zap.Int("page", nextExpected+1),
+					zap.Int("total_pages", totalPages),
+				)
+				delete(pending, nextExpected)
+				nextExpected++
+			}
+		}
+	}
+	bar.Finish() //nolint:errcheck
+
 	s.Logger.Info("energy_star scrape complete",
-		zap.Int("unique_incentives", len(incentives)),
+		zap.Int("unique_incentives", uniqueTotal),
 		zap.Int("pages_fetched", totalPages),
-		zap.Int("duplicates_skipped", probe.ResultsCount-len(incentives)),
 	)
 
-	return incentives, nil
+	return nil
 }
 
 // fetchPage calls the Energy Star search API for the given page number.

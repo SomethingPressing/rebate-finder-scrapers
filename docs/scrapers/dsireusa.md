@@ -63,7 +63,8 @@ GET https://programs.dsireusa.org/api/v1/programs
 | `CategoryTag` | Extracted from `ParameterSets[].Technologies` |
 | `Segment` | Extracted from `ParameterSets[].Sectors` |
 | `CustomerType` | Joined sector names from `ParameterSets` |
-| `Portfolio` | Program level derived from `SectorObj.Name` — Federal / State / Utility / Local |
+| `Portfolio` | Derived from `CategoryTag` via `derivePortfolios()` — WHAT the program does (e.g. `Energy Efficiency`, `Electric Vehicles`) |
+| `ImplementingSector` | `sectorObj.name` from the API response — WHO offers it (e.g. `Utility`, `State`, `Federal`, `Local Government`) |
 | `ProductCategory` | Top technology category from `ParameterSets` |
 | `Administrator` | `program.Administrator` |
 | `StartDate` | `program.StartDate` |

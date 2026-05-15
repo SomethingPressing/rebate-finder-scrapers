@@ -174,6 +174,28 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool) (Upse
 	return UpsertResult{Upserted: total}, nil
 }
 
+// ResetToPending resets the promotion status of the given staging rows back to
+// "pending" so the promoter will re-process them on its next run.
+// Called after a force-refresh scrape to push freshly scraped data into the
+// live rebates table without manual SQL.
+// The promoter upsert is idempotent (ON CONFLICT on rebate id), so calling this
+// never creates duplicate live rows.
+func ResetToPending(d *DB, sourceIDs []string) error {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
+	schema := models.ScraperSchema
+	stgTable := schema + ".rebates_staging"
+	// Use raw SQL — GORM's Updates() with a nil map value does not reliably
+	// emit SET col = NULL; explicit SQL is unambiguous.
+	return d.gorm.Exec(
+		"UPDATE "+stgTable+
+			" SET stg_promotion_status = 'pending', stg_promoted_at = NULL"+
+			" WHERE stg_source_id IN ?",
+		sourceIDs,
+	).Error
+}
+
 // PendingCount returns the number of rows in rebates_staging that have not yet
 // been promoted.  Useful for health-check logging.
 func PendingCount(d *DB) (int64, error) {

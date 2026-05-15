@@ -68,9 +68,9 @@ func (b *CollyBase) NewCollector() *colly.Collector {
 	opts := []colly.CollectorOption{
 		colly.UserAgent(browserUA),
 	}
-	if b.AllowedDomain != "" {
-		opts = append(opts, colly.AllowedDomains(b.AllowedDomain))
-	}
+	// No domain restriction — scrapers must be able to follow redirects to
+	// any subdomain or partner site (e.g. Xcel → my.xcelenergy.com).
+	_ = b.AllowedDomain // kept for API compatibility but no longer enforced
 
 	c := colly.NewCollector(opts...)
 	c.SetRequestTimeout(b.requestTimeout())

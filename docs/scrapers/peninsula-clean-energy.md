@@ -88,6 +88,7 @@ https://www.peninsulacleanenergy.com/financing/
 | `EndDate` | Date after "expires", "through", "deadline" keywords |
 | `AvailableNationwide` | `false` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, "Peninsula Clean Energy")` |
+| `ImplementingSector` | `"Utility"` (hardcoded) |
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`

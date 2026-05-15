@@ -32,6 +32,8 @@ const allowed = new Set([
 ]);
 
 const sourceArg = process.argv[2] ?? "all";
+// Extra flags (e.g. --force-refresh, --force-url-update) forwarded to the Go binary.
+const extraFlags = process.argv.slice(3);
 
 if (!allowed.has(sourceArg)) {
   console.error(
@@ -49,7 +51,7 @@ if (sourceArg !== "all") {
   delete env.SOURCE;
 }
 
-const result = spawnSync("go", ["run", "./cmd/scraper"], {
+const result = spawnSync("go", ["run", "./cmd/scraper", ...extraFlags], {
   cwd: scraperDir,
   stdio: "inherit",
   env,

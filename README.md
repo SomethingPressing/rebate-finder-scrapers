@@ -14,14 +14,15 @@ them in a PostgreSQL table for human review before they go live in the consumer 
 3. [Quick Start](#quick-start)
 4. [Configuration](#configuration)
 5. [Running the Scraper](#running-the-scraper)
-6. [PDF Scrapers](#pdf-scrapers)
-7. [Reviewing Staged Data](#reviewing-staged-data)
-8. [Promoting Staged Data](#promoting-staged-data-consumer-app)
-9. [Deployment](#deployment)
-10. [Docker](#docker)
-11. [Data Sources](#data-sources)
-12. [Design Decisions](#design-decisions)
-13. [Project Structure](#project-structure)
+6. [Force Refresh](#force-refresh)
+7. [PDF Scrapers](#pdf-scrapers)
+8. [Reviewing Staged Data](#reviewing-staged-data)
+9. [Promoting Staged Data](#promoting-staged-data-consumer-app)
+10. [Deployment](#deployment)
+11. [Docker](#docker)
+12. [Data Sources](#data-sources)
+13. [Design Decisions](#design-decisions)
+14. [Project Structure](#project-structure)
 
 ---
 
@@ -123,6 +124,8 @@ DOTENV_PATH=/etc/incenva/scraper.env go run ./cmd/scraper
 | `CONSUMERS_ENERGY_CATALOG_PDF` | | — | Path to Consumers Energy catalog PDF |
 | `CONSUMERS_ENERGY_APPLICATION_PDF` | | — | Path to Consumers Energy application PDF |
 | `SOURCE` | | — | Restrict to one scraper: `dsireusa` \| `rewiring_america` \| `energy_star` |
+| `FORCE_REFRESH` | | `false` | `true` = reset `stg_promotion_status` back to `pending` after every upsert so the promoter re-pushes fresh data to live |
+| `FORCE_URL_UPDATE` | | `false` | `true` = overwrite `program_url` / `application_url` on ALL matching rows regardless of promotion status |
 | `DOTENV_PATH` | | — | Absolute path to a specific `.env` file |
 
 ---
@@ -178,12 +181,42 @@ RUN_ONCE=true ./bin/scraper --source energy_star
 | `npm run run:dsireusa` | `RUN_ONCE=true SOURCE=dsireusa go run …` |
 | `npm run run:rewiring_america` | same for Rewiring America |
 | `npm run run:energy_star` | same for Energy Star |
+| `npm run refresh` | same as `run` with `--force-refresh` (all sources) |
+| `npm run refresh:dsireusa` | force-refresh for DSIRE only |
+| `npm run refresh:rewiring_america` | force-refresh for Rewiring America only |
+| `npm run refresh:energy_star` | force-refresh for Energy Star only |
 | `npm run pdf` | `go run ./cmd/pdf-scraper` |
 | `npm run go:deps` | `go mod download` |
 | `npm run go:tidy` | `go mod tidy` |
 | `npm run go:verify` | `go mod verify` |
 
 > For the long-running scheduled mode (`RUN_ONCE=false`), use **PM2** or **systemd** — see [Deployment](#deployment). These npm scripts are one-shot helpers for manual runs and development only.
+
+---
+
+## Force Refresh
+
+By default a re-scrape updates the data columns in `rebates_staging` but does not touch `stg_promotion_status`. Rows that were previously `promoted` remain `promoted`, so the promoter ignores them on its next run.
+
+The `--force-refresh` flag (or `FORCE_REFRESH=true` env var) changes that behaviour: after each scraper finishes its upsert, the service resets `stg_promotion_status` back to `pending` (and clears `stg_promoted_at`) for every row that was just written. The promoter will then re-process those rows and push the freshly scraped data into the live `rebates` table.
+
+This is safe to run repeatedly. The promoter upsert is idempotent (`ON CONFLICT` on rebate `id`), so no duplicate live rows are created.
+
+### When to use force refresh
+
+| Situation | Command |
+|-----------|---------|
+| Re-push all sources after a data correction | `npm run refresh` |
+| Re-push a single source | `npm run refresh:dsireusa` |
+| One-off via Go directly | `FORCE_REFRESH=true RUN_ONCE=true go run ./cmd/scraper` |
+| Single source via Go | `FORCE_REFRESH=true RUN_ONCE=true go run ./cmd/scraper --source rewiring_america` |
+
+### What happens step by step
+
+1. Scraper fetches and upserts rows into `rebates_staging` (data columns updated, lifecycle columns preserved as usual).
+2. After the upsert, `db.ResetToPending()` is called with the source IDs of every row that was just written.
+3. This sets `stg_promotion_status = 'pending'` and `stg_promoted_at = NULL` for those rows.
+4. On the next `npm run scraper:promote` (or `pnpm scraper:promote` in the consumer app), those rows are re-promoted with the new data.
 
 ---
 
@@ -423,6 +456,23 @@ DO UPDATE` refreshes data without creating new rows.
 
 The `status` column in `rebates` is **excluded** from `ON CONFLICT DO UPDATE`. A new scrape
 never resets an admin-approved program back to `draft`.
+
+### `portfolio` vs `implementing_sector`
+
+These two fields are deliberately separate:
+
+| Field | Answers | Values |
+|-------|---------|--------|
+| `portfolio` | **What does the program do?** | `Energy Efficiency`, `Electric Vehicles`, `Distributed Energy Resources`, `Demand Response`, `Building Electrification`, `Income Qualified`, `Financing` |
+| `implementing_sector` | **Who offers it?** | `Utility`, `State`, `Federal`, `Local Government` |
+
+`portfolio` is derived from `category_tag` values via the `derivePortfolios()` mapping in `scrapers/portfolio.go`. It is **not** the implementing sector. Prior to this change `portfolio` incorrectly stored the sector name; that has been corrected.
+
+`implementing_sector` is populated per-source:
+- **DSIRE:** `sectorObj.name` from the API response
+- **Rewiring America:** derived from `authority_type` (federal / state / utility / city / county → `Federal` / `State` / `Utility` / `Local Government`)
+- **Energy Star:** `"Federal"` (hardcoded — all federal tax credit programs)
+- **HTML utility scrapers** (Con Edison, PNM, Xcel Energy, SRP, Peninsula Clean Energy): `"Utility"` (hardcoded)
 
 ### Rate limiting
 

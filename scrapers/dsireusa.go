@@ -146,12 +146,23 @@ type DSIREScraper struct {
 // Name implements Scraper.
 func (s *DSIREScraper) Name() string { return "dsireusa" }
 
-// Scrape implements Scraper.
+// Scrape implements Scraper (collects all results then returns).
 func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
+	var all []models.Incentive
+	err := s.ScrapeStream(ctx, func(batch []models.Incentive) {
+		all = append(all, batch...)
+	})
+	return all, err
+}
+
+// ScrapeStream implements StreamScraper — flushes each state's programs to
+// the sink immediately after they are fetched so staging is updated per-state
+// rather than waiting for all 51 states to finish.
+func (s *DSIREScraper) ScrapeStream(ctx context.Context, sink func([]models.Incentive)) error {
 	client := s.httpClient()
 	seen := make(map[int]bool)
-	var all []models.Incentive
 	total := len(usStateAbbrs)
+	uniqueTotal := 0
 
 	s.Logger.Info("dsireusa scrape starting",
 		zap.Int("states", total),
@@ -162,7 +173,8 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	for i, state := range usStateAbbrs {
 		select {
 		case <-ctx.Done():
-			return all, ctx.Err()
+			bar.Finish() //nolint:errcheck
+			return ctx.Err()
 		default:
 		}
 
@@ -178,37 +190,42 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 			continue
 		}
 
-		before := len(all)
+		var batch []models.Incentive
 		for _, prog := range programs {
 			if seen[prog.ID] {
 				continue
 			}
 			seen[prog.ID] = true
-
 			stateZIPs := s.StateZIPs[state]
 			inc := s.toIncentive(prog, stateZIPs)
 			if s.ScrapeDetails {
 				detail := s.scrapeDetail(ctx, prog.ID)
 				s.applyDetail(&inc, detail)
 			}
-			all = append(all, inc)
+			batch = append(batch, inc)
 		}
+
+		uniqueTotal += len(batch)
 
 		s.Logger.Info("dsireusa state progress",
 			zap.Int("state_index", i+1),
 			zap.Int("state_total", total),
 			zap.String("state", state),
 			zap.Int("programs_in_response", len(programs)),
-			zap.Int("new_this_state", len(all)-before),
-			zap.Int("unique_total", len(all)),
+			zap.Int("new_this_state", len(batch)),
+			zap.Int("unique_total", uniqueTotal),
 		)
+
+		if len(batch) > 0 {
+			sink(batch)
+		}
 
 		bar.Add(1) //nolint:errcheck
 
-		if s.Limit > 0 && len(all) >= s.Limit {
+		if s.Limit > 0 && uniqueTotal >= s.Limit {
 			s.Logger.Debug("dsireusa: fetch limit reached, stopping early",
 				zap.Int("limit", s.Limit),
-				zap.Int("collected", len(all)),
+				zap.Int("collected", uniqueTotal),
 				zap.String("stopped_at_state", state),
 			)
 			break
@@ -219,11 +236,11 @@ func (s *DSIREScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("dsireusa scrape complete",
-		zap.Int("unique_programs", len(all)),
+		zap.Int("unique_programs", uniqueTotal),
 		zap.Int("states_queried", total),
 	)
 
-	return all, nil
+	return nil
 }
 
 func (s *DSIREScraper) pageDelay() time.Duration {

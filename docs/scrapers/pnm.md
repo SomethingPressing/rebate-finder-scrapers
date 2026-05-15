@@ -88,6 +88,7 @@ https://pnm.clearesult.com/
 | `EndDate` | Date after "expires", "through", "deadline" keywords |
 | `AvailableNationwide` | `false` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, "PNM")` |
+| `ImplementingSector` | `"Utility"` (hardcoded) |
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `maximum_amount`, `image_url`, `rate_tiers`

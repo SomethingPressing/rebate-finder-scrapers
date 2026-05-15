@@ -86,6 +86,7 @@ https://www.coned.com/en/accounts-billing/payment-plans-assistance/help-paying-y
 | `EndDate` | Date after "expires", "through", "deadline" keywords |
 | `AvailableNationwide` | `false` |
 | `ProgramHash` | `ComputeProgramHash(ProgramName, "Con Edison")` |
+| `ImplementingSector` | `"Utility"` (hardcoded) |
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `segment`, `portfolio`, `image_url`, `rate_tiers`

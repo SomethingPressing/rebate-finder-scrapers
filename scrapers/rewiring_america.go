@@ -186,10 +186,22 @@ func (s *RewiringAmericaScraper) Name() string { return "rewiring_america" }
 // default 3) to capture every utility-territory program across the US.
 // Each ZIP is queried with multiple income/owner_status profiles to capture
 // income-restricted and renter-specific programs.
+// Scrape implements Scraper (collects all results then returns).
 func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
+	var all []models.Incentive
+	err := s.ScrapeStream(ctx, func(batch []models.Incentive) {
+		all = append(all, batch...)
+	})
+	return all, err
+}
+
+// ScrapeStream implements StreamScraper — flushes new unique incentives to the
+// sink every flushEvery ZIP requests so staging is updated periodically
+// throughout the run instead of only at the end.
+func (s *RewiringAmericaScraper) ScrapeStream(ctx context.Context, sink func([]models.Incentive)) error {
 	if s.APIKey == "" {
 		s.Logger.Warn("rewiring_america: REWIRING_AMERICA_API_KEY not set — skipping")
-		return nil, nil
+		return nil
 	}
 
 	// ZIP selection priority:
@@ -285,11 +297,22 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 		close(resultCh)
 	}()
 
-	// Collect results, dedup by deterministic ID.
+	// Collect results, dedup by deterministic ID, and flush periodically.
+	const flushEvery = 500 // flush to staging after every N completed requests
+
 	seen := make(map[string]bool)
-	var all []models.Incentive
+	var pending []models.Incentive // new unique items since last flush
+	uniqueTotal := 0
 	done := 0
 	errors := 0
+
+	flush := func() {
+		if len(pending) > 0 {
+			sink(pending)
+			uniqueTotal += len(pending)
+			pending = nil
+		}
+	}
 
 	for r := range resultCh {
 		done++
@@ -304,33 +327,36 @@ func (s *RewiringAmericaScraper) Scrape(ctx context.Context) ([]models.Incentive
 				zap.Int("total", nTask),
 				zap.Error(r.err),
 			)
-			continue
-		}
-		for _, inc := range r.incentives {
-			if !seen[inc.ID] {
-				seen[inc.ID] = true
-				all = append(all, inc)
+		} else {
+			for _, inc := range r.incentives {
+				if !seen[inc.ID] {
+					seen[inc.ID] = true
+					pending = append(pending, inc)
+				}
 			}
 		}
-		if done%500 == 0 || done == nTask {
+
+		if done%flushEvery == 0 || done == nTask {
+			flush()
 			s.Logger.Info("rewiring_america progress",
 				zap.Int("completed", done),
 				zap.Int("total", nTask),
-				zap.Int("unique_incentives", len(all)),
+				zap.Int("unique_incentives", uniqueTotal),
 				zap.Int("errors", errors),
 			)
 		}
 	}
+	flush() // drain any remaining items
 	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("rewiring_america scrape complete",
-		zap.Int("unique_incentives", len(all)),
+		zap.Int("unique_incentives", uniqueTotal),
 		zap.Int("zips_queried", nZip),
 		zap.Int("total_requests", nTask),
 		zap.Int("errors", errors),
 	)
 
-	return all, nil
+	return nil
 }
 
 func (s *RewiringAmericaScraper) fetchZIP(

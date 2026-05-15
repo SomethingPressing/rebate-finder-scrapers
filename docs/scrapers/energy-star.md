@@ -53,7 +53,8 @@ Fallback: if `.views-row` yields nothing, tries `article` tags.
 | `ProgramURL` | `a[href]` on the card |
 | `AvailableNationwide` | `true` (hardcoded) |
 | `Segment` | `["Residential"]` (hardcoded) |
-| `Portfolio` | `["Federal"]` (hardcoded) |
+| `Portfolio` | Derived from `CategoryTag` via `derivePortfolios()` — WHAT the program does |
+| `ImplementingSector` | `"Federal"` (hardcoded — all Energy Star programs are federal tax credits) |
 | `ScraperVersion` | From config |
 
 **Fields NOT populated:** `state`, `zip_code`, `service_territory`, `contractor_required`, `energy_audit_required`, `start_date`, `end_date`

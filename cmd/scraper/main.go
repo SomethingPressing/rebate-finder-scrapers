@@ -46,9 +46,10 @@ import (
 )
 
 func main() {
-	sourceFlag       := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
-	debugFlag        := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
+	sourceFlag         := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
+	debugFlag          := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
 	forceURLUpdateFlag := flag.Bool("force-url-update", false, "overwrite program_url and application_url on ALL matching staging rows regardless of promotion status (also set via FORCE_URL_UPDATE=true)")
+	forceRefreshFlag   := flag.Bool("force-refresh", false, "re-scrape and reset promotion status to pending so the promoter re-pushes fresh data to live (also set via FORCE_REFRESH=true)")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -72,6 +73,10 @@ func main() {
 	// --force-url-update / FORCE_URL_UPDATE=true both enable forced URL refresh.
 	if *forceURLUpdateFlag {
 		cfg.ForceURLUpdate = true
+	}
+	// --force-refresh / FORCE_REFRESH=true resets promotion status after upsert.
+	if *forceRefreshFlag {
+		cfg.ForceRefresh = true
 	}
 
 	// ── Logger ────────────────────────────────────────────────────────────────
@@ -102,6 +107,7 @@ func main() {
 		zap.Bool("proxy_active", proxyActive),
 		zap.Bool("multi_tenant", multiTenant),
 		zap.Bool("force_url_update", cfg.ForceURLUpdate),
+		zap.Bool("force_refresh", cfg.ForceRefresh),
 	)
 
 	// ── Database (staging DB) ─────────────────────────────────────────────────
@@ -125,12 +131,15 @@ func main() {
 	}
 
 	// ── Scraper registry ──────────────────────────────────────────────────────
-	// Compute the effective per-source fetch limit from tenants: use the
-	// smallest non-zero MaxIncentivesPerSource across all active tenants.
+	// Compute the effective per-source fetch limit from tenants.
+	// --force-refresh bypasses this limit entirely — a refresh must fetch all
+	// programs, not a sampled subset.
 	effectiveLimit := 0
-	for _, t := range tenants {
-		if t.MaxIncentivesPerSource > 0 && (effectiveLimit == 0 || t.MaxIncentivesPerSource < effectiveLimit) {
-			effectiveLimit = t.MaxIncentivesPerSource
+	if !cfg.ForceRefresh {
+		for _, t := range tenants {
+			if t.MaxIncentivesPerSource > 0 && (effectiveLimit == 0 || t.MaxIncentivesPerSource < effectiveLimit) {
+				effectiveLimit = t.MaxIncentivesPerSource
+			}
 		}
 	}
 
@@ -204,11 +213,9 @@ func main() {
 		// flush is called immediately after each scraper finishes so rows are
 		// persisted without waiting for the full run to complete.
 		flush := func(source string, items []models.Incentive) {
-			// Enforce max_incentives_per_source as a hard fetch limit:
-			// find the smallest non-zero limit across all tenants and truncate
-			// the items slice before staging. This keeps the staging table small
-			// and makes test runs with a low limit finish quickly.
-			if multiTenant {
+			// Enforce max_incentives_per_source unless --force-refresh is set.
+			// A refresh must stage all programs — limits are for regular scrape runs.
+			if multiTenant && !cfg.ForceRefresh {
 				limit := 0
 				for _, t := range tenants {
 					if t.MaxIncentivesPerSource > 0 && (limit == 0 || t.MaxIncentivesPerSource < limit) {
@@ -233,7 +240,9 @@ func main() {
 				tagged := 0
 				for i := range items {
 					for _, t := range tenants {
-						if t.MaxIncentivesPerSource > 0 && tenantCount[t.ID] >= t.MaxIncentivesPerSource {
+						// Bypass per-tenant limit on force-refresh so all programs
+						// receive tenant tags and can be promoted.
+						if !cfg.ForceRefresh && t.MaxIncentivesPerSource > 0 && tenantCount[t.ID] >= t.MaxIncentivesPerSource {
 							continue
 						}
 						if t.MatchesIncentive(items[i].State, &items[i].UtilityCompany, items[i].ServiceTerritory, items[i].AvailableNationwide, items[i].ZipCodes) {
@@ -268,6 +277,26 @@ func main() {
 				zap.Int("upserted", result.Upserted),
 				zap.Duration("db_elapsed", time.Since(dbStarted)),
 			)
+
+			// When --force-refresh is set, reset every row we just upserted back
+			// to "pending" so the promoter re-pushes the fresh data to live.
+			if cfg.ForceRefresh {
+				sourceIDs := make([]string, len(items))
+				for i, item := range items {
+					sourceIDs[i] = item.ID
+				}
+				if err := db.ResetToPending(database, sourceIDs); err != nil {
+					logger.Error("force-refresh: reset to pending failed",
+						zap.String("source", source),
+						zap.Error(err),
+					)
+				} else {
+					logger.Info("force-refresh: staging rows reset to pending",
+						zap.String("source", source),
+						zap.Int("rows", len(sourceIDs)),
+					)
+				}
+			}
 		}
 
 		scrapers.RunListFlush(ctx, activeScrapers, logger, flush)
