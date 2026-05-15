@@ -72,6 +72,12 @@ func Run(cfg Config) ([]EvalResult, error) {
 	results := make([]EvalResult, 0, len(rows))
 
 	for i, row := range rows {
+		// Throttle to avoid hitting the OpenAI TPM rate limit (30K tokens/min).
+		// Each request uses ~2400 tokens → max ~12/min → 5s minimum spacing.
+		if i > 0 {
+			time.Sleep(5 * time.Second)
+		}
+
 		log.Printf("[%d/%d] evaluating: %q  (source=%s)", i+1, len(rows), row.ProgramName, row.Source)
 
 		res := EvalResult{
@@ -223,7 +229,7 @@ func fetchSample(d *db.DB, source string, n int) ([]models.StagedRebate, error) 
 		var candidates []models.StagedRebate
 		// Fetch more than n so we have room to filter out junk rows.
 		err := d.GORM().
-			Where("source = ? AND program_url IS NOT NULL AND program_url != '' AND program_url NOT LIKE '%/login%'", src).
+			Where("source = ? AND program_url IS NOT NULL AND program_url != '' AND program_url NOT LIKE '%/login%' AND program_url NOT LIKE '%clearesult.com%'", src).
 			Order("(stg_raw_response IS NOT NULL) DESC, updated_at DESC").
 			Limit(n * 5).
 			Find(&candidates).Error

@@ -404,7 +404,13 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		inc := models.NewIncentive(s.Name(), s.ScraperVersion)
 		inc.ID = id
 
-		if raw, err := json.Marshal(item); err == nil {
+		// Store the raw item alongside the resolved authority name so the evaluator
+		// can reconstruct the full program context during re-extraction.
+		type storedRA struct {
+			Item          raIncentive `json:"item"`
+			AuthorityName string      `json:"authority_name"`
+		}
+		if raw, err := json.Marshal(storedRA{Item: item, AuthorityName: authorityName}); err == nil {
 			inc.RawResponse = string(raw)
 			inc.RawContentType = "application/json"
 		}
@@ -423,19 +429,17 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		// representative (when present) = typical/minimum value; number = maximum.
 		switch item.Amount.Type {
 		case "percent":
-			inc.IncentiveFormat = models.PtrString("percent")
-			// API sends 0–1 fraction; multiply by 100 for percentage display.
-			pct := item.Amount.Number * 100
-			if pct > 1 {
-				// Some API responses send 0–100 directly; don't double-multiply.
-				pct = item.Amount.Number
+			pct := item.Amount.Number
+			if pct > 0 && pct <= 1.0 {
+				// API sends 0–1 fraction → convert to 0–100 display value.
+				pct *= 100
 			}
 			inc.PercentValue = models.PtrFloat(pct)
 			if item.Amount.Maximum > 0 {
 				inc.MaximumAmount = models.PtrFloat(item.Amount.Maximum)
 			}
+			inc.IncentiveFormat = models.PtrString("percent")
 		case "dollar_amount":
-			inc.IncentiveFormat = models.PtrString("dollar_amount")
 			if item.Amount.Representative != nil && *item.Amount.Representative > 0 {
 				// representative = typical value, number = cap
 				inc.IncentiveAmount = item.Amount.Representative
@@ -446,16 +450,30 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 					inc.MaximumAmount = models.PtrFloat(item.Amount.Maximum)
 				}
 			}
+			inc.IncentiveFormat = models.PtrString("dollar_amount")
 		case "dollars_per_unit":
-			inc.IncentiveFormat = models.PtrString("per_unit")
 			inc.PerUnitAmount = models.PtrFloat(item.Amount.Number)
+			// Mirror into incentive_amount so callers get a plain dollar value.
+			inc.IncentiveAmount = models.PtrFloat(item.Amount.Number)
 			inc.UnitType = models.PtrString("unit")
+			inc.IncentiveFormat = models.PtrString("per_unit")
 		default:
 			if item.Amount.Number > 0 {
-				inc.IncentiveFormat = models.PtrString("dollar_amount")
 				inc.IncentiveAmount = models.PtrFloat(item.Amount.Number)
+				inc.IncentiveFormat = models.PtrString("dollar_amount")
 			} else {
 				inc.IncentiveFormat = models.PtrString("narrative")
+			}
+		}
+
+		// Refine incentive_format from payment_methods when the amount type alone
+		// is ambiguous (tax credits and loans require payment-method context).
+		for _, pm := range item.PaymentMethods {
+			switch pm {
+			case "tax_credit":
+				inc.IncentiveFormat = models.PtrString("tax_credit")
+			case "loan":
+				inc.IncentiveFormat = models.PtrString("financing")
 			}
 		}
 
@@ -522,25 +540,29 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 			}
 		}
 
-		// ── Payment methods → CustomerType ───────────────────────────────
-		// There is no ProgramType field in models.Incentive; store the
-		// mapped payment-method label in CustomerType as a type indicator.
-		if pmStr := raMapPaymentMethods(item.PaymentMethods); pmStr != "" {
-			inc.CustomerType = models.PtrString(pmStr)
-		}
+		// ── Application process from payment methods ──────────────────────
+		// (CustomerType is set below from owner_status, not payment methods)
 
 		// ── Items → categories + ProductCategory ─────────────────────────
 		if len(item.Items) > 0 {
+			seen := make(map[string]bool)
 			cats := make([]string, 0, len(item.Items))
 			for _, it := range item.Items {
-				cats = append(cats, raItemHuman(it))
+				cat := raProductCategory(it)
+				if cat != "" && !seen[cat] {
+					seen[cat] = true
+					cats = append(cats, cat)
+				}
 			}
 			inc.CategoryTag = cats
 			inc.ProductCategory = models.PtrString(raProductCategory(item.Items[0]))
 		}
 
-		// ── Owner status → Segment ────────────────────────────────────────
+		// ── Owner status → Segment + CustomerType ────────────────────────
 		inc.Segment = item.OwnerStatus
+		if ct := raOwnerStatusToCustomerType(item.OwnerStatus); ct != "" {
+			inc.CustomerType = models.PtrString(ct)
+		}
 
 		// ── Program hash ──────────────────────────────────────────────────
 		inc.ProgramHash = models.ComputeProgramHash(inc.ProgramName, inc.UtilityCompany)
@@ -681,7 +703,7 @@ func raItemHuman(key string) string {
 	case "community_solar":
 		return "Community Solar"
 	case "battery_storage_installation", "battery_storage":
-		return "Battery Storage"
+		return "Energy Storage"
 	case "electric_stove":
 		return "Electric Stove"
 	case "heat_pump_clothes_dryer":
@@ -705,6 +727,23 @@ func raItemHuman(key string) string {
 	default:
 		return raHuman(key)
 	}
+}
+
+// raOwnerStatusToCustomerType converts RA owner_status values to a normalized
+// customer-type string (Residential / Commercial / both).
+func raOwnerStatusToCustomerType(statuses []string) string {
+	set := make(map[string]bool)
+	for _, s := range statuses {
+		set[strings.ToLower(s)] = true
+	}
+	var types []string
+	if set["homeowner"] || set["renter"] {
+		types = append(types, "Residential")
+	}
+	if set["business"] || set["commercial_industrial"] || set["commercial"] {
+		types = append(types, "Commercial")
+	}
+	return strings.Join(types, ", ")
 }
 
 // raHuman converts snake_case API keys to readable title-case labels.
@@ -734,7 +773,7 @@ func raProductCategory(item string) string {
 	case "rooftop_solar_panels", "rooftop_solar", "community_solar":
 		return "Solar"
 	case "battery_storage_installation", "battery_storage":
-		return "Battery Storage"
+		return "Energy Storage"
 	case "electric_stove", "heat_pump_clothes_dryer":
 		return "Appliances"
 	default:

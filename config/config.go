@@ -104,6 +104,14 @@ type Config struct {
 	// logging in the evaluator.
 	// Env var: DEBUG — default: false
 	Debug bool
+
+	// ForceURLUpdate, when true, forces the upsert to overwrite program_url and
+	// application_url on ALL matching staging rows regardless of their current
+	// stg_promotion_status (including "promoted" and "skipped" rows whose URLs
+	// might be stale or missing).  All other behaviour — preserving
+	// stg_promotion_status, stg_promoted_at, stg_rebate_id — is unchanged.
+	// Env var: FORCE_URL_UPDATE — CLI flag: --force-url-update — default: false
+	ForceURLUpdate bool
 }
 
 // Load reads configuration from the environment.
@@ -139,6 +147,7 @@ func Load() (*Config, error) {
 		ProxyURL:               getEnv("SCRAPER_PROXY_URL", ""),
 		TenantsFile:            getEnv("TENANTS_FILE", "config/tenants.json"),
 		Debug:                  getBoolEnv("DEBUG", false),
+		ForceURLUpdate:         getBoolEnv("FORCE_URL_UPDATE", false),
 	}
 
 	return cfg, nil

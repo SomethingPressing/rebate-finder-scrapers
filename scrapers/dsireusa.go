@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -342,11 +343,18 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 
 	// ── Amount / format from parameterSets ────────────────────────────────────
 	format, incAmt, maxAmt, pctVal, perUnit, unitType := parseParameterSets(p.ParameterSets)
-	// When parameters are ambiguous (narrative or dollar_amount), let the
-	// program type narrow the format down to financing/tax_credit/etc.
+	// When parameters are ambiguous (narrative or dollar_amount), let the program
+	// type narrow the format. For financing programs the dollar amount is a loan
+	// ceiling — move it to maximum_amount so it isn't mistaken for a rebate.
 	if typeFormat := formatFromProgramType(p.TypeObj.Name); typeFormat != "" &&
 		(format == "narrative" || format == "dollar_amount") {
 		format = typeFormat
+		if format == "financing" && incAmt != nil {
+			if maxAmt == nil {
+				maxAmt = incAmt
+			}
+			incAmt = nil
+		}
 	}
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.IncentiveAmount = incAmt
@@ -354,6 +362,14 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 	inc.PercentValue = pctVal
 	inc.PerUnitAmount = perUnit
 	inc.UnitType = unitType
+
+	// Flat $/unit or $/port amounts represent a single-installation rebate value —
+	// mirror into incentive_amount so callers don't have to special-case per_unit.
+	if inc.IncentiveAmount == nil && inc.PerUnitAmount != nil &&
+		inc.UnitType != nil && (*inc.UnitType == "unit" || *inc.UnitType == "port") {
+		v := *inc.PerUnitAmount
+		inc.IncentiveAmount = &v
+	}
 
 	// ── Category tags from technologies ───────────────────────────────────────
 	inc.CategoryTag = extractTechnologies(p.ParameterSets)
@@ -372,6 +388,35 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 	// ── Product category ─────────────────────────────────────────────────────
 	if pc := topTechCategory(p.ParameterSets); pc != "" {
 		inc.ProductCategory = models.PtrString(pc)
+	}
+
+	// ── Percent value from description when not set by parameters ────────────
+	// Some DSIRE programs describe a percentage rebate in prose but have no %
+	// parameter in their ParameterSets. Extract the first percentage mentioned.
+	if inc.PercentValue == nil && inc.IncentiveDescription != nil {
+		if pct := extractPercentFromText(*inc.IncentiveDescription); pct > 0 {
+			inc.PercentValue = models.PtrFloat(pct)
+			if inc.IncentiveFormat != nil && *inc.IncentiveFormat == "narrative" {
+				inc.IncentiveFormat = models.PtrString("percent")
+			}
+		}
+	}
+
+	// ── Requirements derived from description ────────────────────────────────
+	// Scan the summary text for keywords so these fields are populated even when
+	// detail-page scraping (ScrapeDetails) is disabled.
+	if inc.IncentiveDescription != nil {
+		descLow := strings.ToLower(*inc.IncentiveDescription)
+		if strings.Contains(descLow, "energy audit") {
+			inc.EnergyAuditRequired = models.PtrBool(true)
+		}
+		if strings.Contains(descLow, "certified contractor") ||
+			strings.Contains(descLow, "licensed contractor") ||
+			strings.Contains(descLow, "qualified contractor") ||
+			strings.Contains(descLow, "certified installer") ||
+			strings.Contains(descLow, "licensed installer") {
+			inc.ContractorRequired = models.PtrBool(true)
+		}
 	}
 
 	// ── Active status (schema: currently_active = published == "Yes") ────────
@@ -546,18 +591,25 @@ func parseParameterSets(sets []dsireParameterSet) (
 func extractTechnologies(sets []dsireParameterSet) []string {
 	seen := make(map[string]bool)
 	var out []string
+	add := func(label string) {
+		if label != "" && !seen[label] {
+			seen[label] = true
+			out = append(out, label)
+		}
+	}
 	for _, ps := range sets {
 		for _, t := range ps.Technologies {
-			// Use the normalized category label for consistent filtering
-			// (e.g. "Heat pumps" → "HVAC", "Building Insulation" → "Weatherization").
-			// Fall back to the specific technology name when no category is set.
-			label := t.Name
+			// Always try normalizing the technology name — it often carries more
+			// semantic detail than the category (e.g. "Solar Water Heat" → "Water Heating"
+			// even though its category is "Solar Technologies" → "Solar").
+			nameLabel := techNameLabel(t.Name)
+			add(nameLabel)
+
+			// Also add the category-derived label when it differs from the name label
+			// so we capture both dimensions (e.g. Solar + Water Heating).
 			if t.Category != "" {
-				label = techCategoryLabel(t.Category)
-			}
-			if label != "" && !seen[label] {
-				seen[label] = true
-				out = append(out, label)
+				catLabel := techCategoryLabel(t.Category)
+				add(catLabel)
 			}
 		}
 	}
@@ -617,12 +669,82 @@ func techCategoryLabel(cat string) string {
 		return "Wind"
 	case "geothermal technologies":
 		return "Geothermal"
-	case "industrial equipment":
+	case "industrial equipment", "processing and manufacturing equipment":
 		return "Industrial Equipment"
 	case "electric vehicles":
 		return "Electric Vehicles"
+	case "water heating":
+		return "Water Heating"
+	case "energy storage":
+		return "Energy Storage"
+	case "renewables", "renewable energy":
+		return "Renewable Energy"
+	case "alternative fuel vehicles":
+		return "Alternative Fuel Vehicles"
+	case "combined heat & power", "combined heat and power", "chp":
+		return "Combined Heat & Power"
+	case "biomass":
+		return "Biomass"
+	case "fuel cells":
+		return "Fuel Cells"
+	case "comprehensive measures/whole building", "whole building":
+		return "Whole Building"
+	case "other ee", "other":
+		return "Other"
 	default:
-		return cat
+		// Unknown DSIRE category — drop rather than pass through raw strings.
+		return ""
+	}
+}
+
+// techNameLabel maps a raw DSIRE technology name to a normalized category label.
+// Returns "" for names that don't match a known pattern so they are silently
+// dropped rather than polluting the categories list with raw DSIRE strings.
+func techNameLabel(name string) string {
+	low := strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case strings.Contains(low, "solar photovoltaic") || strings.Contains(low, "solar pv"):
+		return "Solar"
+	case strings.Contains(low, "solar water heat") || strings.Contains(low, "solar thermal"):
+		return "Water Heating"
+	case strings.Contains(low, "solar"):
+		return "Solar"
+	case strings.Contains(low, "wind"):
+		return "Wind"
+	case strings.Contains(low, "geothermal"):
+		return "Geothermal"
+	case strings.Contains(low, "heat pump"):
+		return "HVAC"
+	case strings.Contains(low, "air condition") || strings.Contains(low, "furnace") ||
+		strings.Contains(low, "boiler") || strings.Contains(low, "hvac"):
+		return "HVAC"
+	case strings.Contains(low, "water heat") || strings.Contains(low, "water heater") ||
+		strings.Contains(low, "tankless"):
+		return "Water Heating"
+	case strings.Contains(low, "insulation") || strings.Contains(low, "weatheri") ||
+		strings.Contains(low, "caulk") || strings.Contains(low, "air seal") ||
+		strings.Contains(low, "duct seal") || strings.Contains(low, "window"):
+		return "Weatherization"
+	case strings.Contains(low, "led") || strings.Contains(low, "lighting"):
+		return "Lighting"
+	case strings.Contains(low, "electric vehicle") || strings.Contains(low, "ev charger") ||
+		strings.Contains(low, "evse"):
+		return "Electric Vehicles"
+	case strings.Contains(low, "battery") || strings.Contains(low, "energy storage"):
+		return "Energy Storage"
+	case strings.Contains(low, "refrigerat") || strings.Contains(low, "appliance"):
+		return "Appliances"
+	case strings.Contains(low, "biomass"):
+		return "Biomass"
+	case strings.Contains(low, "fuel cell"):
+		return "Fuel Cells"
+	case strings.Contains(low, "combined heat"):
+		return "Combined Heat & Power"
+	case strings.Contains(low, "whole building") || strings.Contains(low, "comprehensive"):
+		return "Whole Building"
+	default:
+		// Unknown technology name — drop rather than pass through raw DSIRE strings.
+		return ""
 	}
 }
 
@@ -669,6 +791,22 @@ func programLevel(sector string) string {
 	default:
 		return ""
 	}
+}
+
+// ── Text extraction helpers ───────────────────────────────────────────────────
+
+// extractPercentFromText scans desc for common patterns like "50%", "up to 25 percent",
+// "covers 30% of cost" and returns the value (0–100). Returns 0 if not found.
+// Skips values that are clearly not rebate percentages (e.g. efficiency ratings).
+func extractPercentFromText(desc string) float64 {
+	// Simple numeric% pattern: look for "NN%" where NN is 1–100.
+	rePercent := regexp.MustCompile(`\b([1-9][0-9]?|100)\s*%`)
+	if m := rePercent.FindStringSubmatch(desc); len(m) == 2 {
+		if v, err := strconv.ParseFloat(m[1], 64); err == nil && v >= 1 && v <= 100 {
+			return v
+		}
+	}
+	return 0
 }
 
 // ── Date / HTML helpers ───────────────────────────────────────────────────────

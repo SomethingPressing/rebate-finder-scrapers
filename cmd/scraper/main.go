@@ -46,8 +46,9 @@ import (
 )
 
 func main() {
-	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
-	debugFlag  := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
+	sourceFlag       := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
+	debugFlag        := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
+	forceURLUpdateFlag := flag.Bool("force-url-update", false, "overwrite program_url and application_url on ALL matching staging rows regardless of promotion status (also set via FORCE_URL_UPDATE=true)")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -66,6 +67,11 @@ func main() {
 	if *debugFlag || cfg.Debug {
 		cfg.LogLevel = "debug"
 		cfg.LogFormat = "console" // console format is far more readable for debug sessions
+	}
+
+	// --force-url-update / FORCE_URL_UPDATE=true both enable forced URL refresh.
+	if *forceURLUpdateFlag {
+		cfg.ForceURLUpdate = true
 	}
 
 	// ── Logger ────────────────────────────────────────────────────────────────
@@ -95,6 +101,7 @@ func main() {
 		zap.String("source_filter", source),
 		zap.Bool("proxy_active", proxyActive),
 		zap.Bool("multi_tenant", multiTenant),
+		zap.Bool("force_url_update", cfg.ForceURLUpdate),
 	)
 
 	// ── Database (staging DB) ─────────────────────────────────────────────────
@@ -247,7 +254,7 @@ func main() {
 
 			// Write to staging immediately.
 			dbStarted := time.Now()
-			result, err := db.UpsertToStaging(database, items)
+			result, err := db.UpsertToStaging(database, items, cfg.ForceURLUpdate)
 			if err != nil {
 				logger.Error("staging upsert failed",
 					zap.String("source", source),

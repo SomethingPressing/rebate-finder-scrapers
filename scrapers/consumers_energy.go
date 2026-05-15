@@ -568,7 +568,7 @@ func ceSave(paths cePDFPaths, opts PDFScrapeOpts, log *zap.Logger) error {
 		allIncentives = append(allIncentives, ceToIncentive(spec, opts.ScraperVersion))
 	}
 
-	result, err := db.UpsertToStaging(opts.DB, allIncentives)
+	result, err := db.UpsertToStaging(opts.DB, allIncentives, false)
 	if err != nil {
 		return fmt.Errorf("consumers_energy: staging upsert: %w", err)
 	}

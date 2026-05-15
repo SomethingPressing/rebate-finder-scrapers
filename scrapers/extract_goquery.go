@@ -85,23 +85,32 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	}
 
 	// ── Description ───────────────────────────────────────────────────────────
-	description, _ := doc.Find(`meta[name="description"]`).Attr("content")
-	description = strings.TrimSpace(description)
+	// Collect up to 800 chars of meaningful body text from the first substantive
+	// paragraphs (skipping very short ones which are usually navigation snippets).
+	var descParts []string
+	doc.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		t := strings.TrimSpace(s.Text())
+		if len(t) >= 60 {
+			descParts = append(descParts, t)
+		}
+		total := 0
+		for _, p := range descParts {
+			total += len(p)
+		}
+		return total < 800
+	})
+	description := strings.Join(descParts, " ")
+
+	// Fall back to meta description when no body paragraphs were found.
 	if description == "" {
-		doc.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
-			t := strings.TrimSpace(s.Text())
-			if len(t) > 40 {
-				description = t
-				return false
-			}
-			return true
-		})
+		description, _ = doc.Find(`meta[name="description"]`).Attr("content")
+		description = strings.TrimSpace(description)
 	}
 	if description == "" {
 		description = programName
 	}
-	if len(description) > 500 {
-		description = description[:497] + "..."
+	if len(description) > 800 {
+		description = description[:797] + "..."
 	}
 
 	// ── Full page text (feeds all regex helpers) ──────────────────────────────

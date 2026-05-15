@@ -29,9 +29,14 @@ const upsertBatchSize = 500
 // Items that are already "promoted" stay promoted; only their data columns
 // are refreshed so the promoter can optionally re-promote changed records.
 //
+// When forceURLUpdate is true, an additional UPDATE is issued after each batch
+// to overwrite program_url and application_url on ALL rows whose stg_source_id
+// matches the batch, regardless of stg_promotion_status.  The lifecycle columns
+// (stg_promotion_status, stg_promoted_at, stg_rebate_id) are never touched.
+//
 // Large batches are automatically split to stay within PostgreSQL's 65 535
 // parameter limit.
-func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
+func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool) (UpsertResult, error) {
 	if len(items) == 0 {
 		return UpsertResult{}, nil
 	}
@@ -79,6 +84,27 @@ func UpsertToStaging(d *DB, items []models.Incentive) (UpsertResult, error) {
 			return UpsertResult{Upserted: total}, fmt.Errorf("upsert staging (batch %d-%d): %w", start, end, result.Error)
 		}
 		total += int(result.RowsAffected)
+
+		// When --force-url-update is active, overwrite program_url and
+		// application_url for every row in this batch regardless of its
+		// stg_promotion_status (including already-promoted / skipped rows).
+		// We issue one UPDATE per batch keyed on stg_source_id so the query
+		// stays parameterised and safe. Lifecycle columns are never touched.
+		if forceURLUpdate {
+			schema := models.ScraperSchema
+			stgTable := schema + ".rebates_staging"
+			for _, row := range batch {
+				if err := d.gorm.
+					Table(stgTable).
+					Where("stg_source_id = ?", row.SourceID).
+					Updates(map[string]interface{}{
+						"program_url":     row.ProgramURL,
+						"application_url": row.ApplicationURL,
+					}).Error; err != nil {
+					return UpsertResult{Upserted: total}, fmt.Errorf("force url update (source %s): %w", row.SourceID, err)
+				}
+			}
+		}
 	}
 
 	// ── Upsert rebate_tenant_status rows for multi-tenant tagging ────────────

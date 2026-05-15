@@ -308,11 +308,12 @@ func mapEnergyStarRecord(
 		}
 	}
 
-	// Omit utility from the name — it lives in utility_company already.
+	// Include utility in the name so the full program is identifiable without
+	// also reading utility_company (matches how it appears in evaluation output).
 	if productGeneralName != "" {
-		inc.ProgramName = productGeneralName + " Rebate"
+		inc.ProgramName = utility + " " + productGeneralName + " Rebate"
 	} else {
-		inc.ProgramName = "Rebate Program"
+		inc.ProgramName = utility + " Rebate Program"
 	}
 
 	// ── Category / type ─────────────────────────────────────────────────────
@@ -455,26 +456,15 @@ func mapEnergyStarRecord(
 
 // applyIncomeQualification sets income eligibility flags on inc based on the
 // income qualification name from the API.
-//
-//	"General"                → HighIncomeEligible (via CategoryTag hint only — no dedicated bool field)
-//	"Low-Income"             → LowIncomeEligible
-//	"Moderate-Income"        → ModerateIncomeEligible
-//	"Low-to-Moderate Income" → LowIncomeEligible + ModerateIncomeEligible
-//
-// The models.Incentive struct does not have dedicated HighIncomeEligible /
-// LowIncomeEligible / ModerateIncomeEligible fields, so we encode these as
-// additional CategoryTag entries.
+// Income qualification affects the income_qualified bool and may add an
+// "Income Qualified" category tag — it does NOT add raw qualification-level
+// labels like "General Income" which pollute the category list.
 func applyIncomeQualification(inc *models.Incentive, name string) {
 	switch strings.TrimSpace(name) {
+	case "Low-Income", "Moderate-Income", "Low-to-Moderate Income":
+		inc.CategoryTag = appendUnique(inc.CategoryTag, "Income Qualified")
 	case "General":
-		inc.CategoryTag = appendUnique(inc.CategoryTag, "General Income")
-	case "Low-Income":
-		inc.CategoryTag = appendUnique(inc.CategoryTag, "Low-Income Eligible")
-	case "Moderate-Income":
-		inc.CategoryTag = appendUnique(inc.CategoryTag, "Moderate-Income Eligible")
-	case "Low-to-Moderate Income":
-		inc.CategoryTag = appendUnique(inc.CategoryTag, "Low-Income Eligible")
-		inc.CategoryTag = appendUnique(inc.CategoryTag, "Moderate-Income Eligible")
+		// General income = no restriction; leave income_qualified false.
 	}
 }
 

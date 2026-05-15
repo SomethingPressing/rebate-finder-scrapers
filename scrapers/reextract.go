@@ -30,6 +30,8 @@ func Reextract(
 		return reextractDSIRE(content, scraperVersion, stateZIPs)
 	case "Energy Star", "energy_star":
 		return reextractEnergyStar(content, scraperVersion, stateZIPs)
+	case "rewiring_america":
+		return reextractRewiringAmerica(content, scraperVersion)
 	default:
 		return reextractHTML(source, content, pageURL, scraperVersion)
 	}
@@ -66,6 +68,48 @@ func reextractEnergyStar(jsonContent, version string, stateZIPs map[string][]str
 		return nil
 	}
 	return &inc
+}
+
+// reextractRewiringAmerica deserialises the stored RA JSON and re-runs
+// toIncentives so every code fix is reflected without re-calling the API.
+// Supports both the legacy format (raw raIncentive) and the enriched format
+// ({item, authority_name}) written by current scraper versions.
+func reextractRewiringAmerica(jsonContent, version string) *models.Incentive {
+	// Try enriched format first.
+	var enriched struct {
+		Item          raIncentive `json:"item"`
+		AuthorityName string      `json:"authority_name"`
+	}
+	if err := json.Unmarshal([]byte(jsonContent), &enriched); err == nil && enriched.AuthorityName != "" {
+		fakeResp := &raCalculatorResponse{
+			Authorities: map[string]raAuthority{
+				enriched.Item.AuthorityKey: {Name: enriched.AuthorityName},
+			},
+			Incentives: []raIncentive{enriched.Item},
+		}
+		s := &RewiringAmericaScraper{ScraperVersion: version}
+		incs := s.toIncentives(fakeResp, "")
+		if len(incs) > 0 {
+			return &incs[0]
+		}
+	}
+	// Fall back to legacy format (raw raIncentive).
+	var item raIncentive
+	if err := json.Unmarshal([]byte(jsonContent), &item); err != nil {
+		return nil
+	}
+	fakeResp := &raCalculatorResponse{
+		Authorities: map[string]raAuthority{
+			item.AuthorityKey: {Name: item.AuthorityKey},
+		},
+		Incentives: []raIncentive{item},
+	}
+	s := &RewiringAmericaScraper{ScraperVersion: version}
+	incs := s.toIncentives(fakeResp, "")
+	if len(incs) == 0 {
+		return nil
+	}
+	return &incs[0]
 }
 
 // reextractHTML parses the HTML with goquery and runs ExtractPageGoquery using
