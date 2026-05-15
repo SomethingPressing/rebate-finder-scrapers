@@ -102,6 +102,10 @@ type Incentive struct {
 	// incentive was collected from (e.g. DSIRE detail page, Energy Star listing).
 	// For HTML scrapers this is the same as ProgramURL.
 	SourceURL            *string
+	// ImplementingSector is WHO offers the incentive: "Utility", "State",
+	// "Federal", "Local Government", etc.  Distinct from Portfolio (what the
+	// program does) and Segment (who the customer is).
+	ImplementingSector   *string
 	RateTiers            []RateTier
 	ScraperVersion       string
 	Processed            bool

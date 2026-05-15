@@ -335,11 +335,11 @@ func mapEnergyStarRecord(
 		}
 	}
 
-	// ── Portfolio (program level) ─────────────────────────────────────────────
-	// Derive the program level from the utility name and nationwide flag rather
-	// than the building-sector field (which describes the building type, not
-	// whether the program is federal/state/utility-funded).
-	inc.Portfolio = []string{energyStarPortfolioLevel(utility, availNationwide)}
+	// ── Implementing sector ───────────────────────────────────────────────────
+	inc.ImplementingSector = models.PtrString(energyStarPortfolioLevel(utility, availNationwide))
+
+	// ── Portfolio (WHAT the program does — derived from category tags) ────────
+	// Category tags are set in the block below; we populate portfolio after them.
 
 	// ── Items (product sub-category) ─────────────────────────────────────────
 	// UnitType is used to note the applicable product items when not "All".
@@ -451,6 +451,9 @@ func mapEnergyStarRecord(
 			}
 		}
 	}
+
+	// ── Portfolio (derived from category tags, set after income qualification) ─
+	inc.Portfolio = derivePortfolios(inc.CategoryTag)
 
 	// ── Program hash ──────────────────────────────────────────────────────────
 	inc.ProgramHash = models.ComputeProgramHash(inc.ProgramName, inc.UtilityCompany)

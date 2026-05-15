@@ -386,10 +386,13 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 		inc.CustomerType = models.PtrString(ct)
 	}
 
-	// ── Portfolio (program level) ─────────────────────────────────────────────
+	// ── Implementing sector (Utility / State / Federal / Local Government) ───
 	if pl := programLevel(p.SectorObj.Name); pl != "" {
-		inc.Portfolio = []string{pl}
+		inc.ImplementingSector = models.PtrString(pl)
 	}
+
+	// ── Portfolio (WHAT the program does — derived from category tags) ────────
+	inc.Portfolio = derivePortfolios(inc.CategoryTag)
 
 	// ── Product category ─────────────────────────────────────────────────────
 	if pc := topTechCategory(p.ParameterSets); pc != "" {

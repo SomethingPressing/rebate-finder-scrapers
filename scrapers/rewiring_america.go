@@ -527,21 +527,11 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 			inc.ServiceTerritory = models.PtrString(authorityName + " Service Area")
 		}
 
-		// ── Program level (Portfolio) ─────────────────────────────────────
-		switch item.AuthorityType {
-		case "federal":
-			inc.Portfolio = []string{"Federal"}
-		case "state":
-			inc.Portfolio = []string{"State"}
-		case "utility":
-			inc.Portfolio = []string{"Utility"}
-		case "city", "county":
-			inc.Portfolio = []string{"Local"}
-		default:
-			if len(item.PaymentMethods) > 0 {
-				inc.Portfolio = item.PaymentMethods
-			}
-		}
+		// ── Implementing sector ───────────────────────────────────────────────
+		inc.ImplementingSector = models.PtrString(raAuthorityTypeLabel(item.AuthorityType))
+
+		// ── Portfolio (WHAT the program does — derived from category tags) ────
+		inc.Portfolio = derivePortfolios(inc.CategoryTag)
 
 		// ── Application process from payment methods ──────────────────────
 		// (CustomerType is set below from owner_status, not payment methods)
@@ -729,6 +719,26 @@ func raItemHuman(key string) string {
 		return "Electric Panel Upgrade"
 	default:
 		return raHuman(key)
+	}
+}
+
+// raAuthorityTypeLabel maps a Rewiring America authority_type to a human-readable
+// implementing sector label consistent with DSIRE and the consumer app.
+func raAuthorityTypeLabel(authorityType string) string {
+	switch authorityType {
+	case "federal":
+		return "Federal"
+	case "state":
+		return "State"
+	case "utility":
+		return "Utility"
+	case "city", "county":
+		return "Local Government"
+	default:
+		if authorityType != "" {
+			return strings.Title(authorityType) //nolint:staticcheck
+		}
+		return "Utility"
 	}
 }
 
