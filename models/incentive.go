@@ -98,6 +98,10 @@ type Incentive struct {
 	ImageURLs            []string
 	ContractorRequired   *bool
 	EnergyAuditRequired  *bool
+	// SourceURL is the canonical URL in the originating data system where this
+	// incentive was collected from (e.g. DSIRE detail page, Energy Star listing).
+	// For HTML scrapers this is the same as ProgramURL.
+	SourceURL            *string
 	RateTiers            []RateTier
 	ScraperVersion       string
 	Processed            bool

@@ -496,14 +496,17 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		if item.ProgramURL != "" {
 			inc.ProgramURL = models.PtrString(item.ProgramURL)
 			inc.ApplicationURL = models.PtrString(item.ProgramURL)
+			inc.SourceURL = models.PtrString(item.ProgramURL)
 		} else if item.MoreInfoURL != "" {
 			inc.ProgramURL = models.PtrString(item.MoreInfoURL)
 			inc.ApplicationURL = models.PtrString(item.MoreInfoURL)
+			inc.SourceURL = models.PtrString(item.MoreInfoURL)
 		}
-		// MoreInfoURL stored as additional context in ApplicationProcess prefix
-		// when it differs from ProgramURL.
+		// MoreInfoURL stored as additional context; prefer it as source URL
+		// when it differs from ProgramURL (more specific).
 		if item.MoreInfoURL != "" && item.MoreInfoURL != item.ProgramURL {
 			inc.ApplicationURL = models.PtrString(item.MoreInfoURL)
+			inc.SourceURL = models.PtrString(item.MoreInfoURL)
 		}
 
 		// ── Application process ───────────────────────────────────────────

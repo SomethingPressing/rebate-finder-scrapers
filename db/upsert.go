@@ -60,7 +60,7 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool) (Upse
 		"application_url", "application_process", "program_url",
 		"contact_email", "contact_phone",
 		"image_url", "image_urls",
-		"contractor_required", "energy_audit_required",
+		"contractor_required", "energy_audit_required", "source_url",
 		"rate_tiers", "scraper_version", "stg_program_hash",
 		"stg_raw_response", "stg_raw_content_type", "stg_tenant_ids", "updated_at",
 	}

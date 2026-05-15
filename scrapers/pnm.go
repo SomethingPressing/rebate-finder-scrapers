@@ -373,25 +373,7 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		}
 	}
 
-	// Description.
-	description := strings.TrimSpace(e.ChildAttr(`meta[name="description"]`, "content"))
-	if description == "" {
-		e.ForEach("p", func(_ int, el *colly.HTMLElement) {
-			if description != "" {
-				return
-			}
-			text := strings.TrimSpace(el.Text)
-			if len(text) > 40 {
-				description = text
-			}
-		})
-	}
-	if description == "" {
-		description = programName
-	}
-	if len(description) > 500 {
-		description = description[:497] + "..."
-	}
+	description := CollyDescriptionMarkdown(e, programName, 1000)
 
 	// Full page text for all regex extractions.
 	pageText := e.Text

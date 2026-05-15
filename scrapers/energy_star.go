@@ -411,6 +411,12 @@ func mapEnergyStarRecord(
 		inc.ProgramURL = models.PtrString(idata.ProgramWebAddress)
 		inc.ApplicationURL = models.PtrString(idata.ProgramWebAddress)
 	}
+	// SourceURL: the Energy Star rebate-finder listing page for this incentive.
+	if result.IncentiveID != "" {
+		inc.SourceURL = models.PtrString(
+			"https://www.energystar.gov/rebate-finder?incentive_id=" + result.IncentiveID,
+		)
+	}
 	if idata.ContactEmail != "" {
 		inc.ContactEmail = models.PtrString(idata.ContactEmail)
 	}

@@ -331,8 +331,12 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 	}
 
 	// ── Description ───────────────────────────────────────────────────────────
-	if cleaned := stripHTML(p.Summary); cleaned != "" {
-		inc.IncentiveDescription = models.PtrString(cleaned)
+	// Convert the DSIRE HTML summary to Markdown so lists, bold text, and links
+	// are preserved instead of being collapsed to a flat paragraph.
+	if p.Summary != "" {
+		if desc := HTMLToMarkdown(p.Summary); desc != "" {
+			inc.IncentiveDescription = models.PtrString(desc)
+		}
 	}
 
 	// ── URLs ──────────────────────────────────────────────────────────────────
@@ -340,6 +344,8 @@ func (s *DSIREScraper) toIncentive(p dsireProgram, stateZIPs []string) models.In
 		inc.ProgramURL = models.PtrString(p.WebsiteURL)
 		inc.ApplicationURL = models.PtrString(p.WebsiteURL)
 	}
+	// SourceURL: the DSIRE program detail page where this data was sourced from.
+	inc.SourceURL = models.PtrString(fmt.Sprintf("https://programs.dsireusa.org/system/program/detail/%d", p.ID))
 
 	// ── Amount / format from parameterSets ────────────────────────────────────
 	format, incAmt, maxAmt, pctVal, perUnit, unitType := parseParameterSets(p.ParameterSets)
@@ -778,6 +784,10 @@ func extractUtilityFromName(name, stateName string) string {
 	return "DSIRE USA"
 }
 
+// programLevel maps a DSIRE implementing-sector name to the canonical portfolio
+// label stored in the DB.  The DSIRE API itself uses "Local" in some responses
+// and "Local Government" in others; both are normalised to "Local Government" so
+// downstream filters have a single value to match against.
 func programLevel(sector string) string {
 	switch sector {
 	case "Federal":
@@ -786,9 +796,16 @@ func programLevel(sector string) string {
 		return "State"
 	case "Utility":
 		return "Utility"
-	case "Local Government":
-		return "Local"
+	case "Local", "Local Government":
+		return "Local Government"
+	case "Non-Profit":
+		return "Non-Profit"
+	case "Other":
+		return "Other"
 	default:
+		if sector != "" {
+			return sector // preserve any new sector values DSIRE adds in future
+		}
 		return ""
 	}
 }

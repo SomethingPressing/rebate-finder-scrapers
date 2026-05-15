@@ -18,6 +18,12 @@
 //	go run ./cmd/evaluator -mode testcases -source srp
 //	go run ./cmd/evaluator -output json               # machine-readable JSON
 //
+// Output:
+//
+//	Always writes a Markdown report to tmp/eval_report.md (git-ignored).
+//	-output table  also prints a summary table to stdout (default)
+//	-output json   also prints JSON to stdout
+//
 // Requirements:
 //
 //	DATABASE_URL   — same Postgres DSN used by the scraper
@@ -35,6 +41,9 @@ import (
 	"github.com/incenva/rebate-scraper/internal/evaluator"
 	"github.com/joho/godotenv"
 )
+
+const reportDir  = "tmp"
+const reportFile = "tmp/eval_report.md"
 
 func main() {
 	mode   := flag.String("mode",   "db",    "evaluation mode: db or testcases")
@@ -92,5 +101,13 @@ func main() {
 		log.Fatalf("evaluation failed: %v", err)
 	}
 
+	// Always write the full Markdown report to tmp/eval_report.md.
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		log.Printf("warning: could not create %s: %v", reportDir, err)
+	} else if err := evaluator.PrintReportMarkdown(results, reportFile); err != nil {
+		log.Printf("warning: could not write markdown report: %v", err)
+	}
+
+	// Also print to stdout in the requested format.
 	evaluator.PrintReport(results, *output)
 }

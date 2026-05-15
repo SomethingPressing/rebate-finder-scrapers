@@ -3,6 +3,7 @@
 package evaluator
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -41,15 +42,17 @@ type Config struct {
 
 // EvalResult is the comparison result for one staging row.
 type EvalResult struct {
-	Source        string       `json:"source"`
-	ProgramName   string       `json:"program_name"`
-	SourceID      string       `json:"source_id"`
-	ProgramURL    string       `json:"program_url,omitempty"`
-	ContentType   string       `json:"content_type"`
-	OverallScore  float64      `json:"overall_score"`
-	FieldScores   []FieldScore `json:"field_scores"`
-	MissingFields []string     `json:"missing_fields"`
-	Error         string       `json:"error,omitempty"`
+	Source        string            `json:"source"`
+	ProgramName   string            `json:"program_name"`
+	SourceID      string            `json:"source_id"`
+	ProgramURL    string            `json:"program_url,omitempty"`
+	SourceURL     string            `json:"source_url,omitempty"` // URL in the originating data source (DSIRE page, ES listing, etc.)
+	ContentType   string            `json:"content_type"`
+	OverallScore  float64           `json:"overall_score"`
+	FieldScores   []FieldScore      `json:"field_scores"`
+	MissingFields []string          `json:"missing_fields"`
+	DBValues      map[string]string `json:"db_values,omitempty"`
+	Error         string            `json:"error,omitempty"`
 }
 
 // Run fetches a sample of staging rows, sends each program's content to GPT-4o,
@@ -94,6 +97,8 @@ func Run(cfg Config) ([]EvalResult, error) {
 			ProgramName: row.ProgramName,
 			SourceID:    row.SourceID,
 			ProgramURL:  programURL,
+			SourceURL:   resolveSourceURL(row),
+			DBValues:    stagedToDBValues(row),
 		}
 
 		// Resolve content:
@@ -260,6 +265,148 @@ func fetchSample(d *db.DB, source string, n int) ([]models.StagedRebate, error) 
 		}
 	}
 	return all, nil
+}
+
+// resolveSourceURL returns the canonical URL in the originating data system for
+// the given staged row. Uses the stored source_url column when available (set by
+// current scraper versions); falls back to constructing it from the raw response
+// for older rows that pre-date the column.
+func resolveSourceURL(row models.StagedRebate) string {
+	// Prefer the persisted DB value — most accurate and fastest path.
+	if row.SourceURL != nil && *row.SourceURL != "" {
+		return *row.SourceURL
+	}
+
+	// Fallback: reconstruct from raw response for rows scraped before source_url existed.
+	switch row.Source {
+	case "dsireusa":
+		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
+			var obj struct {
+				ID int `json:"id"`
+			}
+			if err := json.Unmarshal([]byte(*row.StgRawResponse), &obj); err == nil && obj.ID > 0 {
+				return fmt.Sprintf("https://programs.dsireusa.org/system/program/detail/%d", obj.ID)
+			}
+		}
+	case "Energy Star", "energy_star":
+		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
+			var obj struct {
+				IncentiveID string `json:"incentive_id"`
+			}
+			if err := json.Unmarshal([]byte(*row.StgRawResponse), &obj); err == nil && obj.IncentiveID != "" {
+				return fmt.Sprintf("https://www.energystar.gov/rebate-finder?incentive_id=%s", obj.IncentiveID)
+			}
+		}
+	case "rewiring_america":
+		// RA stores the program_url in the raw response item.
+		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
+			var enriched struct {
+				Item struct {
+					ProgramURL  string `json:"program_url"`
+					MoreInfoURL string `json:"more_info_url"`
+				} `json:"item"`
+			}
+			if err := json.Unmarshal([]byte(*row.StgRawResponse), &enriched); err == nil {
+				if enriched.Item.ProgramURL != "" {
+					return enriched.Item.ProgramURL
+				}
+				if enriched.Item.MoreInfoURL != "" {
+					return enriched.Item.MoreInfoURL
+				}
+			}
+			// Legacy format: raw raIncentive.
+			var item struct {
+				ProgramURL  string `json:"program_url"`
+				MoreInfoURL string `json:"more_info_url"`
+			}
+			if err := json.Unmarshal([]byte(*row.StgRawResponse), &item); err == nil {
+				if item.ProgramURL != "" {
+					return item.ProgramURL
+				}
+				if item.MoreInfoURL != "" {
+					return item.MoreInfoURL
+				}
+			}
+		}
+	}
+	// For HTML scrapers and fallback: the program_url IS the scraped source URL.
+	if row.ProgramURL != nil && *row.ProgramURL != "" {
+		return *row.ProgramURL
+	}
+	return ""
+}
+
+// stagedToDBValues extracts every non-empty field from a StagedRebate into a
+// flat string map so the report can show the full DB state side-by-side with
+// the LLM extraction for visual comparison.
+func stagedToDBValues(r models.StagedRebate) map[string]string {
+	m := make(map[string]string)
+	set := func(k string, v *string) {
+		if v != nil && *v != "" {
+			m[k] = *v
+		}
+	}
+	setf := func(k string, v *float64) {
+		if v != nil {
+			m[k] = fmt.Sprintf("%g", *v)
+		}
+	}
+	setb := func(k string, v *bool) {
+		if v != nil {
+			if *v {
+				m[k] = "true"
+			} else {
+				m[k] = "false"
+			}
+		}
+	}
+	sets := func(k string, v []string) {
+		if len(v) > 0 {
+			m[k] = strings.Join(v, ", ")
+		}
+	}
+
+	m["program_name"] = r.ProgramName
+	m["utility_company"] = r.UtilityCompany
+	m["source"] = r.Source
+	m["source_id"] = r.SourceID
+	m["scraper_version"] = r.ScraperVersion
+	m["promotion_status"] = r.PromotionStatus
+	set("incentive_description", r.IncentiveDescription)
+	setf("incentive_amount", r.IncentiveAmount)
+	setf("maximum_amount", r.MaximumAmount)
+	setf("percent_value", r.PercentValue)
+	setf("per_unit_amount", r.PerUnitAmount)
+	set("unit_type", r.UnitType)
+	set("incentive_format", r.IncentiveFormat)
+	set("state", r.State)
+	set("zip_code", r.ZipCode)
+	set("service_territory", r.ServiceTerritory)
+	setb("available_nationwide", r.AvailableNationwide)
+	sets("categories", []string(r.CategoryTag))        // same name as field comparison
+	sets("segment", []string(r.Segment))
+	sets("portfolio", []string(r.Portfolio))
+	set("customer_type", r.CustomerType)
+	set("product_category", r.ProductCategory)        // top-level category (single value)
+	set("administrator", r.Administrator)
+	set("start_date", r.StartDate)
+	set("end_date", r.EndDate)
+	setb("while_funds_last", r.WhileFundsLast)
+	set("source_url", r.SourceURL)
+	set("program_url", r.ProgramURL)
+	set("application_url", r.ApplicationURL)
+	set("application_process", r.ApplicationProcess)
+	set("contact_email", r.ContactEmail)
+	set("contact_phone", r.ContactPhone)
+	setb("contractor_required", r.ContractorRequired)
+	setb("energy_audit_required", r.EnergyAuditRequired)
+	if r.PromotedAt != nil {
+		m["promoted_at"] = r.PromotedAt.Format("2006-01-02 15:04:05")
+	}
+	if r.RebateID != nil && *r.RebateID != "" {
+		m["rebate_id"] = *r.RebateID
+	}
+	return m
 }
 
 // isJunkRow returns true when a staged row looks like it was scraped from a

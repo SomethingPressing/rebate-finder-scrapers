@@ -85,21 +85,27 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	}
 
 	// ── Description ───────────────────────────────────────────────────────────
-	// Collect up to 800 chars of meaningful body text from the first substantive
-	// paragraphs (skipping very short ones which are usually navigation snippets).
-	var descParts []string
+	// Collect the inner HTML of the first substantive paragraphs and convert to
+	// Markdown so lists, bold text, and links are preserved.
+	var descHTMLParts []string
 	doc.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
 		t := strings.TrimSpace(s.Text())
 		if len(t) >= 60 {
-			descParts = append(descParts, t)
+			if h, err := s.Html(); err == nil {
+				descHTMLParts = append(descHTMLParts, "<p>"+h+"</p>")
+			}
 		}
 		total := 0
-		for _, p := range descParts {
+		for _, p := range descHTMLParts {
 			total += len(p)
 		}
-		return total < 800
+		return total < 2000 // collect more raw HTML; Markdown output will be shorter
 	})
-	description := strings.Join(descParts, " ")
+
+	description := ""
+	if len(descHTMLParts) > 0 {
+		description = HTMLToMarkdown(strings.Join(descHTMLParts, "\n"))
+	}
 
 	// Fall back to meta description when no body paragraphs were found.
 	if description == "" {
@@ -109,8 +115,8 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	if description == "" {
 		description = programName
 	}
-	if len(description) > 800 {
-		description = description[:797] + "..."
+	if len(description) > 1000 {
+		description = description[:997] + "..."
 	}
 
 	// ── Full page text (feeds all regex helpers) ──────────────────────────────
@@ -210,6 +216,8 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(cfg.DefaultApply)
 	inc.ProgramURL = models.PtrString(pageURL)
+	// For HTML scrapers the page we scraped IS the source URL.
+	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
 	inc.ProgramHash = models.ComputeProgramHash(programName, cfg.UtilityCompany)

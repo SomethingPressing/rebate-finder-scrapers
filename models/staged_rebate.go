@@ -70,6 +70,9 @@ type StagedRebate struct {
 	ImageURLs            StringSlice `gorm:"column:image_urls;type:text[]"`
 	ContractorRequired   *bool          `gorm:"column:contractor_required"`
 	EnergyAuditRequired  *bool          `gorm:"column:energy_audit_required"`
+	// source_url: canonical URL in the originating data system (DSIRE detail page,
+	// Energy Star listing, etc.). For HTML scrapers this equals program_url.
+	SourceURL            *string        `gorm:"column:source_url"`
 	RateTiers            RateTiersJSON  `gorm:"column:rate_tiers;type:jsonb"`
 	ScraperVersion       string         `gorm:"column:scraper_version"`
 
@@ -165,6 +168,7 @@ func FromIncentive(inc Incentive) StagedRebate {
 		ImageURLs:            StringSlice(inc.ImageURLs),
 		ContractorRequired:   inc.ContractorRequired,
 		EnergyAuditRequired:  inc.EnergyAuditRequired,
+		SourceURL:            inc.SourceURL,
 		RateTiers:            RateTiersJSON(inc.RateTiers),
 		ScraperVersion:       inc.ScraperVersion,
 		PromotionStatus:      PromotionPending,

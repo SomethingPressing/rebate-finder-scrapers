@@ -13,6 +13,9 @@ vendor/
 # Tenant config — copy config/tenants.example.json → config/tenants.json and fill in your tenants
 config/tenants.json
 
+# Evaluation reports (generated, not committed)
+tmp/
+
 # macOS
 .DS_Store
 
