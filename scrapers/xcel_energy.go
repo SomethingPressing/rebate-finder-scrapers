@@ -492,6 +492,7 @@ func (s *XcelEnergyScraper) extractPage(
 	}
 
 	description := CollyDescriptionMarkdown(e, programName, 1000)
+	imageURL := CollyImageURL(e, "https://www.xcelenergy.com")
 
 	// Full page text for regex extraction.
 	pageText := e.Text
@@ -567,6 +568,9 @@ func (s *XcelEnergyScraper) extractPage(
 	inc.Portfolio = []string{"Utility"}
 	inc.ServiceTerritory = models.PtrString(territory)
 	inc.IncentiveDescription = models.PtrString(description)
+	if imageURL != "" {
+		inc.ImageURL = models.PtrString(imageURL)
+	}
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(xcelDefaultApply)
 	inc.ProgramURL = models.PtrString(pageURL)

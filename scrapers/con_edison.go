@@ -355,6 +355,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	}
 
 	description := CollyDescriptionMarkdown(e, programName, 1000)
+	imageURL := CollyImageURL(e, "https://www.coned.com")
 
 	// Full page text for all regex extractions.
 	pageText := e.Text
@@ -439,6 +440,9 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	inc.ZipCode = models.PtrString(conEdisonZIP)
 	inc.ServiceTerritory = models.PtrString(conEdisonTerritory)
 	inc.IncentiveDescription = models.PtrString(description)
+	if imageURL != "" {
+		inc.ImageURL = models.PtrString(imageURL)
+	}
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(conEdisonDefaultApply)
 	inc.ProgramURL = models.PtrString(pageURL)

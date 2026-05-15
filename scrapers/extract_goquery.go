@@ -186,6 +186,9 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 		return true
 	})
 
+	// ── Image URL — og:image preferred, then first large <img> ──────────────
+	imageURL := extractImageURL(doc, cfg.BaseURL)
+
 	// ── Structured helpers (all string-based, from html_helpers.go) ──────────
 	contractorRequired := extractContractorRequired(pageText)
 	energyAuditRequired := extractEnergyAuditRequired(pageText)
@@ -261,6 +264,9 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	}
 	if endDate != "" {
 		inc.EndDate = models.PtrString(endDate)
+	}
+	if imageURL != "" {
+		inc.ImageURL = models.PtrString(imageURL)
 	}
 
 	return &inc

@@ -375,6 +375,7 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	}
 
 	description := CollyDescriptionMarkdown(e, programName, 1000)
+	imageURL := CollyImageURL(e, "https://www.srpnet.com")
 
 	// Full page text for regex extractions.
 	pageText := e.Text
@@ -457,6 +458,9 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	inc.ZipCode = models.PtrString(srpZIP)
 	inc.ServiceTerritory = models.PtrString(srpTerritory)
 	inc.IncentiveDescription = models.PtrString(description)
+	if imageURL != "" {
+		inc.ImageURL = models.PtrString(imageURL)
+	}
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(srpDefaultApply)
 	inc.ProgramURL = models.PtrString(pageURL)

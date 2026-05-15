@@ -390,6 +390,7 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 	}
 
 	description := CollyDescriptionMarkdown(e, programName, 1000)
+	imageURL := CollyImageURL(e, "https://www.peninsulacleanenergy.com")
 
 	// Full page text for regex extractions.
 	pageText := e.Text
@@ -472,6 +473,9 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 	inc.ZipCode = models.PtrString(pceZIP)
 	inc.ServiceTerritory = models.PtrString(pceTerritory)
 	inc.IncentiveDescription = models.PtrString(description)
+	if imageURL != "" {
+		inc.ImageURL = models.PtrString(imageURL)
+	}
 	inc.IncentiveFormat = models.PtrString(format)
 	inc.ApplicationProcess = models.PtrString(pceDefaultApply)
 	inc.ProgramURL = models.PtrString(pageURL)

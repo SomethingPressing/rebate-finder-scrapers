@@ -8,6 +8,88 @@ import (
 	"github.com/gocolly/colly/v2"
 )
 
+// imageSkipKeywords — src substrings that indicate a logo, icon or UI asset
+// rather than a real program image. Checked case-insensitively.
+var imageSkipKeywords = []string{
+	"logo", "icon", "favicon", "sprite", "arrow", "chevron",
+	"button", "badge", "avatar", "placeholder", "tracking", "pixel",
+	".svg", "data:image",
+}
+
+func looksLikeRealImage(src string) bool {
+	low := strings.ToLower(src)
+	for _, kw := range imageSkipKeywords {
+		if strings.Contains(low, kw) {
+			return false
+		}
+	}
+	return src != ""
+}
+
+// extractImageURL returns the best image URL for a scraped page.
+// Priority: og:image → twitter:image → first <img> whose src looks like a
+// real content image (not a logo/icon/svg).
+func extractImageURL(doc *goquery.Document, baseURL string) string {
+	// og:image
+	if og, exists := doc.Find(`meta[property="og:image"]`).Attr("content"); exists && og != "" {
+		return og
+	}
+	// twitter:image
+	if tw, exists := doc.Find(`meta[name="twitter:image"]`).Attr("content"); exists && tw != "" {
+		return tw
+	}
+	// First content <img>
+	var found string
+	doc.Find("img[src]").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		src, _ := s.Attr("src")
+		if !looksLikeRealImage(src) {
+			return true
+		}
+		if strings.HasPrefix(src, "//") {
+			src = "https:" + src
+		} else if strings.HasPrefix(src, "/") && baseURL != "" {
+			src = baseURL + src
+		}
+		if strings.HasPrefix(src, "http") {
+			found = src
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// CollyImageURL returns the best image URL from a Colly HTMLElement.
+func CollyImageURL(e *colly.HTMLElement, baseURL string) string {
+	// og:image
+	if og := e.ChildAttr(`meta[property="og:image"]`, "content"); og != "" {
+		return og
+	}
+	// twitter:image
+	if tw := e.ChildAttr(`meta[name="twitter:image"]`, "content"); tw != "" {
+		return tw
+	}
+	// First content <img>
+	var found string
+	e.DOM.Find("img[src]").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		src, _ := s.Attr("src")
+		if !looksLikeRealImage(src) {
+			return true
+		}
+		if strings.HasPrefix(src, "//") {
+			src = "https:" + src
+		} else if strings.HasPrefix(src, "/") && baseURL != "" {
+			src = baseURL + src
+		}
+		if strings.HasPrefix(src, "http") {
+			found = src
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 var mdConverter = func() *md.Converter {
 	c := md.NewConverter("", true, nil)
 	// Strip images — they produce noise like "![](...)" in plain-text contexts.
