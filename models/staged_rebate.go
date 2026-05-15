@@ -11,6 +11,7 @@ const (
 	PromotionPending   = "pending"   // not yet reviewed by the promoter
 	PromotionPromoted  = "promoted"  // successfully upserted into rebates
 	PromotionSkipped   = "skipped"   // duplicate / unchanged; deliberately not promoted
+	PromotionStale     = "stale"     // was promoted but no longer returned by the source API
 )
 
 // StagedRebate is the GORM model for the rebates_staging table.

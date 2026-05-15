@@ -21,35 +21,40 @@ const upsertBatchSize = 500
 
 // UpsertToStaging writes all items into the rebates_staging table.
 //
-// On conflict (same source_id) every column except promotion_status and
-// promoted_at is overwritten — so a re-scrape refreshes the data without
-// resetting any manually edited promotion state, and does not create a second
-// row for the same source_id (requires unique index on source_id).
+// Normal scrape (forceRefresh=false):
+//   On conflict the lifecycle columns (stg_promotion_status, stg_promoted_at,
+//   stg_rebate_id) are excluded from the update so a re-scrape never resets
+//   promotion state set by the promoter or an admin.
 //
-// Items that are already "promoted" stay promoted; only their data columns
-// are refreshed so the promoter can optionally re-promote changed records.
+// Force-refresh (forceRefresh=true):
+//   stg_promotion_status and stg_promoted_at are included in the conflict
+//   update and reset to 'pending' / NULL atomically inside the upsert — no
+//   separate SQL call needed, no race condition possible.
 //
-// When forceURLUpdate is true, an additional UPDATE is issued after each batch
-// to overwrite program_url and application_url on ALL rows whose stg_source_id
-// matches the batch, regardless of stg_promotion_status.  The lifecycle columns
-// (stg_promotion_status, stg_promoted_at, stg_rebate_id) are never touched.
+// When forceURLUpdate is true, an additional UPDATE overwrites program_url and
+// application_url regardless of promotion status (lifecycle cols untouched).
 //
-// Large batches are automatically split to stay within PostgreSQL's 65 535
-// parameter limit.
-func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool) (UpsertResult, error) {
+// Large batches are split to stay within PostgreSQL's 65 535 parameter limit.
+func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, forceRefresh ...bool) (UpsertResult, error) {
 	if len(items) == 0 {
 		return UpsertResult{}, nil
 	}
+	doRefresh := len(forceRefresh) > 0 && forceRefresh[0]
 
 	rows := make([]models.StagedRebate, len(items))
 	for i, inc := range items {
 		rows[i] = models.FromIncentive(inc)
+		if doRefresh {
+			// Ensure EXCLUDED.stg_promotion_status = 'pending' and
+			// EXCLUDED.stg_promoted_at = NULL so the conflict update resets them.
+			rows[i].PromotionStatus = models.PromotionPending
+			rows[i].PromotedAt = nil
+		}
 	}
 
 	// Columns to update on conflict — all data columns only.
-	// The stg_ lifecycle columns (stg_promotion_status, stg_promoted_at,
-	// stg_rebate_id) are intentionally excluded: a re-scrape must never reset
-	// promotion state that was already set by the promoter or an admin.
+	// stg_rebate_id is always preserved; stg_promotion_status and
+	// stg_promoted_at are added only on force-refresh.
 	updateCols := []string{
 		"program_name", "utility_company", "incentive_description",
 		"incentive_amount", "maximum_amount", "percent_value", "per_unit_amount",
@@ -63,6 +68,10 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool) (Upse
 		"contractor_required", "energy_audit_required", "source_url", "implementing_sector",
 		"rate_tiers", "scraper_version", "stg_program_hash",
 		"stg_raw_response", "stg_raw_content_type", "stg_tenant_ids", "updated_at",
+	}
+	if doRefresh {
+		// Include lifecycle columns so the upsert atomically resets status.
+		updateCols = append(updateCols, "stg_promotion_status", "stg_promoted_at")
 	}
 
 	total := 0
@@ -174,26 +183,81 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool) (Upse
 	return UpsertResult{Upserted: total}, nil
 }
 
-// ResetToPending resets the promotion status of the given staging rows back to
-// "pending" so the promoter will re-process them on its next run.
-// Called after a force-refresh scrape to push freshly scraped data into the
-// live rebates table without manual SQL.
-// The promoter upsert is idempotent (ON CONFLICT on rebate id), so calling this
-// never creates duplicate live rows.
-func ResetToPending(d *DB, sourceIDs []string) error {
-	if len(sourceIDs) == 0 {
-		return nil
-	}
+// ResetToPending resets staging rows back to "pending".
+//
+// When sourceIDs is non-nil, only those specific rows are reset (keyed by
+// stg_source_id). This is used after a successful scrape to mark fresh rows
+// for re-promotion.
+//
+// When sourceIDs is nil and source is non-empty, ALL promoted rows for that
+// source are reset. This handles zero-output scrapes (scraper ran but found
+// no programs) so existing data stays available for promotion.
+func ResetToPending(d *DB, sourceIDs []string, source ...string) error {
 	schema := models.ScraperSchema
 	stgTable := schema + ".rebates_staging"
-	// Use raw SQL — GORM's Updates() with a nil map value does not reliably
-	// emit SET col = NULL; explicit SQL is unambiguous.
+
+	if sourceIDs != nil {
+		if len(sourceIDs) == 0 {
+			return nil
+		}
+		return d.gorm.Exec(
+			"UPDATE "+stgTable+
+				" SET stg_promotion_status = 'pending', stg_promoted_at = NULL"+
+				" WHERE stg_source_id IN ?",
+			sourceIDs,
+		).Error
+	}
+
+	// sourceIDs == nil: reset all promoted rows for the given source.
+	if len(source) == 0 || source[0] == "" {
+		return fmt.Errorf("ResetToPending: source required when sourceIDs is nil")
+	}
 	return d.gorm.Exec(
 		"UPDATE "+stgTable+
 			" SET stg_promotion_status = 'pending', stg_promoted_at = NULL"+
-			" WHERE stg_source_id IN ?",
-		sourceIDs,
+			" WHERE source = ? AND stg_promotion_status = 'promoted'",
+		source[0],
 	).Error
+}
+
+// MarkStale marks promoted staging rows for a given source as "stale" when
+// their stg_source_id was NOT seen in the latest full scrape of that source.
+// Only rows with stg_promotion_status = 'promoted' are affected — pending and
+// skipped rows are left untouched.
+//
+// Call this after a force-refresh (with no fetch limit) has completed so that
+// programs removed from the upstream source are flagged rather than silently
+// kept as if they still exist.
+//
+// Returns the number of rows marked stale.
+func MarkStale(d *DB, source string, seenSourceIDs []string) (int64, error) {
+	if source == "" {
+		return 0, fmt.Errorf("MarkStale: source must not be empty")
+	}
+	schema := models.ScraperSchema
+	stgTable := schema + ".rebates_staging"
+
+	// When the source has no promoted rows at all, skip the query.
+	if len(seenSourceIDs) == 0 {
+		// No IDs seen → mark ALL promoted rows for this source as stale.
+		result := d.gorm.Exec(
+			"UPDATE "+stgTable+
+				" SET stg_promotion_status = 'stale'"+
+				" WHERE source = ? AND stg_promotion_status = 'promoted'",
+			source,
+		)
+		return result.RowsAffected, result.Error
+	}
+
+	result := d.gorm.Exec(
+		"UPDATE "+stgTable+
+			" SET stg_promotion_status = 'stale'"+
+			" WHERE source = ?"+
+			" AND stg_promotion_status = 'promoted'"+
+			" AND stg_source_id NOT IN ?",
+		source, seenSourceIDs,
+	)
+	return result.RowsAffected, result.Error
 }
 
 // PendingCount returns the number of rows in rebates_staging that have not yet

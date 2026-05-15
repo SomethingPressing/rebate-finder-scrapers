@@ -72,12 +72,24 @@ func main() {
 	}
 
 	// ── Single-tenant mode ────────────────────────────────────────────────────
-	if len(tenants) == 0 {
+	// Also use single-tenant mode when every tenant points to the same DB as
+	// DATABASE_URL — this is a single-database deployment that uses tenants.json
+	// only for scraper configuration, not for separate per-tenant databases.
+	// Single-tenant mode promotes ALL pending rows regardless of tenant tags,
+	// which is the correct behaviour for a shared database.
+	allSameDB := true
+	for _, t := range tenants {
+		if t.DBUrl() != cfg.DatabaseURL {
+			allSameDB = false
+			break
+		}
+	}
+	if len(tenants) == 0 || allSameDB {
 		runSingleTenant(cfg, opts, logger, *dryRun, priority)
 		return
 	}
 
-	// ── Multi-tenant mode ─────────────────────────────────────────────────────
+	// ── Multi-tenant mode (separate per-tenant databases) ─────────────────────
 	ids := make([]string, len(tenants))
 	for i, t := range tenants {
 		ids[i] = t.ID

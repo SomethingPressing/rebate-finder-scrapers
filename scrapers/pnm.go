@@ -492,19 +492,12 @@ func (s *PNMScraper) httpClient() *http.Client {
 	return s.CollyBase.NewHTTPClient(30 * time.Second)
 }
 
-func (s *PNMScraper) newCollector(domains ...string) *colly.Collector {
-	if len(domains) > 0 {
-		s.CollyBase.AllowedDomain = domains[0]
-	}
+func (s *PNMScraper) newCollector(_ ...string) *colly.Collector {
 	s.CollyBase.Parallelism = 2
 	s.CollyBase.Delay = 600 * time.Millisecond
 	s.CollyBase.Logger = s.Logger
 	s.CollyBase.ProxyURL = s.ProxyURL
-
-	c := s.CollyBase.NewCollector()
-	// Allow additional domains (clearesult portal).
-	for _, d := range domains[1:] {
-		c.AllowedDomains = append(c.AllowedDomains, d)
-	}
-	return c
+	// Domain list is ignored — all domains are allowed globally so that
+	// redirects to partner portals (e.g. pnm.clearesult.com) are followed.
+	return s.CollyBase.NewCollector()
 }

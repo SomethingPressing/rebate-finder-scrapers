@@ -50,6 +50,7 @@ func main() {
 	debugFlag          := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
 	forceURLUpdateFlag := flag.Bool("force-url-update", false, "overwrite program_url and application_url on ALL matching staging rows regardless of promotion status (also set via FORCE_URL_UPDATE=true)")
 	forceRefreshFlag   := flag.Bool("force-refresh", false, "re-scrape and reset promotion status to pending so the promoter re-pushes fresh data to live (also set via FORCE_REFRESH=true)")
+	limitFlag          := flag.Int("limit", 0, "cap the number of programs fetched per source (0 = no limit); useful for quick smoke tests")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -131,16 +132,23 @@ func main() {
 	}
 
 	// ── Scraper registry ──────────────────────────────────────────────────────
-	// Compute the effective per-source fetch limit from tenants.
-	// --force-refresh bypasses this limit entirely — a refresh must fetch all
-	// programs, not a sampled subset.
+	// Compute the effective per-source fetch limit.
+	// Priority: --limit flag > tenant config > no limit.
+	// --force-refresh bypasses the tenant config but still respects --limit
+	// (so you can test a refresh with --limit 5 without staging thousands of rows).
 	effectiveLimit := 0
-	if !cfg.ForceRefresh {
+	if *limitFlag > 0 {
+		effectiveLimit = *limitFlag
+	} else if !cfg.ForceRefresh {
 		for _, t := range tenants {
 			if t.MaxIncentivesPerSource > 0 && (effectiveLimit == 0 || t.MaxIncentivesPerSource < effectiveLimit) {
 				effectiveLimit = t.MaxIncentivesPerSource
 			}
 		}
+	}
+
+	if effectiveLimit > 0 {
+		logger.Info("fetch limit active", zap.Int("limit_per_source", effectiveLimit))
 	}
 
 	reg := scrapers.NewRegistry()
@@ -203,12 +211,26 @@ func main() {
 	}
 
 	// ── Core run function ─────────────────────────────────────────────────────
+	// canMarkStale is true when --force-refresh is active AND no --limit was
+	// set, meaning the scraper fetched the COMPLETE set from the source.
+	// With a partial fetch (--limit N), we can't know which programs are gone.
+	canMarkStale := cfg.ForceRefresh && effectiveLimit == 0
+
 	runScrapers := func() {
 		runStarted := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
 
 		var totalUpserted int
+
+		// Pre-register every source so that reset + stale detection runs
+		// even for scrapers that return 0 programs (blocked, no pages found, etc).
+		seenIDsBySource := make(map[string]map[string]struct{})
+		if canMarkStale {
+			for _, s := range activeScrapers {
+				seenIDsBySource[s.Name()] = make(map[string]struct{})
+			}
+		}
 
 		// flush is called immediately after each scraper finishes so rows are
 		// persisted without waiting for the full run to complete.
@@ -262,8 +284,11 @@ func main() {
 			}
 
 			// Write to staging immediately.
+			// When force-refresh is active, UpsertToStaging atomically resets
+			// stg_promotion_status to 'pending' inside the ON CONFLICT update —
+			// no separate SQL call needed.
 			dbStarted := time.Now()
-			result, err := db.UpsertToStaging(database, items, cfg.ForceURLUpdate)
+			result, err := db.UpsertToStaging(database, items, cfg.ForceURLUpdate, cfg.ForceRefresh)
 			if err != nil {
 				logger.Error("staging upsert failed",
 					zap.String("source", source),
@@ -275,31 +300,70 @@ func main() {
 			logger.Info("staging upsert complete",
 				zap.String("source", source),
 				zap.Int("upserted", result.Upserted),
+				zap.Bool("reset_to_pending", cfg.ForceRefresh),
 				zap.Duration("db_elapsed", time.Since(dbStarted)),
 			)
 
-			// When --force-refresh is set, reset every row we just upserted back
-			// to "pending" so the promoter re-pushes the fresh data to live.
-			if cfg.ForceRefresh {
-				sourceIDs := make([]string, len(items))
-				for i, item := range items {
-					sourceIDs[i] = item.ID
+			// Track seen IDs for stale detection (full force-refresh only).
+			if canMarkStale {
+				if _, ok := seenIDsBySource[source]; !ok {
+					seenIDsBySource[source] = make(map[string]struct{})
 				}
-				if err := db.ResetToPending(database, sourceIDs); err != nil {
-					logger.Error("force-refresh: reset to pending failed",
-						zap.String("source", source),
-						zap.Error(err),
-					)
-				} else {
-					logger.Info("force-refresh: staging rows reset to pending",
-						zap.String("source", source),
-						zap.Int("rows", len(sourceIDs)),
-					)
+				for _, item := range items {
+					seenIDsBySource[source][item.ID] = struct{}{}
 				}
 			}
 		}
 
 		scrapers.RunListFlush(ctx, activeScrapers, logger, flush)
+
+		// Post-run: for sources that produced 0 items (scraper failed or returned
+		// nothing), explicitly reset their promoted rows to pending so they are
+		// re-promoted with existing data on the next promoter run.
+		if cfg.ForceRefresh {
+			for source, seenMap := range seenIDsBySource {
+				if len(seenMap) == 0 {
+					// Scraper ran but found nothing — reset ALL promoted rows for
+					// this source to pending so they stay available for promotion.
+					if err := db.ResetToPending(database, nil, source); err != nil {
+						logger.Warn("force-refresh: reset promoted rows failed for zero-output scraper",
+							zap.String("source", source),
+							zap.Error(err),
+						)
+					} else {
+						logger.Info("force-refresh: reset promoted rows for zero-output scraper",
+							zap.String("source", source),
+						)
+					}
+				}
+			}
+		}
+
+		// After a full force-refresh, mark promoted rows that were NOT seen
+		// in this scrape as stale — they've been removed from the upstream source.
+		if canMarkStale {
+			for source, seenMap := range seenIDsBySource {
+				if len(seenMap) == 0 {
+					continue // zero-output scrapers handled above; don't mark all as stale
+				}
+				seenIDs := make([]string, 0, len(seenMap))
+				for id := range seenMap {
+					seenIDs = append(seenIDs, id)
+				}
+				n, err := db.MarkStale(database, source, seenIDs)
+				if err != nil {
+					logger.Error("mark stale failed",
+						zap.String("source", source),
+						zap.Error(err),
+					)
+				} else if n > 0 {
+					logger.Info("stale programs detected",
+						zap.String("source", source),
+						zap.Int64("stale_count", n),
+					)
+				}
+			}
+		}
 
 		pending, _ := db.PendingCount(database)
 		logger.Info("scrape run finished",

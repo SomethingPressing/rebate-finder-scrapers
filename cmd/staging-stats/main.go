@@ -77,6 +77,7 @@ type sourceRow struct {
 	Pending  int64   `gorm:"column:pending"`
 	Promoted int64   `gorm:"column:promoted"`
 	Skipped  int64   `gorm:"column:skipped"`
+	Stale    int64   `gorm:"column:stale"`
 	PctProm  float64 `gorm:"column:pct_promoted"`
 }
 
@@ -178,6 +179,7 @@ func main() {
 			COUNT(*) FILTER (WHERE stg_promotion_status = 'pending')  AS pending,
 			COUNT(*) FILTER (WHERE stg_promotion_status = 'promoted') AS promoted,
 			COUNT(*) FILTER (WHERE stg_promotion_status = 'skipped')  AS skipped,
+			COUNT(*) FILTER (WHERE stg_promotion_status = 'stale')    AS stale,
 			ROUND(
 				100.0 * COUNT(*) FILTER (WHERE stg_promotion_status = 'promoted')
 				/ NULLIF(COUNT(*), 0), 1
@@ -308,35 +310,17 @@ func printReport(r Report, statesSorted []StateCount) {
 
 	// ── By source ─────────────────────────────────────────────────────────────
 	header("  BY SOURCE")
-	fmt.Printf("  %-22s %7s %9s %9s %9s %8s\n",
-		"Source", "Total", "Pending", "Promoted", "Skipped", "Prom%")
+	fmt.Printf("  %-22s %7s %9s %9s %9s %7s %8s\n",
+		"Source", "Total", "Pending", "Promoted", "Skipped", "Stale", "Prom%")
 	hr()
 	for _, s := range r.BySource {
-		fmt.Printf("  %-22s %7d %9d %9d %9d %7.1f%%\n",
-			s.Source, s.Total, s.Pending, s.Promoted, s.Skipped, s.PctProm)
-	}
-
-	// ── Incentive formats ──────────────────────────────────────────────────────
-	header("  INCENTIVE FORMATS")
-	for _, f := range r.ByFormat {
-		bar := barChart(f.Count, r.Total, 20)
-		fmt.Printf("  %-18s %s %s%d%s\n", f.Format, bar, dim, f.Count, reset)
-	}
-
-	// ── All states (from hardcoded list, sorted by count) ─────────────────────
-	header(fmt.Sprintf("  ALL STATES  (%d states, sorted by count)", len(statesSorted)))
-	maxCount := int64(0)
-	if len(statesSorted) > 0 {
-		maxCount = statesSorted[0].Count
-	}
-	for _, s := range statesSorted {
-		bar := barChart(s.Count, maxCount, 24)
-		covered := dim + "─" + reset
-		if s.Count > 0 {
-			covered = green + "✔" + reset
+		if s.Stale > 0 {
+			fmt.Printf("  %-22s %7d %9d %9d %9d "+red+bold+"%7d"+reset+" %7.1f%%\n",
+				s.Source, s.Total, s.Pending, s.Promoted, s.Skipped, s.Stale, s.PctProm)
+		} else {
+			fmt.Printf("  %-22s %7d %9d %9d %9d %7d %7.1f%%\n",
+				s.Source, s.Total, s.Pending, s.Promoted, s.Skipped, s.Stale, s.PctProm)
 		}
-		fmt.Printf("  %s %-4s %-22s %s %s%d%s\n",
-			covered, s.Abbr, s.Name, bar, dim, s.Count, reset)
 	}
 
 	// ── Data quality ──────────────────────────────────────────────────────────
@@ -386,6 +370,8 @@ func statusColor(s string) string {
 		return yellow
 	case "skipped":
 		return dim
+	case "stale":
+		return red
 	default:
 		return reset
 	}
