@@ -17,13 +17,31 @@ var imageSkipKeywords = []string{
 }
 
 func looksLikeRealImage(src string) bool {
+	if src == "" {
+		return false
+	}
 	low := strings.ToLower(src)
 	for _, kw := range imageSkipKeywords {
 		if strings.Contains(low, kw) {
 			return false
 		}
 	}
-	return src != ""
+	return true
+}
+
+// resolveImageSrc converts a raw img src to an absolute URL, or returns ""
+// if the src is not a usable image URL.
+func resolveImageSrc(src, baseURL string) string {
+	switch {
+	case strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://"):
+		return src // already absolute — never prepend base
+	case strings.HasPrefix(src, "//"):
+		return "https:" + src
+	case strings.HasPrefix(src, "/") && baseURL != "":
+		return strings.TrimRight(baseURL, "/") + src
+	default:
+		return "" // relative path without base, or data: URI — skip
+	}
 }
 
 // extractImageURL returns the best image URL for a scraped page.
@@ -45,13 +63,8 @@ func extractImageURL(doc *goquery.Document, baseURL string) string {
 		if !looksLikeRealImage(src) {
 			return true
 		}
-		if strings.HasPrefix(src, "//") {
-			src = "https:" + src
-		} else if strings.HasPrefix(src, "/") && baseURL != "" {
-			src = baseURL + src
-		}
-		if strings.HasPrefix(src, "http") {
-			found = src
+		if abs := resolveImageSrc(src, baseURL); abs != "" {
+			found = abs
 			return false
 		}
 		return true
@@ -76,13 +89,8 @@ func CollyImageURL(e *colly.HTMLElement, baseURL string) string {
 		if !looksLikeRealImage(src) {
 			return true
 		}
-		if strings.HasPrefix(src, "//") {
-			src = "https:" + src
-		} else if strings.HasPrefix(src, "/") && baseURL != "" {
-			src = baseURL + src
-		}
-		if strings.HasPrefix(src, "http") {
-			found = src
+		if abs := resolveImageSrc(src, baseURL); abs != "" {
+			found = abs
 			return false
 		}
 		return true
