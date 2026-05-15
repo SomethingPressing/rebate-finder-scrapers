@@ -110,12 +110,14 @@ var pceFilterCfg = FilterConfig{
 		"/vendor/",
 		"/bidding/",
 
-		// Events / press
+		// Events / press / news articles (too broad — follow rebate paths only)
 		"/events/",
 		"/press-releases/",
 		"/media/",
 		"/newsletter/",
 		"/community-updates/",
+		"/articles/",
+		"/news-releases/",
 	},
 
 	// ── Inclusions ─────────────────────────────────────────────────────────
@@ -174,7 +176,6 @@ var pceFilterCfg = FilterConfig{
 		"ev",
 		"electric-vehicle",
 		"charging",
-		"renewable",
 
 		// EV
 		"ev-charging",
