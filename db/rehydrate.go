@@ -16,7 +16,7 @@ type StagingRecord struct {
 func FetchStagingRecords(d *DB, source string) ([]StagingRecord, error) {
 	schema := models.ScraperSchema
 	type row struct {
-		SourceID   string  `gorm:"column:source_id"`
+		SourceID   string  `gorm:"column:stg_source_id"`
 		State      *string `gorm:"column:state"`
 		ProgramURL *string `gorm:"column:program_url"`
 		SourceURL  *string `gorm:"column:source_url"`
@@ -24,7 +24,7 @@ func FetchStagingRecords(d *DB, source string) ([]StagingRecord, error) {
 	var rows []row
 	if err := d.gorm.
 		Table(schema+".rebates_staging").
-		Select("source_id, state, program_url, source_url").
+		Select("stg_source_id, state, program_url, source_url").
 		Where("source = ? AND deleted_at IS NULL", source).
 		Find(&rows).Error; err != nil {
 		return nil, err

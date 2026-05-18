@@ -83,6 +83,10 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		return nil, fmt.Errorf("promote: fetch pending: %w", err)
 	}
 
+	// Always ensure portfolio rows exist — runs even when there are no pending
+	// staging rows (e.g. first promote after a fresh deploy).
+	ensurePortfolios(d)
+
 	result := &PromoteResult{StagingRows: len(pending)}
 	if len(pending) == 0 {
 		return result, nil
@@ -475,33 +479,6 @@ func prepareCategories(d *DB, rebateTags map[string][]string) (
 		names = append(names, name)
 	}
 
-	// ── Auto-create Portfolio rows ───────────────────────────────────────────
-	// ON CONFLICT (slug) DO NOTHING — admin edits (colours, hero images, etc.)
-	// are never overwritten; this just ensures the rows exist on first promote.
-	type portfolioRow struct {
-		ID          string `gorm:"column:id"`
-		Name        string `gorm:"column:name"`
-		Slug        string `gorm:"column:slug"`
-		Code        string `gorm:"column:code"`
-		IsVisible   bool   `gorm:"column:is_visible"`
-	}
-	allPortfolioNames := models.AllPortfolioNames()
-	portfolioRows := make([]portfolioRow, 0, len(allPortfolioNames))
-	for _, p := range allPortfolioNames {
-		portfolioRows = append(portfolioRows, portfolioRow{
-			ID:        models.DeterministicID("portfolio", p),
-			Name:      p,
-			Slug:      models.PortfolioSlug(p),
-			Code:      models.PortfolioAbbrev[p],
-			IsVisible: true,
-		})
-	}
-	if len(portfolioRows) > 0 {
-		_ = d.gorm.Table("portfolios").
-			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "slug"}}, DoNothing: true}).
-			CreateInBatches(portfolioRows, 50).Error
-	}
-
 	// Upsert Category rows — portfolio is set from the shared taxonomy map.
 	// ON CONFLICT DO NOTHING preserves any admin edits made after first run.
 	type catRow struct {
@@ -644,6 +621,33 @@ type promoterMerged struct {
 	contractorRequired   *bool
 	energyAuditRequired  *bool
 	rateTiers            models.RateTiersJSON
+}
+
+// ensurePortfolios upserts all known portfolio rows (ON CONFLICT slug DO NOTHING)
+// so admin edits are never overwritten. Called unconditionally at the start of
+// every Promote run so the portfolios table is never empty.
+func ensurePortfolios(d *DB) {
+	type portfolioRow struct {
+		ID        string `gorm:"column:id"`
+		Name      string `gorm:"column:name"`
+		Slug      string `gorm:"column:slug"`
+		Code      string `gorm:"column:code"`
+		IsVisible bool   `gorm:"column:is_visible"`
+	}
+	names := models.AllPortfolioNames()
+	rows := make([]portfolioRow, 0, len(names))
+	for _, p := range names {
+		rows = append(rows, portfolioRow{
+			ID:        models.DeterministicID("portfolio", p),
+			Name:      p,
+			Slug:      models.PortfolioSlug(p),
+			Code:      models.PortfolioAbbrev[p],
+			IsVisible: true,
+		})
+	}
+	_ = d.gorm.Table("portfolios").
+		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "slug"}}, DoNothing: true}).
+		CreateInBatches(rows, 50).Error
 }
 
 // mergePromoterGroup merges a priority-sorted slice of staging rows into one
