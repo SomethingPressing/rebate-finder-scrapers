@@ -475,6 +475,33 @@ func prepareCategories(d *DB, rebateTags map[string][]string) (
 		names = append(names, name)
 	}
 
+	// ── Auto-create Portfolio rows ───────────────────────────────────────────
+	// ON CONFLICT (slug) DO NOTHING — admin edits (colours, hero images, etc.)
+	// are never overwritten; this just ensures the rows exist on first promote.
+	type portfolioRow struct {
+		ID          string `gorm:"column:id"`
+		Name        string `gorm:"column:name"`
+		Slug        string `gorm:"column:slug"`
+		Code        string `gorm:"column:code"`
+		IsVisible   bool   `gorm:"column:is_visible"`
+	}
+	allPortfolioNames := models.AllPortfolioNames()
+	portfolioRows := make([]portfolioRow, 0, len(allPortfolioNames))
+	for _, p := range allPortfolioNames {
+		portfolioRows = append(portfolioRows, portfolioRow{
+			ID:        models.DeterministicID("portfolio", p),
+			Name:      p,
+			Slug:      models.PortfolioSlug(p),
+			Code:      models.PortfolioAbbrev[p],
+			IsVisible: true,
+		})
+	}
+	if len(portfolioRows) > 0 {
+		_ = d.gorm.Table("portfolios").
+			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "slug"}}, DoNothing: true}).
+			CreateInBatches(portfolioRows, 50).Error
+	}
+
 	// Upsert Category rows — portfolio is set from the shared taxonomy map.
 	// ON CONFLICT DO NOTHING preserves any admin edits made after first run.
 	type catRow struct {

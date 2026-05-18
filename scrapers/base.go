@@ -20,6 +20,27 @@ type Scraper interface {
 	Scrape(ctx context.Context) ([]models.Incentive, error)
 }
 
+// Rehydrater is implemented by scrapers that can re-fetch existing programs
+// from their source using URLs/IDs already stored in the staging DB, instead
+// of re-discovering the full program list from scratch.
+//
+// records contains one entry per existing staging row for this source.
+// sink is called with each batch of freshly fetched incentives — same contract
+// as StreamScraper.ScrapeStream.
+type Rehydrater interface {
+	Scraper
+	RehydrateStream(ctx context.Context, records []RehydrateRecord, sink func([]models.Incentive)) error
+}
+
+// RehydrateRecord is the minimal staging row data a scraper needs to re-fetch
+// one program from its source.
+type RehydrateRecord struct {
+	SourceID   string
+	State      string // empty string when unknown
+	ProgramURL string // may be empty
+	SourceURL  string // may be empty
+}
+
 // StreamScraper is an optional interface for scrapers that can emit results
 // incrementally. When implemented, RunListFlush calls ScrapeStream so each
 // batch is upserted to the staging DB as soon as it is ready — no waiting
@@ -31,6 +52,15 @@ type Scraper interface {
 type StreamScraper interface {
 	Scraper
 	ScrapeStream(ctx context.Context, sink func([]models.Incentive)) error
+}
+
+// rehydrateURL returns the best URL to re-fetch for a given record:
+// source_url if set, otherwise program_url.
+func rehydrateURL(r RehydrateRecord) string {
+	if r.SourceURL != "" {
+		return r.SourceURL
+	}
+	return r.ProgramURL
 }
 
 // Registry holds all registered scrapers.

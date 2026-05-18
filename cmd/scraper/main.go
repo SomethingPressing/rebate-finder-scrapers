@@ -315,7 +315,11 @@ func main() {
 			}
 		}
 
-		scrapers.RunListFlush(ctx, activeScrapers, logger, flush)
+		if cfg.ForceRefresh {
+				runRehydrate(ctx, activeScrapers, database, logger, flush)
+			} else {
+				scrapers.RunListFlush(ctx, activeScrapers, logger, flush)
+			}
 
 		// Post-run: for sources that produced 0 items (scraper failed or returned
 		// nothing), explicitly reset their promoted rows to pending so they are
@@ -403,6 +407,76 @@ func main() {
 	ctx := c.Stop()
 	<-ctx.Done()
 	logger.Info("cron stopped cleanly")
+}
+
+// runRehydrate runs each scraper's RehydrateStream (if implemented), falling
+// back to the normal Scrape path for scrapers that don't support it.
+// This replaces the old "re-discover from scratch" force-refresh behaviour.
+func runRehydrate(
+	ctx context.Context,
+	active []scrapers.Scraper,
+	database *db.DB,
+	logger *zap.Logger,
+	flush func(source string, items []models.Incentive),
+) {
+	for _, s := range active {
+		rh, ok := s.(scrapers.Rehydrater)
+		if !ok {
+			// Scraper doesn't implement Rehydrater — fall back to normal scrape.
+			logger.Info("rehydrate: scraper has no RehydrateStream, using Scrape",
+				zap.String("source", s.Name()))
+			items, err := s.Scrape(ctx)
+			if err != nil {
+				logger.Error("rehydrate: scrape fallback failed",
+					zap.String("source", s.Name()), zap.Error(err))
+				continue
+			}
+			flush(s.Name(), items)
+			continue
+		}
+
+		// Fetch existing staging records for this source.
+		dbRecords, err := db.FetchStagingRecords(database, s.Name())
+		if err != nil {
+			logger.Error("rehydrate: fetch staging records failed",
+				zap.String("source", s.Name()), zap.Error(err))
+			continue
+		}
+		if len(dbRecords) == 0 {
+			logger.Info("rehydrate: no staging records — skipping",
+				zap.String("source", s.Name()))
+			continue
+		}
+
+		// Convert db.StagingRecord → scrapers.RehydrateRecord.
+		records := make([]scrapers.RehydrateRecord, len(dbRecords))
+		for i, r := range dbRecords {
+			rec := scrapers.RehydrateRecord{SourceID: r.SourceID}
+			if r.State != nil {
+				rec.State = *r.State
+			}
+			if r.ProgramURL != nil {
+				rec.ProgramURL = *r.ProgramURL
+			}
+			if r.SourceURL != nil {
+				rec.SourceURL = *r.SourceURL
+			}
+			records[i] = rec
+		}
+
+		logger.Info("rehydrate: starting",
+			zap.String("source", s.Name()),
+			zap.Int("staging_records", len(records)),
+		)
+
+		err = rh.RehydrateStream(ctx, records, func(items []models.Incentive) {
+			flush(s.Name(), items)
+		})
+		if err != nil {
+			logger.Error("rehydrate: RehydrateStream failed",
+				zap.String("source", s.Name()), zap.Error(err))
+		}
+	}
 }
 
 type zapCronLogger struct{ z *zap.Logger }

@@ -48,6 +48,47 @@ var CategoryPortfolioMap = map[string][]string{
 	"Financing": {"Financing"},
 }
 
+// PortfolioAbbrev maps portfolio names to their short codes, mirroring
+// PORTFOLIO_ABBREV in taxonomyConfig.ts.
+var PortfolioAbbrev = map[string]string{
+	"Energy Efficiency":            "EE",
+	"Distributed Energy Resources": "DER",
+	"Demand Response":              "DR",
+	"Electric Vehicles":            "EV",
+	"Income Qualified":             "LMI",
+	"Financing":                    "FIN",
+	"Building Electrification":     "BE",
+	"Rates":                        "RATES",
+}
+
+// PortfolioSlug converts a portfolio name to a URL-safe slug.
+func PortfolioSlug(name string) string {
+	return CategorySlug(name) // same logic
+}
+
+// AllPortfolioNames returns all unique portfolio names from CategoryPortfolioMap,
+// ordered for consistent seeding.
+func AllPortfolioNames() []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, portfolios := range CategoryPortfolioMap {
+		for _, p := range portfolios {
+			if _, ok := seen[p]; !ok {
+				seen[p] = struct{}{}
+				out = append(out, p)
+			}
+		}
+	}
+	// Also include portfolios that have no categories yet (Rates, Financing).
+	for p := range PortfolioAbbrev {
+		if _, ok := seen[p]; !ok {
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // CategorySlug converts a category name to a URL-safe slug.
 // "Water Heating" → "water-heating", "Combined Heat & Power" → "combined-heat-power"
 func CategorySlug(name string) string {
