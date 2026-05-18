@@ -572,8 +572,10 @@ func (s *XcelEnergyScraper) extractPage(
 		inc.ImageURL = models.PtrString(imageURL)
 	}
 	inc.IncentiveFormat = models.PtrString(format)
+	inc.ImplementingSector = models.PtrString("Utility")
 	inc.ApplicationProcess = models.PtrString(xcelDefaultApply)
 	inc.ProgramURL = models.PtrString(pageURL)
+	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
 	inc.ProgramHash = models.ComputeProgramHash(programName, xcelUtility)
