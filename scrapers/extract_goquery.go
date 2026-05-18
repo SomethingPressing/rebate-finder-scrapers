@@ -227,7 +227,6 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
-	inc.Portfolio = derivePortfolios(categories)
 	inc.ProgramHash = models.ComputeProgramHash(programName, cfg.UtilityCompany)
 
 	if state != "" {

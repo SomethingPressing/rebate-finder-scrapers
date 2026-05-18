@@ -384,7 +384,6 @@ func stagedToDBValues(r models.StagedRebate) map[string]string {
 	set("service_territory", r.ServiceTerritory)
 	setb("available_nationwide", r.AvailableNationwide)
 	sets("categories", []string(r.CategoryTag))
-	sets("portfolio", []string(r.Portfolio))
 	set("implementing_sector", r.ImplementingSector)
 	sets("segment", []string(r.Segment))
 	set("customer_type", r.CustomerType)

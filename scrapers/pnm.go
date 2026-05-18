@@ -442,7 +442,6 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	inc.ID = id
 	inc.ProgramName = programName
 	inc.UtilityCompany = pnmUtility
-	inc.Portfolio = derivePortfolios(categories)
 	inc.State = models.PtrString(pnmState)
 	inc.ZipCode = models.PtrString(pnmZIP)
 	inc.ServiceTerritory = models.PtrString(pnmTerritory)

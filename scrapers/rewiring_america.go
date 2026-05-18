@@ -557,7 +557,6 @@ func (s *RewiringAmericaScraper) toIncentives(result *raCalculatorResponse, zip 
 		inc.ImplementingSector = models.PtrString(raAuthorityTypeLabel(item.AuthorityType))
 
 		// ── Portfolio (WHAT the program does — derived from category tags) ────
-		inc.Portfolio = derivePortfolios(inc.CategoryTag)
 
 		// ── Application process from payment methods ──────────────────────
 		// (CustomerType is set below from owner_status, not payment methods)

@@ -138,7 +138,6 @@ func NewIncentive(source, version string) Incentive {
 		ScraperVersion: version,
 		CategoryTag:    []string{},
 		Segment:        []string{},
-		Portfolio:      []string{},
 		ZipCodes:       []string{},
 		ImageURLs:      []string{},
 		RateTiers:      []RateTier{},

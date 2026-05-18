@@ -489,7 +489,6 @@ func mapEnergyStarRecord(
 	}
 
 	// ── Portfolio (derived from category tags, set after income qualification) ─
-	inc.Portfolio = derivePortfolios(inc.CategoryTag)
 
 	// ── Program hash ──────────────────────────────────────────────────────────
 	inc.ProgramHash = models.ComputeProgramHash(inc.ProgramName, inc.UtilityCompany)
