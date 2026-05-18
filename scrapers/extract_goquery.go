@@ -89,8 +89,12 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	// Markdown so lists, bold text, and links are preserved.
 	var descHTMLParts []string
 	doc.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		// Skip paragraphs inside <noscript> — they're browser-detection fallbacks.
+		if s.Closest("noscript").Length() > 0 {
+			return true
+		}
 		t := strings.TrimSpace(s.Text())
-		if len(t) >= 60 {
+		if len(t) >= 60 && !isJunkParagraph(t) {
 			if h, err := s.Html(); err == nil {
 				descHTMLParts = append(descHTMLParts, "<p>"+h+"</p>")
 			}

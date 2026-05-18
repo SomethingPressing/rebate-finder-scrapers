@@ -8,6 +8,28 @@ import (
 	"github.com/gocolly/colly/v2"
 )
 
+// descJunkPhrases — lower-case substrings that, when found in a paragraph's
+// text, mark it as browser-detection noise or error boilerplate rather than
+// real programme content.  Checked before the paragraph is added to the
+// description.
+var descJunkPhrases = []string{
+	"unsupported browser",
+	"please download the latest version of chrome",
+	"please download the latest version of firefox",
+	"download the latest version of chrome, firefox",
+	"error: please call us at",
+}
+
+func isJunkParagraph(text string) bool {
+	lower := strings.ToLower(text)
+	for _, phrase := range descJunkPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 // imageSkipKeywords — src substrings that indicate a logo, icon or UI asset
 // rather than a real program image. Checked case-insensitively.
 var imageSkipKeywords = []string{
@@ -141,8 +163,12 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 	var parts []string
 	rawTotal := 0
 	e.DOM.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		// Skip paragraphs inside <noscript> — they're browser-detection fallbacks.
+		if s.Closest("noscript").Length() > 0 {
+			return true
+		}
 		text := strings.TrimSpace(s.Text())
-		if len(text) >= 60 {
+		if len(text) >= 60 && !isJunkParagraph(text) {
 			if h, err := s.Html(); err == nil {
 				parts = append(parts, "<p>"+h+"</p>")
 				rawTotal += len(h)
