@@ -54,7 +54,6 @@ type StagedRebate struct {
 	AvailableNationwide  *bool       `gorm:"column:available_nationwide"`
 	CategoryTag          StringSlice `gorm:"column:category_tag;type:text[]"`
 	Segment              StringSlice `gorm:"column:segment;type:text[]"`
-	Portfolio            StringSlice `gorm:"column:portfolio;type:text[]"`
 	CustomerType         *string     `gorm:"column:customer_type"`
 	ProductCategory      *string     `gorm:"column:product_category"`
 	Administrator        *string     `gorm:"column:administrator"`
@@ -155,7 +154,6 @@ func FromIncentive(inc Incentive) StagedRebate {
 		AvailableNationwide:  inc.AvailableNationwide,
 		CategoryTag:          StringSlice(inc.CategoryTag),
 		Segment:              StringSlice(inc.Segment),
-		Portfolio:            StringSlice(inc.Portfolio),
 		CustomerType:         inc.CustomerType,
 		ProductCategory:      inc.ProductCategory,
 		Administrator:        inc.Administrator,

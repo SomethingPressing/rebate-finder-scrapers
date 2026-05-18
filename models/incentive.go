@@ -80,7 +80,6 @@ type Incentive struct {
 	AvailableNationwide  *bool
 	CategoryTag          []string
 	Segment              []string
-	Portfolio            []string
 	CustomerType         *string
 	ProductCategory      *string
 	Administrator        *string

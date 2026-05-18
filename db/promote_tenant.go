@@ -140,6 +140,21 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		existingIDByHash[r.ProgramHash] = r.ID
 	}
 
+	// ── Phase 3a: sync Category rows + derive portfolio mapping ──────────────
+	allRebateTags := make(map[string][]string, len(hashOrder))
+	for _, h := range hashOrder {
+		g := groupMap[h]
+		merged := mergePromoterGroup(g.rows)
+		id := g.rows[0].SourceID
+		if existingID, ok := existingIDByHash[h]; ok {
+			id = existingID
+		}
+		if len(merged.categoryTag) > 0 {
+			allRebateTags[id] = merged.categoryTag
+		}
+	}
+	portfoliosByRebateID, categoryNameToID, _ := prepareCategories(tenantDB, allRebateTags)
+
 	type groupMeta struct {
 		hash    string
 		rows    []models.StagedRebate
@@ -185,7 +200,7 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 			ServiceTerritory:     merged.serviceTerritory,
 			AvailableNationwide:  merged.availableNationwide,
 			Segment:              models.StringSlice(merged.segment),
-			Portfolio:            models.StringSlice(merged.portfolio),
+			Portfolio:            models.StringSlice(portfoliosByRebateID[id]),
 			CustomerType:         merged.customerType,
 			Administrator:        merged.administrator,
 			Source:               ptrStr(primary.Source),
@@ -333,16 +348,10 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		}
 	}
 
-	// ── Phase 7: sync rebate_categories in tenant DB ────────────────────────
-	tenantCategoryTags := make(map[string][]string, len(hashOrder))
-	for _, h := range hashOrder {
-		rebateID, ok := hashToID[h]
-		if !ok {
-			continue
-		}
-		tenantCategoryTags[rebateID] = mergePromoterGroup(groupMap[h].rows).categoryTag
-	}
-	if err := syncRebateCategories(tenantDB, tenantCategoryTags); err != nil {
+	// ── Phase 7: sync rebate_categories join table in tenant DB ────────────
+	// Category rows were already created in Phase 3a; this just syncs the join
+	// table now that rebate rows are guaranteed to exist in the DB.
+	if err := linkRebateCategories(tenantDB, allRebateTags, categoryNameToID); err != nil {
 		_ = err // non-fatal
 	}
 

@@ -170,6 +170,22 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		existingIDByHash[r.ProgramHash] = r.ID
 	}
 
+	// ── Phase 3a: sync Category rows + derive portfolio mapping ──────────────
+	// Build rebateID→tags first so we know IDs before syncing categories.
+	allRebateTags := make(map[string][]string, len(hashOrder))
+	for _, h := range hashOrder {
+		g := groupMap[h]
+		merged := mergePromoterGroup(g.rows)
+		id := g.rows[0].SourceID
+		if existingID, ok := existingIDByHash[h]; ok {
+			id = existingID
+		}
+		if len(merged.categoryTag) > 0 {
+			allRebateTags[id] = merged.categoryTag
+		}
+	}
+	portfoliosByRebateID, categoryNameToID, _ := prepareCategories(d, allRebateTags)
+
 	type groupMeta struct {
 		hash    string
 		rows    []models.StagedRebate
@@ -215,7 +231,7 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			ServiceTerritory:     merged.serviceTerritory,
 			AvailableNationwide:  merged.availableNationwide,
 			Segment:              models.StringSlice(merged.segment),
-			Portfolio:            models.StringSlice(merged.portfolio),
+			Portfolio:            models.StringSlice(portfoliosByRebateID[id]),
 			CustomerType:  merged.customerType,
 			Administrator: merged.administrator,
 			ImplementingSector:   merged.implementingSector,
@@ -376,18 +392,9 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 	}
 
 	// ── Phase 7: sync rebate_categories join table ───────────────────────────
-	// Build rebateID → merged category tags from the staging data (category_tag
-	// lives in staging only now; the live table uses the relation instead).
-	rebateCategoryTags := make(map[string][]string, len(hashOrder))
-	for _, h := range hashOrder {
-		rebateID, ok := hashToID[h]
-		if !ok {
-			continue
-		}
-		merged := mergePromoterGroup(groupMap[h].rows)
-		rebateCategoryTags[rebateID] = merged.categoryTag
-	}
-	if err := syncRebateCategories(d, rebateCategoryTags); err != nil {
+	// Category rows were already created in Phase 3a; this just syncs the join
+	// table now that rebate rows are guaranteed to exist in the DB.
+	if err := linkRebateCategories(d, allRebateTags, categoryNameToID); err != nil {
 		_ = err // non-fatal
 	}
 
@@ -429,24 +436,29 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 
 // ── Category sync ────────────────────────────────────────────────────────────
 
-// syncRebateCategories auto-creates missing Category rows from the tag names
-// it encounters, then upserts rebate_categories join rows.
+// prepareCategories auto-creates missing Category rows from the tag names in
+// rebateTags and returns two maps:
 //
-// Auto-create behaviour:
-//   - Each unique tag name is upserted into public.categories with a slug and
-//     portfolio derived from models.CategoryPortfolioMap.
-//   - ON CONFLICT (name) DO NOTHING — admin edits (descriptions, display_order,
-//     etc.) are never overwritten.
+//   - portfoliosByRebateID: rebate ID → unique portfolio names derived from
+//     each linked category's `portfolio` field. Used by the promoter to set
+//     the live rebate's portfolio[] column.
+//   - nameToID: category name → category UUID, needed by linkRebateCategories.
 //
-// Link behaviour:
-//   - Existing rebate_categories rows for each rebate are deleted then re-inserted
-//     so stale entries from previous scrapes are removed.
-func syncRebateCategories(d *DB, rebateTags map[string][]string) error {
+// ON CONFLICT (name) DO NOTHING — admin edits to existing categories are never
+// overwritten.
+func prepareCategories(d *DB, rebateTags map[string][]string) (
+	portfoliosByRebateID map[string][]string,
+	nameToID map[string]string,
+	err error,
+) {
+	portfoliosByRebateID = make(map[string][]string)
+	nameToID = make(map[string]string)
+
 	if len(rebateTags) == 0 {
-		return nil
+		return
 	}
 
-	// ── Step 1: collect unique tag names ─────────────────────────────────────
+	// Collect unique tag names.
 	tagSet := make(map[string]struct{})
 	for _, tags := range rebateTags {
 		for _, tag := range tags {
@@ -456,18 +468,15 @@ func syncRebateCategories(d *DB, rebateTags map[string][]string) error {
 		}
 	}
 	if len(tagSet) == 0 {
-		return nil
+		return
 	}
-
 	names := make([]string, 0, len(tagSet))
 	for name := range tagSet {
 		names = append(names, name)
 	}
 
-	// ── Step 2: auto-create missing Category rows ─────────────────────────────
-	// Each row gets a deterministic ID, a slug, and the primary portfolio from
-	// the shared taxonomy map.  ON CONFLICT (name) DO NOTHING preserves any
-	// admin edits made after the first promotion.
+	// Upsert Category rows — portfolio is set from the shared taxonomy map.
+	// ON CONFLICT DO NOTHING preserves any admin edits made after first run.
 	type catRow struct {
 		ID        string `gorm:"column:id"`
 		Name      string `gorm:"column:name"`
@@ -483,33 +492,60 @@ func syncRebateCategories(d *DB, rebateTags map[string][]string) error {
 			Portfolio: models.CategoryPrimaryPortfolio(name),
 		})
 	}
-	if err := d.gorm.Table("categories").
+	if err = d.gorm.Table("categories").
 		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "name"}}, DoNothing: true}).
 		CreateInBatches(newCats, 200).Error; err != nil {
-		return fmt.Errorf("syncRebateCategories: upsert categories: %w", err)
+		err = fmt.Errorf("prepareCategories: upsert categories: %w", err)
+		return
 	}
 
-	// ── Step 3: fetch IDs for all tag names (including newly created ones) ────
+	// Fetch all category rows (id, name, portfolio) for the tags we care about.
 	var cats []struct {
-		ID   string `gorm:"column:id"`
-		Name string `gorm:"column:name"`
+		ID        string `gorm:"column:id"`
+		Name      string `gorm:"column:name"`
+		Portfolio string `gorm:"column:portfolio"`
 	}
-	if err := d.gorm.Table("categories").
-		Select("id, name").
+	if err = d.gorm.Table("categories").
+		Select("id, name, portfolio").
 		Where("name IN ?", names).
 		Find(&cats).Error; err != nil {
-		return fmt.Errorf("syncRebateCategories: fetch categories: %w", err)
+		err = fmt.Errorf("prepareCategories: fetch categories: %w", err)
+		return
 	}
-	if len(cats) == 0 {
-		return nil
-	}
-
-	nameToID := make(map[string]string, len(cats))
 	for _, c := range cats {
 		nameToID[c.Name] = c.ID
 	}
 
-	// ── Step 4: build join rows and sync rebate_categories ────────────────────
+	// Build rebateID → []portfolio from category.portfolio values.
+	nameToPortfolio := make(map[string]string, len(cats))
+	for _, c := range cats {
+		if c.Portfolio != "" {
+			nameToPortfolio[c.Name] = c.Portfolio
+		}
+	}
+	for rebateID, tags := range rebateTags {
+		seen := make(map[string]struct{})
+		var portfolios []string
+		for _, tag := range tags {
+			p := nameToPortfolio[tag]
+			if p != "" {
+				if _, already := seen[p]; !already {
+					seen[p] = struct{}{}
+					portfolios = append(portfolios, p)
+				}
+			}
+		}
+		if len(portfolios) > 0 {
+			portfoliosByRebateID[rebateID] = portfolios
+		}
+	}
+	return
+}
+
+// linkRebateCategories syncs the rebate_categories join table for the given
+// rebates. Must be called AFTER the rebates themselves have been upserted
+// (foreign-key constraint).
+func linkRebateCategories(d *DB, rebateTags map[string][]string, nameToID map[string]string) error {
 	type joinRow struct {
 		RebateID   string `gorm:"column:rebate_id"`
 		CategoryID string `gorm:"column:category_id"`
@@ -536,15 +572,13 @@ func syncRebateCategories(d *DB, rebateTags map[string][]string) error {
 	if err := d.gorm.Table("rebate_categories").
 		Where("rebate_id IN ?", rebateIDs).
 		Delete(nil).Error; err != nil {
-		return fmt.Errorf("syncRebateCategories: delete old links: %w", err)
+		return fmt.Errorf("linkRebateCategories: delete old links: %w", err)
 	}
-
 	if err := d.gorm.Table("rebate_categories").
 		Clauses(clause.OnConflict{DoNothing: true}).
 		CreateInBatches(joins, 500).Error; err != nil {
-		return fmt.Errorf("syncRebateCategories: insert links: %w", err)
+		return fmt.Errorf("linkRebateCategories: insert links: %w", err)
 	}
-
 	return nil
 }
 
@@ -566,7 +600,6 @@ type promoterMerged struct {
 	availableNationwide  *bool
 	categoryTag          []string
 	segment              []string
-	portfolio            []string
 	customerType   *string
 	administrator  *string
 	implementingSector   *string
@@ -621,7 +654,6 @@ func mergePromoterGroup(rows []models.StagedRebate) promoterMerged {
 		// Arrays — union across all sources, dedup case-insensitively.
 		categoryTag: unionStrings(rows, func(r models.StagedRebate) []string { return r.CategoryTag }),
 		segment:     unionStrings(rows, func(r models.StagedRebate) []string { return r.Segment }),
-		portfolio:   unionStrings(rows, func(r models.StagedRebate) []string { return r.Portfolio }),
 		imageURLs:   unionStrings(rows, func(r models.StagedRebate) []string { return r.ImageURLs }),
 	}
 
