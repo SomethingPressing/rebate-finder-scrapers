@@ -319,15 +319,10 @@ func mapEnergyStarRecord(
 	inc.ID = models.DeterministicID("energy_star", result.IncentiveID)
 
 	// ── Geography ──────────────────────────────────────────────────────────
-	// No zip_code — queried without a ZIP filter; state comes from service territory.
+	// State + service territory name come from the serviceterritory object.
 	if idata.ServiceTerritory != nil {
 		if idata.ServiceTerritory.StateCode != "" {
-			stateCode := strings.ToUpper(idata.ServiceTerritory.StateCode)
-			inc.State = models.PtrString(stateCode)
-			// Populate ZipCodes with every ZIP in the program's state.
-			if zips := stateZIPs[stateCode]; len(zips) > 0 {
-				inc.ZipCodes = zips
-			}
+			inc.State = models.PtrString(strings.ToUpper(idata.ServiceTerritory.StateCode))
 		}
 		svcName := idata.ServiceTerritory.Name
 		if svcName == "" {
@@ -335,6 +330,26 @@ func mapEnergyStarRecord(
 		}
 		if svcName != "" {
 			inc.ServiceTerritory = models.PtrString(svcName)
+		}
+	}
+
+	// ZIP codes: prefer the API's own service-territory ZIP list (result.ZipCode,
+	// comma-separated).  This is the exact coverage area the utility registered —
+	// far more precise than dumping all ZIPs for the entire state.
+	// Only fall back to stateZIPs when the API provides no ZIPs (e.g. nationwide
+	// programs with available_nationwide = "Yes").
+	if result.ZipCode != "" {
+		parts := strings.Split(result.ZipCode, ",")
+		zips := make([]string, 0, len(parts))
+		for _, z := range parts {
+			if z = strings.TrimSpace(z); z != "" {
+				zips = append(zips, z)
+			}
+		}
+		inc.ZipCodes = zips
+	} else if inc.State != nil {
+		if zips := stateZIPs[*inc.State]; len(zips) > 0 {
+			inc.ZipCodes = zips
 		}
 	}
 
