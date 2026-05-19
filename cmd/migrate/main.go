@@ -200,6 +200,24 @@ func runEnergyStarNameFix(cfg *config.Config, tenants []config.TenantConfig, log
 	}
 	logger.Info("scrape complete", zap.Int("incentives", len(incentives)))
 
+	// Tag each incentive with the tenant IDs whose location filter matches.
+	// This populates rebate_tenant_status so PromoteTenant can find the rows.
+	if len(tenants) > 0 {
+		for i := range incentives {
+			for _, t := range tenants {
+				if t.MatchesIncentive(
+					incentives[i].State,
+					&incentives[i].UtilityCompany,
+					incentives[i].ServiceTerritory,
+					incentives[i].AvailableNationwide,
+					incentives[i].ZipCodes,
+				) {
+					incentives[i].TenantIDs = append(incentives[i].TenantIDs, t.ID)
+				}
+			}
+		}
+	}
+
 	upsertResult, err := db.UpsertToStaging(stagingDB, incentives, false)
 	if err != nil {
 		return fmt.Errorf("upsert to staging: %w", err)
