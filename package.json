@@ -29,7 +29,10 @@
     "refresh:rewiring_america": "node scripts/run.mjs rewiring_america --force-refresh",
     "refresh:energy_star": "node scripts/run.mjs energy_star --force-refresh",
 
-    "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql"
+    "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql",
+
+    "migrate": "node scripts/migrations/run-migration.mjs",
+    "migrate:001_energy_star_name_fix": "node scripts/migrations/run-migration.mjs 001_energy_star_name_fix"
   },
   "engines": {
     "node": ">=18"
