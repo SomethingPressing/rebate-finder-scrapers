@@ -348,19 +348,40 @@ func mapEnergyStarRecord(
 	}
 	inc.UtilityCompany = utility
 
+	// productGeneralName is the most-specific product label available.
+	// Priority: sub.override → general + sub.name → general → top-level product_general.
+	//
+	//   sub.override = "Mini- or Multi-Split Heat Pumps"  (already includes parent type)
+	//   sub.name     = "Air to Water"                     (subtype only — combine with general)
+	//   gen.name     = "Heat Pumps"                       (general type)
 	productGeneralName := result.ProductGeneral
-	if idata.ProductSubcategory != nil && idata.ProductSubcategory.General != nil {
-		if idata.ProductSubcategory.General.Name != "" {
-			productGeneralName = idata.ProductSubcategory.General.Name
+	if idata.ProductSubcategory != nil {
+		override := idata.ProductSubcategory.Override
+		subName := idata.ProductSubcategory.Name
+		generalName := ""
+		if idata.ProductSubcategory.General != nil {
+			generalName = idata.ProductSubcategory.General.Name
+		}
+		switch {
+		case override != "":
+			// Already fully descriptive (e.g. "Mini- or Multi-Split Heat Pumps").
+			productGeneralName = override
+		case generalName != "" && subName != "" &&
+			!strings.EqualFold(subName, "all") &&
+			!strings.EqualFold(subName, generalName):
+			// Combine: "Heat Pumps Air to Water"
+			productGeneralName = generalName + " " + subName
+		case generalName != "":
+			productGeneralName = generalName
 		}
 	}
 
-	// Include utility in the name so the full program is identifiable without
-	// also reading utility_company (matches how it appears in evaluation output).
+	// Program name: utility + most-specific product label, exactly as shown on
+	// the Energy Star website. No invented suffixes — the API has no "name" field.
 	if productGeneralName != "" {
-		inc.ProgramName = utility + " " + productGeneralName + " Rebate"
+		inc.ProgramName = utility + " " + productGeneralName
 	} else {
-		inc.ProgramName = utility + " Rebate Program"
+		inc.ProgramName = utility
 	}
 
 	// ── Category / type ─────────────────────────────────────────────────────
@@ -472,15 +493,12 @@ func mapEnergyStarRecord(
 		inc.ProgramURL = models.PtrString(idata.ProgramWebAddress)
 		inc.ApplicationURL = models.PtrString(idata.ProgramWebAddress)
 	}
-	// SourceURL: internal reference to the Energy Star catalog entry for this incentive.
-	// NOTE: energystar.gov/rebate-finder does not support stable per-program permalinks —
-	// the incentive_id parameter is ignored by their JS frontend which always shows
-	// a ZIP-code prompt.  This URL is stored for internal audit/evaluation use only;
-	// the UI suppresses it from user-facing pages.
-	if result.IncentiveID != "" {
-		inc.SourceURL = models.PtrString(
-			"https://www.energystar.gov/rebate-finder?incentive_id=" + result.IncentiveID,
-		)
+	// SourceURL: Energy Star rebate-finder page pre-filtered to this program's
+	// service territory ZIP + product category.  This is the closest Energy Star
+	// offers to a per-program permalink — they have no stable individual URLs,
+	// but zip_code_filter + product_general_filter narrows to a small relevant set.
+	if sourceURL := buildEnergyStarSourceURL(result.ZipCode, productGeneralName); sourceURL != "" {
+		inc.SourceURL = models.PtrString(sourceURL)
 	}
 	if idata.ContactEmail != "" {
 		inc.ContactEmail = models.PtrString(idata.ContactEmail)
@@ -701,6 +719,31 @@ func energyStarPortfolioLevel(utility string, availNationwide bool) string {
 		}
 	}
 	return "Utility"
+}
+
+// buildEnergyStarSourceURL constructs the closest thing Energy Star offers to a
+// per-program permalink: the rebate-finder page pre-filtered by the program's
+// service territory ZIP and product general name.
+//
+// Example output:
+//
+//	https://www.energystar.gov/rebate-finder/?zip_code_filter=24501
+//	    &product_general_filter=Heat+Pumps&product_general_isopen=1
+//
+// zipCodes is the comma-separated list from result.ZipCode.
+// Returns "" when no ZIP is available (nationwide programs have no ZIP).
+func buildEnergyStarSourceURL(zipCodes, productGeneral string) string {
+	// Pick the first ZIP from the comma-separated service territory list.
+	zip := strings.TrimSpace(strings.SplitN(zipCodes, ",", 2)[0])
+	if zip == "" {
+		return ""
+	}
+	// page_number=0 is required — without it the JS shows only the form, not results.
+	base := "https://www.energystar.gov/rebate-finder/?page_number=0&zip_code_filter=" + zip
+	if productGeneral != "" {
+		base += "&product_general_filter=" + url.QueryEscape(productGeneral) + "&product_general_isopen=1"
+	}
+	return base
 }
 
 // esProductCategoryToTag maps Energy Star API ProductCategory values to our
