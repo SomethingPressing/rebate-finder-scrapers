@@ -99,21 +99,21 @@
   },
   {
     "id": "energy_star_focus_on_energy_hear",
-    "source": "Energy Star",
+    "source": "energy_star",
     "description": "Focus on Energy Wisconsin Home Electrification Rebate Program",
     "url": "https://focusonenergy.com/ira-hear",
     "content_type": "text/html"
   },
   {
     "id": "energy_star_xcel_mn_thermostat",
-    "source": "Energy Star",
+    "source": "energy_star",
     "description": "Xcel Energy MN AC Rewards page (also in Energy Star catalog)",
     "url": "https://mn.my.xcelenergy.com/s/residential/heating-cooling/ac-rewards",
     "content_type": "text/html"
   },
   {
     "id": "energy_star_xcel_co_heat_pumps",
-    "source": "Energy Star",
+    "source": "energy_star",
     "description": "Xcel Energy CO heat pump rebates (also in Energy Star catalog)",
     "url": "https://co.my.xcelenergy.com/s/residential/heating-cooling/heat-pumps",
     "content_type": "text/html"

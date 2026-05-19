@@ -24,6 +24,9 @@ func runPreMigrations(db *gorm.DB) error {
 	if err := migrateLegacySourceIDNullable(db); err != nil {
 		return err
 	}
+	if err := migrateEnergyStarSourceName(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -54,6 +57,19 @@ func migrateToScraperSchema(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateEnergyStarSourceName normalises legacy rows that were stored with
+// source = 'Energy Star' (title-case with space) to the canonical snake_case
+// identifier 'energy_star' that matches EnergyStarScraper.Name().
+// Idempotent: no-op when no such rows exist.
+func migrateEnergyStarSourceName(db *gorm.DB) error {
+	schema := models.ScraperSchema
+	return db.Exec(`
+		UPDATE ` + schema + `.rebates_staging
+		SET    source = 'energy_star'
+		WHERE  source = 'Energy Star'
+	`).Error
 }
 
 // migrateLegacySourceIDNullable makes the old source_id column (pre-stg_ rename)

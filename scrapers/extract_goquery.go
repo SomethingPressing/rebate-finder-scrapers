@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/models"
 )
 
@@ -51,6 +52,11 @@ type PageExtractConfig struct {
 	// territory, and representative ZIP from page content.
 	// Returns empty strings when the state cannot be determined.
 	StateDetector func(text string) (state, territory, zip string)
+
+	// CategoryInferrer is optional. When set and inferCategories returns no
+	// match, the smart hybrid inferrer (embeddings + GPT-4o mini) is used as
+	// a fallback so novel program types are classified without keyword additions.
+	CategoryInferrer *categoryinfer.CategoryInferrer
 }
 
 // ExtractPageGoquery extracts a single models.Incentive from a goquery
@@ -201,7 +207,13 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	endDate := extractEndDate(pageText)
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
-	categories := inferCategories(pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
+	inferText := pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 2000)])
+	categories := inferCategories(inferText)
+	if len(categories) == 0 && cfg.CategoryInferrer != nil {
+		if tags, err := cfg.CategoryInferrer.Infer(programName); err == nil {
+			categories = tags
+		}
+	}
 
 	if format == "" {
 		format = "narrative"

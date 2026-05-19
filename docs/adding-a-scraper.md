@@ -149,6 +149,46 @@ LIMIT 10;
 
 ---
 
+## Category inference
+
+Every scraper should set `inc.CategoryTag` so programs are searchable by category. Use the three-tier strategy:
+
+**Tier 1 — keyword matching (always runs, free)**
+Call `inferCategories(text)` from `scrapers/html_helpers.go`. It matches lowercase substrings against a curated keyword list and covers the vast majority of programs. Pass the product name and any available context text.
+
+**Tier 2 & 3 — smart fallback (when `OPENAI_API_KEY` is set)**
+Add a `CategoryInferrer *categoryinfer.CategoryInferrer` field to your scraper struct and populate it from `cmd/scraper/main.go` (the `catInferrer` variable). When tier 1 returns nothing, the inferrer automatically:
+- Embeds the product name with `text-embedding-3-small` and picks the closest taxonomy category by cosine similarity (threshold 0.72).
+- Falls back to GPT-4o mini for low-confidence cases.
+
+```go
+import "github.com/incenva/rebate-scraper/internal/categoryinfer"
+
+type YourSourceScraper struct {
+    // ...
+    CategoryInferrer *categoryinfer.CategoryInferrer // optional
+}
+
+// In your mapping function:
+if tags := inferCategories(productName); len(tags) > 0 {
+    inc.CategoryTag = tags
+} else if s.CategoryInferrer != nil {
+    if tags, err := s.CategoryInferrer.Infer(productName); err == nil {
+        inc.CategoryTag = tags
+    }
+}
+```
+
+Register with the inferrer in `cmd/scraper/main.go`:
+```go
+reg.Register(&scrapers.YourSourceScraper{
+    // ...
+    CategoryInferrer: catInferrer, // nil when OPENAI_API_KEY is not set
+})
+```
+
+---
+
 ## Deterministic IDs
 
 Always use `models.DeterministicID` when the external source has its own stable identifier (integer ID, slug, etc.). This ensures re-scraping never creates duplicate rows:

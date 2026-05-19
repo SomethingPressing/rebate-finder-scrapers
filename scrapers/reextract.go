@@ -63,7 +63,7 @@ func reextractEnergyStar(jsonContent, version string, stateZIPs map[string][]str
 	if stateZIPs == nil {
 		stateZIPs = make(map[string][]string)
 	}
-	inc, ok := mapEnergyStarRecord(r, version, stateZIPs, zap.NewNop())
+	inc, ok := mapEnergyStarRecord(r, version, stateZIPs, zap.NewNop(), nil)
 	if !ok {
 		return nil
 	}

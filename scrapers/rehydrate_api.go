@@ -155,7 +155,7 @@ func (s *EnergyStarScraper) RehydrateStream(ctx context.Context, records []Rehyd
 			if _, known := knownIDs[result.IncentiveID]; !known {
 				continue
 			}
-			inc, ok := mapEnergyStarRecord(result, version, s.StateZIPs, s.Logger)
+			inc, ok := mapEnergyStarRecord(result, version, s.StateZIPs, s.Logger, nil)
 			if !ok || seen[inc.ID] {
 				continue
 			}

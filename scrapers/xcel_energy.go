@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gocolly/colly/v2"
+	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
 )
@@ -329,6 +330,8 @@ type XcelEnergyScraper struct {
 	ProxyURL string
 	// Limit caps how many URLs are visited. 0 means no limit.
 	Limit int
+	// CategoryInferrer enables smart embedding+LLM category inference as a fallback.
+	CategoryInferrer *categoryinfer.CategoryInferrer
 }
 
 // xcelExtractCfg is the shared goquery extraction config for Xcel Energy.
@@ -397,6 +400,7 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 
 	extractCfg := xcelExtractCfg
 	extractCfg.ScraperVersion = s.ScraperVersion
+	extractCfg.CategoryInferrer = s.CategoryInferrer
 
 	c := s.newCollector("www.xcelenergy.com")
 	permBlocked := trackPermissionErrors(c)

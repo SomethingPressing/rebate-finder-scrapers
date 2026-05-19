@@ -97,6 +97,12 @@ type Config struct {
 	// Env var: TENANTS_FILE — default: "config/tenants.json"
 	TenantsFile string
 
+	// OpenAIKey, when set, enables the smart category inferrer (embedding +
+	// GPT-4o mini fallback) for all scrapers.  Without a key, scrapers fall
+	// back to keyword-only category inference.
+	// Env var: OPENAI_API_KEY
+	OpenAIKey string
+
 	// Debug enables verbose per-item logging: every scraped incentive is logged
 	// at debug level with all fields and a raw response preview.
 	// Equivalent to setting LOG_LEVEL=debug but also enables structured
@@ -158,6 +164,7 @@ func Load() (*Config, error) {
 		Debug:                  getBoolEnv("DEBUG", false),
 		ForceURLUpdate:         getBoolEnv("FORCE_URL_UPDATE", false),
 		ForceRefresh:           getBoolEnv("FORCE_REFRESH", false),
+		OpenAIKey:              getEnv("OPENAI_API_KEY", ""),
 	}
 
 	return cfg, nil

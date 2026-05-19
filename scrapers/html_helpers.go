@@ -258,6 +258,7 @@ var categoryKeywords = []struct {
 	{"ground source", "Geothermal"},
 
 	// ── HVAC ─────────────────────────────────────────────────────────────────
+	{"heating & cooling", "HVAC"},
 	{"heat pump", "HVAC"},
 	{"mini-split", "HVAC"},
 	{"minisplit", "HVAC"},
@@ -352,6 +353,7 @@ var categoryKeywords = []struct {
 	{"ev_", "Electric Vehicles"},
 
 	// ── Weatherization ────────────────────────────────────────────────────────
+	{"building products", "Weatherization"},
 	{"weatherization", "Weatherization"},
 	{"weatheriz", "Weatherization"},
 	{"air sealing", "Weatherization"},
@@ -392,6 +394,20 @@ var categoryKeywords = []struct {
 	{"led", "Lighting"},
 
 	// ── Appliances ───────────────────────────────────────────────────────────
+	// Food-service / commercial kitchen items (listed before HVAC to prevent
+	// commercial-equipment programs from being misclassified as "HVAC").
+	{"commercial oven", "Appliances"},
+	{"commercial griddle", "Appliances"},
+	{"griddle", "Appliances"},
+	{"hot food holding", "Appliances"},
+	{"food holding", "Appliances"},
+	{"food warmer", "Appliances"},
+	{"food service equipment", "Appliances"},
+	{"commercial kitchen", "Appliances"},
+	{"commercial fryer", "Appliances"},
+	{"commercial steamer", "Appliances"},
+	{"commercial dishwasher", "Appliances"},
+	{"water cooler", "Appliances"},
 	{"appliance rebate", "Appliances"},
 	{"appliance recycl", "Appliances"},
 	{"appliance upgrade", "Appliances"},
@@ -462,6 +478,7 @@ var categoryKeywords = []struct {
 	{"rate program", "Demand Response"},
 
 	// ── Income Qualified ─────────────────────────────────────────────────────
+	{"general income", "Income Qualified"},
 	{"income-qualified", "Income Qualified"},
 	{"income qualified", "Income Qualified"},
 	{"income-eligible", "Income Qualified"},
@@ -504,6 +521,13 @@ var categoryKeywords = []struct {
 	{"all-electric", "Electrification"},
 	{"going electric", "Electrification"},
 	{"electrif", "Electrification"},
+	{"electric panel", "Electrification"},
+	{"electrical panel", "Electrification"},
+	{"panel upgrade", "Electrification"},
+	{"electric wiring", "Electrification"},
+	{"wiring upgrade", "Electrification"},
+	{"service upgrade", "Electrification"},
+	{"load center", "Electrification"},
 
 	// ── Financing ─────────────────────────────────────────────────────────────
 	{"0% apr", "Financing"},

@@ -55,6 +55,8 @@
 | `db/` | Database connection, AutoMigrate, idempotent migrations, upsert helpers |
 | `models/` | Domain types (`Incentive`, `StagedRebate`) and DB-specific adapters |
 | `scrapers/` | Scraper interface, registry, and all concrete scraper implementations |
+| `internal/llm/` | OpenAI REST client — incentive extraction (GPT-4o), category embedding (`text-embedding-3-small`), and category classification (GPT-4o mini) |
+| `internal/categoryinfer/` | Hybrid category inferrer: keyword fast-path → embedding similarity → GPT-4o mini |
 | `internal/logutil/` | Shared zap logger factory (JSON or console output) |
 
 ## Data Flow
@@ -96,5 +98,23 @@ All scrapers implement the `scrapers.Scraper` interface. The registry in `scrape
 ### 6. Shared DATABASE_URL
 The scraper and consumer app share the same PostgreSQL instance and `DATABASE_URL`. The DSN sanitizer in `db/dsn.go` strips Prisma-specific query parameters (e.g. `?schema=public`) so the GORM/pgx driver accepts them.
 
-### 7. AutoMigrate + hand-written migrations
+### 7. Hybrid category inference
+
+Each scraper classifies a program into taxonomy categories (HVAC, Solar, Appliances, etc.) using a three-tier strategy:
+
+```
+inferCategories(text)                  ← tier 1: keyword matching (fast, free)
+         │ no match
+         ▼
+CategoryInferrer.Infer(productName)
+  ├── Embed(productName)               ← tier 2: text-embedding-3-small cosine similarity
+  │        similarity ≥ threshold (0.72)  →  assign closest category
+  │        similarity < threshold
+  │        ▼
+  └── ClassifyCategory(productName)   ← tier 3: GPT-4o mini single-category pick
+```
+
+The `CategoryInferrer` is created once at startup (shared across all scrapers) and requires `OPENAI_API_KEY`. Without the key, all scrapers fall back to tier 1 keyword-only inference. Category embeddings are lazy-initialized on first use and cached for the process lifetime. Per-product results are also cached by input string so the same product name across multiple states only costs one embedding call.
+
+### 8. AutoMigrate + hand-written migrations
 GORM's `AutoMigrate` creates tables and adds missing columns on startup. Hand-written migrations in `db/migrations.go` handle changes AutoMigrate can't safely do (e.g. adding a `NOT NULL` column to a table that already has rows). AutoMigrate always runs first so the table exists before the migrations try to alter it.

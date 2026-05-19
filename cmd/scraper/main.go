@@ -37,6 +37,8 @@ import (
 
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
+	"github.com/incenva/rebate-scraper/internal/categoryinfer"
+	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/internal/logutil"
 	"github.com/incenva/rebate-scraper/internal/zipdata"
 	"github.com/incenva/rebate-scraper/models"
@@ -131,6 +133,15 @@ func main() {
 		logger.Info("uszips.csv loaded", zap.Int("states", len(stateZIPs)))
 	}
 
+	// ── Smart category inferrer (optional — requires OPENAI_API_KEY) ─────────
+	var catInferrer *categoryinfer.CategoryInferrer
+	if cfg.OpenAIKey != "" {
+		catInferrer = categoryinfer.New(llm.NewClient(cfg.OpenAIKey), 0)
+		logger.Info("smart category inferrer enabled (embedding + GPT-4o mini)")
+	} else {
+		logger.Info("smart category inferrer disabled — set OPENAI_API_KEY to enable")
+	}
+
 	// ── Scraper registry ──────────────────────────────────────────────────────
 	// Compute the effective per-source fetch limit.
 	// Priority: --limit flag > tenant config > no limit.
@@ -167,14 +178,14 @@ func main() {
 	reg.Register(&scrapers.EnergyStarScraper{
 		BaseURL: cfg.EnergyStarAPIBaseURL, PageDelay: cfg.PageDelay,
 		MaxConcurrency: cfg.MaxConcurrency, ScraperVersion: cfg.ScraperVersion,
-		StateZIPs: stateZIPs, Logger: logger,
-		Limit: effectiveLimit,
+		StateZIPs: stateZIPs, Logger: logger, Limit: effectiveLimit,
+		CategoryInferrer: catInferrer,
 	})
-	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
-	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
-	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
-	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
-	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit})
+	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
+	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
+	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
+	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
+	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
 
 	// ── Validate --source ─────────────────────────────────────────────────────
 	if source != "" {

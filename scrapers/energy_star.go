@@ -14,12 +14,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
 )
 
 // scraperVersion is bumped whenever the mapping logic changes.
 const energyStarScraperVersion = "1.0"
+
+// energyStarSource is the canonical source identifier stored in the DB.
+// Must match EnergyStarScraper.Name() so CLI flags like -source energy_star work.
+const energyStarSource = "energy_star"
 
 // energyStarAPIPath is the fixed path for the rebate search endpoint.
 const energyStarAPIPath = "/productfinder/api/imp_rebate_results/search"
@@ -50,6 +55,11 @@ type EnergyStarScraper struct {
 	StateZIPs map[string][]string
 	// Limit caps how many pages are fetched. 0 means no limit.
 	Limit int
+
+	// CategoryInferrer is optional. When set, programs whose product names
+	// produce no keyword match fall back to embedding similarity + GPT-4o mini
+	// classification instead of the raw API product-category string.
+	CategoryInferrer *categoryinfer.CategoryInferrer
 
 	Logger     *zap.Logger
 	HTTPClient *http.Client
@@ -110,7 +120,7 @@ func (s *EnergyStarScraper) ScrapeStream(ctx context.Context, sink func([]models
 	flushPage := func(results []models.EnergyStarRawResult) {
 		var batch []models.Incentive
 		for _, result := range results {
-			inc, ok := mapEnergyStarRecord(result, version, s.StateZIPs, s.Logger)
+			inc, ok := mapEnergyStarRecord(result, version, s.StateZIPs, s.Logger, s.CategoryInferrer)
 			if !ok || seen[inc.ID] {
 				continue
 			}
@@ -284,6 +294,7 @@ func mapEnergyStarRecord(
 	scraperVersion string,
 	stateZIPs map[string][]string,
 	log *zap.Logger,
+	ci *categoryinfer.CategoryInferrer,
 ) (models.Incentive, bool) {
 	// Parse the nested incentivedata JSON blob.
 	var idata models.EnergyStarIncentiveData
@@ -297,7 +308,7 @@ func mapEnergyStarRecord(
 		}
 	}
 
-	inc := models.NewIncentive("Energy Star", scraperVersion)
+	inc := models.NewIncentive(energyStarSource, scraperVersion)
 
 	if raw, err := json.Marshal(result); err == nil {
 		inc.RawResponse = string(raw)
@@ -355,12 +366,26 @@ func mapEnergyStarRecord(
 	// ── Category / type ─────────────────────────────────────────────────────
 	inc.ProductCategory = models.PtrString(result.ProductCategory)
 
-	// Derive tech-category tags from the product name/category rather than
-	// from IncentiveType (which returns delivery mechanism names like "Rebate").
-	if tags := inferCategories(productGeneralName + " " + result.ProductCategory); len(tags) > 0 {
+	// Derive tech-category tags from the product general name only.
+	// Deliberately exclude result.ProductCategory from the inference text: the
+	// Energy Star API uses overly broad labels (e.g. "HVAC" for commercial ovens)
+	// that cause false category matches.
+	if tags := inferCategories(productGeneralName); len(tags) > 0 {
 		inc.CategoryTag = tags
-	} else if result.ProductCategory != "" {
-		inc.CategoryTag = []string{result.ProductCategory}
+	} else if ci != nil {
+		// Smart fallback: embedding similarity → GPT-4o mini.
+		if tags, err := ci.Infer(productGeneralName); err == nil && len(tags) > 0 {
+			inc.CategoryTag = tags
+		} else {
+			if err != nil {
+				log.Debug("categoryinfer failed", zap.String("product", productGeneralName), zap.Error(err))
+			}
+			if mapped := esProductCategoryToTag(result.ProductCategory); mapped != "" {
+				inc.CategoryTag = []string{mapped}
+			}
+		}
+	} else if mapped := esProductCategoryToTag(result.ProductCategory); mapped != "" {
+		inc.CategoryTag = []string{mapped}
 	}
 
 	// ── Customer / market segment ────────────────────────────────────────────
@@ -672,6 +697,28 @@ func energyStarPortfolioLevel(utility string, availNationwide bool) string {
 		}
 	}
 	return "Utility"
+}
+
+// esProductCategoryToTag maps Energy Star API ProductCategory values to our
+// canonical taxonomy tags.  Returns "" for API-internal values that should not
+// be stored as user-facing category tags (delivery mechanism names, "Other").
+func esProductCategoryToTag(apiCategory string) string {
+	switch strings.TrimSpace(apiCategory) {
+	// Normalize API-specific terms to our taxonomy.
+	case "Building Products":
+		return "Weatherization"
+	case "Heating & Cooling":
+		return "HVAC"
+	case "Electronics", "Office Equipment":
+		return "Appliances"
+	case "General Income":
+		return "Income Qualified"
+	// Delivery mechanism names and internal API values — not meaningful categories.
+	case "Other", "Rebate", "Point-of-Sale Discount", "Special Pricing", "":
+		return ""
+	default:
+		return apiCategory
+	}
 }
 
 // ── Timestamp helper ──────────────────────────────────────────────────────────

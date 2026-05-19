@@ -24,7 +24,6 @@ var fetchClient = &http.Client{Timeout: 15 * time.Second}
 // the program URL (which points to the public website, not the API endpoint).
 var apiSources = map[string]bool{
 	"dsireusa":    true,
-	"Energy Star": true,
 	"energy_star": true,
 }
 
@@ -288,7 +287,7 @@ func resolveSourceURL(row models.StagedRebate) string {
 				return fmt.Sprintf("https://programs.dsireusa.org/system/program/detail/%d", obj.ID)
 			}
 		}
-	case "Energy Star", "energy_star":
+	case "energy_star":
 		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
 			var obj struct {
 				IncentiveID string `json:"incentive_id"`
