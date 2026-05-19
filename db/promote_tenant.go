@@ -211,6 +211,7 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 			ApplicationURL:       merged.applicationURL,
 			ApplicationProcess:   merged.applicationProcess,
 			ProgramURL:           merged.programURL,
+			SourceURL:            merged.sourceURL,
 			ContactEmail:         merged.contactEmail,
 			ContactPhone:         merged.contactPhone,
 			ImageURL:             merged.imageURL,

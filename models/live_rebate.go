@@ -68,6 +68,10 @@ type LiveRebate struct {
 	ApplicationURL     *string `gorm:"column:application_url"`
 	ApplicationProcess *string `gorm:"column:application_process"`
 	ProgramURL         *string `gorm:"column:program_url"`
+	// SourceURL is the canonical URL in the originating data system
+	// (e.g. energystar.gov/rebate-finder?incentive_id=…, programs.dsireusa.org/…).
+	// Distinct from ProgramURL which is the utility's own website.
+	SourceURL          *string `gorm:"column:source_url"`
 	ContactEmail       *string `gorm:"column:contact_email"`
 	ContactPhone       *string `gorm:"column:contact_phone"`
 	ImageURL           *string `gorm:"column:image_url"`
@@ -101,7 +105,7 @@ var liveRebateUpdateCols = []string{
 	"customer_type", "administrator", "implementing_sector",
 	"source", "sources",
 	"start_date", "end_date", "while_funds_last",
-	"application_url", "application_process", "program_url",
+	"application_url", "application_process", "program_url", "source_url",
 	"contact_email", "contact_phone",
 	"image_url", "image_urls",
 	"contractor_required", "energy_audit_required",

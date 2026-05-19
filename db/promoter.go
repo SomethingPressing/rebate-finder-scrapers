@@ -247,6 +247,7 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			ApplicationURL:       merged.applicationURL,
 			ApplicationProcess:   merged.applicationProcess,
 			ProgramURL:           merged.programURL,
+			SourceURL:            merged.sourceURL,
 			ContactEmail:         merged.contactEmail,
 			ContactPhone:         merged.contactPhone,
 			ImageURL:             merged.imageURL,
@@ -614,6 +615,7 @@ type promoterMerged struct {
 	applicationURL       *string
 	applicationProcess   *string
 	programURL           *string
+	sourceURL            *string
 	contactEmail         *string
 	contactPhone         *string
 	imageURL             *string
@@ -678,6 +680,7 @@ func mergePromoterGroup(rows []models.StagedRebate) promoterMerged {
 		applicationURL:       pickText(rows, func(r models.StagedRebate) *string { return r.ApplicationURL }),
 		applicationProcess:   pickText(rows, func(r models.StagedRebate) *string { return r.ApplicationProcess }),
 		programURL:           pickText(rows, func(r models.StagedRebate) *string { return r.ProgramURL }),
+		sourceURL:            pickText(rows, func(r models.StagedRebate) *string { return r.SourceURL }),
 		contactEmail:         pickText(rows, func(r models.StagedRebate) *string { return r.ContactEmail }),
 		contactPhone:         pickText(rows, func(r models.StagedRebate) *string { return r.ContactPhone }),
 		imageURL:             pickText(rows, func(r models.StagedRebate) *string { return r.ImageURL }),

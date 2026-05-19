@@ -1,137 +1,106 @@
-# Category Refactor — Issue #82
-## Refactor app categories and unify them across the app and scrapers
+# Issue #82 — Refactor app categories and unify them across the app and scrapers
 
 ---
 
-## Problem
+## User Story 1 — Normalized category data model
 
-Categories were broken in three distinct ways:
+**As an** admin,
+**I want** rebate programs to be linked to a canonical list of categories (HVAC, Solar, Appliances, etc.) stored in their own database table,
+**So that** category tiles on the homepage and search filters always reflect real taxonomy entries and cannot break because of a typo in a raw string array.
 
-1. **Misclassification** — The Energy Star scraper passed the API's `product_category` field (e.g. `"HVAC"`) directly into keyword inference, causing commercial food-service equipment (ovens, griddles, holding cabinets) to be tagged as `HVAC`.
-
-2. **Raw API values stored as tags** — When keyword inference found no match, the scraper stored the raw Energy Star API category string literally (e.g. `"Other"`, `"Building Products"`, `"General Income"`, `"Point-of-Sale Discount"`). These are internal API taxonomy values, not user-facing category names.
-
-3. **Missing categories** — Electric panel upgrades, wiring upgrades, and other IRA HEAR electrification items had no category (`{Other}`) because no keywords existed for them.
-
----
-
-## What was changed
-
-### 1. Extended keyword inference (`scrapers/html_helpers.go`)
-
-Added missing keyword → category mappings to `inferCategories()`:
-
-| Keywords added | Category |
-|---|---|
-| `electric panel`, `electrical panel`, `panel upgrade` | `Electrification` |
-| `electric wiring`, `wiring upgrade`, `service upgrade`, `load center` | `Electrification` |
-| `commercial oven`, `commercial griddle`, `griddle`, `hot food holding`, `food holding`, `food warmer`, `food service equipment`, `commercial kitchen`, `commercial fryer`, `commercial steamer`, `commercial dishwasher` | `Appliances` |
-| `heating & cooling` | `HVAC` |
-| `building products` | `Weatherization` |
-| `general income` | `Income Qualified` |
-| `water cooler` | `Appliances` |
-
-These keywords cover all product types found during the db-mode evaluation that were previously falling through to raw API values.
+**Acceptance criteria:**
+- A `categories` table exists with `id`, `name` (unique), `slug` (unique), and `portfolio` (parent group)
+- Rebates link to categories through a `rebate_categories` join table, not a raw `String[]` column
+- The old `category_tag String[]` and `db_values String[]` columns are removed
+- `pnpm db:seed` auto-populates all canonical categories from the shared taxonomy config so a fresh deployment requires no manual data entry
+- Existing rebates are backfilled so no program loses its category after migration
 
 ---
 
-### 2. Fixed Energy Star category inference (`scrapers/energy_star.go`)
+## User Story 2 — Portfolio tiles driven by data, not hardcoded strings
 
-**Root cause:** `inferCategories(productGeneralName + " " + result.ProductCategory)` — appending the API's `product_category` string caused the keyword `"hvac"` to match for commercial ovens (because Energy Star classifies all commercial kitchen equipment under `"Heating & Cooling"` in their internal taxonomy).
+**As an** admin,
+**I want** homepage portfolio tiles (Energy Efficiency, Electric Vehicles, etc.) to be managed from the admin UI with drag-and-drop ordering and visibility toggles,
+**So that** I can update what appears on the homepage without touching code or doing a deployment.
 
-**Fix:** Run keyword inference on `productGeneralName` only. Removed `result.ProductCategory` from the inference text entirely.
-
-**Added `esProductCategoryToTag()`** — An explicit last-resort mapping for when both keyword inference AND the smart inferrer return nothing:
-
-| Energy Star API value | Our taxonomy |
-|---|---|
-| `Building Products` | `Weatherization` |
-| `Heating & Cooling` | `HVAC` |
-| `Electronics`, `Office Equipment` | `Appliances` |
-| `General Income` | `Income Qualified` |
-| `Other`, `Rebate`, `Point-of-Sale Discount`, `Special Pricing` | *(skipped — not a real category)* |
+**Acceptance criteria:**
+- A `portfolios` table exists; each row represents one homepage tile group
+- Admin `HomepageSettings` page lists all portfolios and lets me reorder, show/hide, and link canonical categories to each tile
+- Public homepage reads portfolios from the API, not from a hardcoded config
+- API routes exist: `GET/POST/PATCH/DELETE /api/portfolios`, `PATCH /api/portfolios/reorder`, `GET /api/portfolios/public`
+- `Portfolio` is no longer written by scrapers — it is derived at promotion time from linked categories using the shared taxonomy map
 
 ---
 
-### 3. Hybrid smart category inferrer (`internal/categoryinfer/`, `internal/llm/embed.go`)
+## User Story 3 — Implementing sector field
 
-To eliminate the need for ever-growing keyword lists, added a three-tier fallback used by **all scrapers**:
+**As a** user browsing programs,
+**I want** to see whether a rebate is offered by a Utility, a State agency, or the Federal government,
+**So that** I can understand who is funding the program and whether it applies to me regardless of my utility provider.
 
-```
-Tier 1 — inferCategories(text)
-          Keyword substring matching — fast, free, runs first always.
-          Covers the vast majority of programs.
-          ↓ no match
-Tier 2 — text-embedding-3-small cosine similarity
-          Embeds the product name and compares against embeddings of all
-          taxonomy category names. Threshold: 0.72.
-          Handles paraphrases and novel product names without keyword additions.
-          ↓ similarity < 0.72
-Tier 3 — gpt-4o-mini single-category classification
-          Explicit LLM call for genuinely ambiguous cases.
-          Returns the single best taxonomy category name.
-```
-
-**Cost:** Category embeddings are computed once per process start and cached. Individual product results cached by input string — the same product name across 50 states costs **one** embedding call total.
-
-**Opt-in:** Requires `OPENAI_API_KEY`. Without it, all scrapers fall back gracefully to tier 1 keyword-only inference with no error.
+**Acceptance criteria:**
+- `implementing_sector` field exists on the `Rebate` model (`Utility` | `State` | `Federal`)
+- All scrapers populate this field based on the program's administering body, not the product category
+- The field is displayed on the public program page and in search results
+- All existing promoted rebates are backfilled with the correct sector value
 
 ---
 
-### 4. Wired into all scrapers (`cmd/scraper/main.go`)
+## User Story 4 — Single shared taxonomy across app and scrapers
 
-One shared `CategoryInferrer` instance is created at startup and injected into every scraper:
+**As a** developer,
+**I want** the list of valid category names and their parent portfolio groups to be defined in one place that both the Next.js app and the Go scraper service import from,
+**So that** a new category added in the app automatically becomes available in all scrapers without any manual synchronisation.
 
-- `EnergyStarScraper` — via `CategoryInferrer` field on the struct
-- `ConEdisonScraper`, `PNMScraper`, `XcelEnergyScraper`, `SRPScraper`, `PeninsulaCleanEnergyScraper` — via `CategoryInferrer` field propagated into `PageExtractConfig` at scrape time
-
----
-
-### 5. Fixed source name inconsistency (blocker for evaluator)
-
-`EnergyStarScraper.Name()` returned `"energy_star"` but `models.NewIncentive("Energy Star", ...)` stored `source = 'Energy Star'` in the database — with a space and different casing. This caused `pnpm eval -- -source energy_star` to find zero rows.
-
-**Fix:**
-- Changed `NewIncentive(...)` to use `energyStarSource = "energy_star"` (the constant now matches `Name()`)
-- Added idempotent DB migration that updated **3,040 existing rows**
-- Updated `eval_testcases.json` source field from `"Energy Star"` → `"energy_star"`
-- Cleaned up `apiSources` map and `resolveSourceURL` switch in the evaluator
+**Acceptance criteria:**
+- `src/lib/categoryConfig.ts` is the single source of truth in the app — all views, hooks, and seed scripts import from it
+- `models/taxonomy.go` in the scraper service mirrors the same category-to-portfolio mapping
+- The promoter (`cmd/promoter`) uses `CategoryPortfolioMap` to auto-create category rows when promoting a staging row — no category needs to be created manually
+- If a scraper produces a `category_tag` value that is not in the taxonomy map, it is flagged as unknown rather than silently stored
 
 ---
 
-### 6. Updated documentation
+## User Story 5 — Correct category tags for all scrapers
 
-- **`docs/architecture.md`** — Added the three-tier inference diagram and description under a new "Hybrid category inference" section
-- **`docs/adding-a-scraper.md`** — Added a "Category inference" section explaining how to wire `CategoryInferrer` into a new scraper, with code examples
+**As a** user searching by category,
+**I want** every rebate program to have an accurate category tag regardless of which scraper ingested it,
+**So that** filtering by "Appliances" returns ovens and dryers, not HVAC equipment, and filtering by "Electrification" returns panel upgrades and wiring programs.
+
+**Acceptance criteria:**
+- DSIRE, Rewiring America, Energy Star, Con Edison, PNM, Xcel Energy, SRP, and Peninsula Clean Energy all produce category tags from the shared taxonomy
+- Commercial food-service equipment (ovens, griddles, holding cabinets) is tagged `Appliances`, not `HVAC`
+- Electric panel upgrades, wiring upgrades, and IRA HEAR electrification items are tagged `Electrification`
+- Raw Energy Star API category strings (`"Other"`, `"Building Products"`, `"General Income"`, `"Point-of-Sale Discount"`) are never stored as user-facing tags
+- A three-tier fallback handles novel product types without requiring keyword additions:
+  1. Keyword substring matching (free, instant)
+  2. `text-embedding-3-small` cosine similarity against all taxonomy categories (threshold 0.72)
+  3. `gpt-4o-mini` explicit classification for low-confidence cases
+- The smart inferrer is optional — scrapers work correctly without `OPENAI_API_KEY`, falling back to keyword-only inference
 
 ---
 
-## Result
+## User Story 6 — Evaluator works with correct source identifiers
 
-| Before | After |
-|---|---|
-| Commercial ovens, griddles → `HVAC` (wrong) | → `Appliances` ✓ |
-| Electric panel/wiring upgrades → `{Other}` (blank) | → `Electrification` ✓ |
-| `pnpm eval -- -source energy_star` → "no rows found" | → works correctly ✓ |
-| Novel product types require keyword additions | → handled by embedding + GPT-4o mini ✓ |
-| Raw API values (`"Building Products"`, `"General Income"`) stored as tags | → mapped to correct taxonomy ✓ |
+**As a** developer running the data-quality evaluator,
+**I want** `pnpm eval -- -source energy_star` to return results,
+**So that** I can evaluate Energy Star data quality without having to know the internal casing used in the database.
+
+**Acceptance criteria:**
+- The `source` column in `rebates_staging` and `rebates` matches the scraper's `Name()` value (`"energy_star"`, `"dsireusa"`, etc.) exactly
+- All existing rows where `source = 'Energy Star'` are migrated to `'energy_star'` via an idempotent DB migration
+- `pnpm eval -- -source energy_star -n 5` runs successfully and returns scored results
 
 ---
 
-## Files changed
+## Summary table
 
-| File | Change |
-|---|---|
-| `scrapers/html_helpers.go` | Added ~20 keyword mappings to `inferCategories` |
-| `scrapers/energy_star.go` | Fixed inference input, added `esProductCategoryToTag`, source name constant, `CategoryInferrer` field |
-| `scrapers/extract_goquery.go` | Added `CategoryInferrer` to `PageExtractConfig`, used as fallback in `ExtractPageGoquery` |
-| `scrapers/con_edison.go`, `pnm.go`, `xcel_energy.go`, `srp.go`, `peninsula_clean_energy.go` | Added `CategoryInferrer` field + propagation to `extractCfg` |
-| `scrapers/reextract.go`, `rehydrate_api.go` | Updated `mapEnergyStarRecord` call signature (added `nil` for inferrer) |
-| `internal/llm/embed.go` | New — `Embed()` and `ClassifyCategory()` methods on `Client` |
-| `internal/categoryinfer/inferrer.go` | New — `CategoryInferrer` struct with three-tier logic |
-| `config/config.go` | Added `OpenAIKey` field |
-| `cmd/scraper/main.go` | Builds shared `CategoryInferrer`, injects into all scrapers |
-| `db/migrations.go` | Added `migrateEnergyStarSourceName` migration |
-| `testdata/eval_testcases.json` | `"Energy Star"` → `"energy_star"` in all 3 entries |
-| `docs/architecture.md` | Added hybrid inference section |
-| `docs/adding-a-scraper.md` | Added category inference guide |
+| Area | Before | After |
+|---|---|---|
+| App category storage | Raw `String[]` on rebate | Normalized `Category` model + join table |
+| Homepage tiles | Hardcoded `db_values` string match | Linked to `Category` rows via join; admin-managed |
+| Portfolio grouping | Hardcoded array written by scrapers | Derived at promotion time from shared taxonomy map |
+| Taxonomy definition | Duplicated separately in app TS and scraper Go | Single source of truth in each repo, kept in sync |
+| Commercial kitchen equipment | Tagged as `HVAC` | Tagged as `Appliances` |
+| Electric panel / wiring upgrades | `{Other}` — no category | Tagged as `Electrification` |
+| Novel product types | Required keyword additions to ship a fix | Handled automatically by embedding + GPT-4o mini |
+| `pnpm eval -- -source energy_star` | "no staging rows found" | Works correctly |
