@@ -472,7 +472,11 @@ func mapEnergyStarRecord(
 		inc.ProgramURL = models.PtrString(idata.ProgramWebAddress)
 		inc.ApplicationURL = models.PtrString(idata.ProgramWebAddress)
 	}
-	// SourceURL: the Energy Star rebate-finder listing page for this incentive.
+	// SourceURL: internal reference to the Energy Star catalog entry for this incentive.
+	// NOTE: energystar.gov/rebate-finder does not support stable per-program permalinks —
+	// the incentive_id parameter is ignored by their JS frontend which always shows
+	// a ZIP-code prompt.  This URL is stored for internal audit/evaluation use only;
+	// the UI suppresses it from user-facing pages.
 	if result.IncentiveID != "" {
 		inc.SourceURL = models.PtrString(
 			"https://www.energystar.gov/rebate-finder?incentive_id=" + result.IncentiveID,
