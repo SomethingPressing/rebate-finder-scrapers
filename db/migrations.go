@@ -40,18 +40,42 @@ func runPreMigrations(db *gorm.DB) error {
 func migrateToScraperSchema(db *gorm.DB) error {
 	schema := models.ScraperSchema
 	for _, table := range []string{"rebates_staging", "pdf_scrape_raw"} {
-		var count int64
+		// Check if the table still lives in public.
+		var publicCount int64
 		if err := db.Raw(`
 			SELECT COUNT(*)
 			FROM   information_schema.tables
 			WHERE  table_schema = 'public'
 			AND    table_name   = ?
-		`, table).Scan(&count).Error; err != nil {
+		`, table).Scan(&publicCount).Error; err != nil {
 			return err
 		}
-		if count == 0 {
-			continue // already moved or never existed in public
+		if publicCount == 0 {
+			continue // not in public — nothing to do
 		}
+
+		// Check whether the table already exists in the target schema.
+		// This can happen when a previous partial deployment moved the data
+		// but left a stale empty copy in public.
+		var schemaCount int64
+		if err := db.Raw(`
+			SELECT COUNT(*)
+			FROM   information_schema.tables
+			WHERE  table_schema = ?
+			AND    table_name   = ?
+		`, schema, table).Scan(&schemaCount).Error; err != nil {
+			return err
+		}
+
+		if schemaCount > 0 {
+			// Target already has the table — the public copy is stale; drop it.
+			if err := db.Exec(`DROP TABLE public.` + table).Error; err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Move from public to target schema.
 		if err := db.Exec(`ALTER TABLE public.` + table + ` SET SCHEMA ` + schema).Error; err != nil {
 			return err
 		}
