@@ -105,7 +105,8 @@ func runEnergyStarNameFix(cfg *config.Config, tenants []config.TenantConfig, log
 
 	if len(tenants) == 0 {
 		// Single-tenant: live DB uses the same DSN, public schema.
-		d, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, "public")
+		// Use ConnectTenantDB — no scraper schema setup or pre-migrations.
+		d, err := db.ConnectTenantDB(cfg.DatabaseURL, cfg.LogLevel)
 		if err != nil {
 			return fmt.Errorf("connect live db (single-tenant): %w", err)
 		}
@@ -118,7 +119,9 @@ func runEnergyStarNameFix(cfg *config.Config, tenants []config.TenantConfig, log
 				logger.Warn("tenant has no DB URL — skipping", zap.String("tenant", t.ID))
 				continue
 			}
-			d, err := db.Connect(dsn, cfg.LogLevel, "public")
+			// ConnectTenantDB skips scraper pre-migrations — tenant DBs only
+			// have public.rebates and related tables, not rebates_staging.
+			d, err := db.ConnectTenantDB(dsn, cfg.LogLevel)
 			if err != nil {
 				return fmt.Errorf("connect live db for tenant %q: %w", t.ID, err)
 			}
