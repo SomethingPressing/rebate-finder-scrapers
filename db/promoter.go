@@ -687,7 +687,7 @@ func mergePromoterGroup(rows []models.StagedRebate) promoterMerged {
 
 		// Arrays — union across all sources, dedup case-insensitively.
 		categoryTag: unionStrings(rows, func(r models.StagedRebate) []string { return r.CategoryTag }),
-		segment:     unionStrings(rows, func(r models.StagedRebate) []string { return r.Segment }),
+		segment:     normalizeSegments(unionStrings(rows, func(r models.StagedRebate) []string { return r.Segment })),
 		imageURLs:   unionStrings(rows, func(r models.StagedRebate) []string { return r.ImageURLs }),
 	}
 
@@ -739,6 +739,83 @@ func collectPromoterZips(rows []models.StagedRebate) []string {
 	}
 	sort.Strings(zips)
 	return zips
+}
+
+// ── Segment normalization ─────────────────────────────────────────────────────
+
+// canonicalSegments is the authoritative list of audience segments — mirrors
+// SEGMENTS in src/lib/taxonomyConfig.ts.
+var canonicalSegments = map[string]struct{}{
+	"Residential": {}, "Commercial": {}, "Industrial": {},
+	"Multifamily": {}, "Agricultural": {}, "Government": {}, "Nonprofit": {},
+}
+
+// segmentNormMap maps raw scraper values to one or more canonical segments.
+// Values absent from this map are discarded (utility/contractor segments that
+// don't represent end-customer audiences).
+var segmentNormMap = map[string][]string{
+	// ── Direct matches ──────────────────────────────────────────────────────
+	"residential":  {"Residential"},
+	"commercial":   {"Commercial"},
+	"industrial":   {"Industrial"},
+	"multifamily":  {"Multifamily"},
+	"agricultural": {"Agricultural"},
+	"nonprofit":    {"Nonprofit"},
+	"nonprofits":   {"Nonprofit"},
+
+	// ── Residential variants ────────────────────────────────────────────────
+	"low income residential":      {"Residential"},
+	"low-income residential":      {"Residential"},
+	"multifamily residential":     {"Multifamily"},
+	"homeowner":                   {"Residential"},
+	"renter":                      {"Residential"},
+	"residential and commercial":  {"Residential", "Commercial"},
+	"residential & commercial":    {"Residential", "Commercial"},
+
+	// ── Government variants ────────────────────────────────────────────────
+	"local government":   {"Government"},
+	"state government":   {"Government"},
+	"federal government": {"Government"},
+	"tribal government":  {"Government"},
+	"schools":            {"Government"},
+	"institutional":      {"Government"},
+	"municipal":          {"Government"},
+	"municipalities":     {"Government"},
+
+	// ── Multi-segment shorthands ───────────────────────────────────────────
+	"all sectors":   {"Residential", "Commercial", "Industrial", "Government", "Nonprofit"},
+	"all customers": {"Residential", "Commercial", "Industrial"},
+}
+
+// normalizeSegments maps a slice of raw scraper segment strings to the
+// canonical set, deduplicates, and discards unrecognised values (utilities,
+// contractors, manufacturers, etc.).
+func normalizeSegments(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	var out []string
+	for _, v := range raw {
+		key := strings.ToLower(strings.TrimSpace(v))
+		// Already canonical — accept directly.
+		if _, ok := canonicalSegments[strings.Title(key)]; ok { //nolint:staticcheck
+			canonical := strings.Title(key) //nolint:staticcheck
+			if _, dup := seen[canonical]; !dup {
+				seen[canonical] = struct{}{}
+				out = append(out, canonical)
+			}
+			continue
+		}
+		// Map via the normalization table.
+		if mapped, ok := segmentNormMap[key]; ok {
+			for _, c := range mapped {
+				if _, dup := seen[c]; !dup {
+					seen[c] = struct{}{}
+					out = append(out, c)
+				}
+			}
+		}
+		// Unrecognised values (utility, contractor, supplier roles) are dropped.
+	}
+	return out
 }
 
 // ── Field-pick helpers ────────────────────────────────────────────────────────
