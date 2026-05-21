@@ -92,6 +92,20 @@ var conEdisonFilterCfg = FilterConfig{
 		"/contractor-portal",
 		"/supplier",
 		"/vendor",
+
+		// Community affairs / PR updates — not customer rebate programs
+		"/community-affairs",
+		"/community-updates",
+		"/community-affairs/community-updates",
+
+		// RFP / procurement pages — not customer-facing incentives
+		"/request-for-proposals",
+		"/rfp",
+		"/bulk-energy-storage",
+		"/business-opportunities",
+
+		// Archive / historical pages — programs no longer active
+		"/archive",
 	},
 
 	// ── Inclusions ─────────────────────────────────────────────────────────
@@ -425,7 +439,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	contactEmail := extractEmail(pageText)
 
 	// Infer category from URL and title.
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)]))
 
 	// Build stable ID.
 	id := models.DeterministicID(conEdisonSourceName, pageURL)

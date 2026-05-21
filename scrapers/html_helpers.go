@@ -47,8 +47,9 @@ var (
 	reEnergyAuditRequired  = regexp.MustCompile(`(?i)(?:energy audit required|home assessment required|home energy assessment|home energy checkup required|pre-inspection required)`)
 	reCurrentlyActive      = regexp.MustCompile(`(?i)(?:expired|program ended|no longer available|program closed|funding exhausted|wait ?list)`)
 	reIncomeQualified      = regexp.MustCompile(`(?i)(?:low.income|income.qualified|income.eligible|CARE|FERA|LIHEAP|Good Neighbor|affordable|<\s*\d+%\s*AMI|\d+%\s*(?:of\s+)?(?:area\s+median|AMI))`)
-	reStartDate            = regexp.MustCompile(`(?i)(?:effective|start(?:s|ing)?|begin(?:s|ning)?|as of|from)\s+(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},?\s*\d{4})`)
-	reEndDate              = regexp.MustCompile(`(?i)(?:end(?:s|ing)?|expires?|through|until|deadline|valid\s+through|offer\s+ends?)\s+(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},?\s*\d{4}|\w+ \d{4}|December 31,?\s*\d{4}|April 30,?\s*\d{4})`)
+	reStartDate = regexp.MustCompile(`(?i)(?:effective|start(?:s|ing)?|begin(?:s|ning)?|as of|from)\s+(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},?\s*\d{4})`)
+	// reEndDate requires a real month name (or ISO date) so "end of 2027" / "of 2030" are not captured.
+	reEndDate = regexp.MustCompile(`(?i)(?:end(?:s|ing)?|expires?|through|until|deadline|valid\s+through|offer\s+ends?)\s+(\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2},?\s*\d{4}|(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4})`)
 )
 
 // extractPhone finds the first US phone number in text.
@@ -137,6 +138,8 @@ var resPhrases = []string{
 	"apartment residents", "residential program", "residential rebate",
 	"residential rate", "residential electricity",
 	"qualifying households", "eligible households",
+	"household income", "your household", "homeowners and renters",
+	"qualified households", "income-eligible household",
 }
 
 var bizPhrases = []string{
@@ -158,7 +161,7 @@ func extractCustomerTypeWithBody(urlAndTitle, body string) string {
 	if ct := extractCustomerType(urlAndTitle); ct != "" {
 		return ct
 	}
-	lower := strings.ToLower(body[:min(len(body), 2000)])
+	lower := strings.ToLower(body[:min(len(body), 4000)])
 	var hasRes, hasBiz bool
 	for _, p := range resPhrases {
 		if strings.Contains(lower, p) {
@@ -679,7 +682,7 @@ func ExtractIncentiveFromPDFText(text, pageURL string, opts PDFIncentiveOpts) *m
 	endDate := extractEndDate(text)
 
 	// ── Categories ───────────────────────────────────────────────────────────
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(text[:min(len(text), 2000)]))
+	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(text[:min(len(text), 4000)]))
 
 	// ── Build incentive ───────────────────────────────────────────────────────
 	id := models.DeterministicID(opts.Source, pageURL)
