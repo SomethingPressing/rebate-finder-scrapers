@@ -234,7 +234,7 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			State:                merged.state,
 			ServiceTerritory:     merged.serviceTerritory,
 			AvailableNationwide:  merged.availableNationwide,
-			Segment:              models.StringSlice(merged.segment),
+			Segment:              models.StringSlice(deriveSegment(merged)),
 			Portfolio:            models.StringSlice(portfoliosByRebateID[id]),
 			CustomerType:  merged.customerType,
 			Administrator: merged.administrator,
@@ -623,6 +623,21 @@ type promoterMerged struct {
 	contractorRequired   *bool
 	energyAuditRequired  *bool
 	rateTiers            models.RateTiersJSON
+}
+
+// deriveSegment returns the normalized segment slice for a merged group.
+// When the structured segment[] field is empty (e.g. HTML-scraped rebates that
+// only set customer_type), it falls back to normalizing customer_type so those
+// rebates still get a segment assignment.
+func deriveSegment(m promoterMerged) []string {
+	if len(m.segment) > 0 {
+		return m.segment
+	}
+	if m.customerType != nil && *m.customerType != "" {
+		parts := strings.Split(*m.customerType, ", ")
+		return normalizeSegments(parts)
+	}
+	return nil
 }
 
 // ensurePortfolios upserts all known portfolio rows (ON CONFLICT slug DO NOTHING)

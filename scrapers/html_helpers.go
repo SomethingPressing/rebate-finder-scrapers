@@ -569,6 +569,67 @@ var categoryKeywords = []struct {
 	{"retrofit program", "Energy Efficiency"},
 }
 
+// segmentGroups maps canonical segment names to the keyword phrases that
+// signal that audience in URLs, page titles, and body text.
+// Order matters: more-specific segments (Multifamily, Agricultural) are checked
+// before broader ones (Commercial, Residential) to avoid misclassification.
+var segmentGroups = []struct {
+	segment string
+	phrases []string
+}{
+	{"Multifamily", []string{
+		"multifamily", "multi-family", "apartment resident", "rental housing",
+		"affordable housing", "rental property", "multifamily residential",
+	}},
+	{"Agricultural", []string{
+		"agricultural", "agriculture", "farm", "irrigation", "livestock", "crop",
+	}},
+	{"Government", []string{
+		"local government", "state government", "federal government", "tribal government",
+		"municipal", "public school", "school district", "institutional",
+		"government facilit", "public sector",
+	}},
+	{"Nonprofit", []string{
+		"nonprofit", "non-profit", "not-for-profit", "501(c)", "charitable organization",
+	}},
+	{"Industrial", []string{
+		"industrial customer", "commercial and industrial", "large commercial",
+		"c&i customer", "manufacturing facilit",
+	}},
+	{"Commercial", []string{
+		"commercial customer", "for your business", "for businesses",
+		"small business", "business customer", "commercial building",
+		"commercial program", "business program", "non-residential",
+		"/commercial", "/business", "/small-business",
+	}},
+	{"Residential", []string{
+		"residential customer", "for homeowners", "for renters",
+		"home energy", "single-family", "qualifying household",
+		"eligible household", "residential program", "residential rebate",
+		"/residential", "/home-",
+	}},
+}
+
+// inferSegments returns canonical segment names inferred from the URL, title,
+// and body text. Returns an empty slice when no segment can be reliably determined.
+func inferSegments(urlAndTitle, body string) []string {
+	combined := strings.ToLower(urlAndTitle + " " + body[:min(len(body), 2000)])
+	seen := make(map[string]struct{})
+	var segments []string
+	for _, sg := range segmentGroups {
+		for _, p := range sg.phrases {
+			if strings.Contains(combined, p) {
+				if _, ok := seen[sg.segment]; !ok {
+					seen[sg.segment] = struct{}{}
+					segments = append(segments, sg.segment)
+				}
+				break
+			}
+		}
+	}
+	return segments
+}
+
 // inferCategories returns category tags inferred from the given text.
 // Pass URL + page title + a body-text snippet for best results.
 // Returns an empty slice when no category can be reliably determined —

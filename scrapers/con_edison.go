@@ -472,8 +472,9 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
-	// Infer category from URL and title.
+	// Infer category and segment from URL, title, and body text.
 	categories := inferCategories(conEdisonCategoryHints(pageURL) + " " + pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)]))
+	segments := inferSegments(pageURL+" "+programName, pageText)
 
 	// Build stable ID.
 	id := models.DeterministicID(conEdisonSourceName, pageURL)
@@ -501,6 +502,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
+	inc.Segment = segments
 	inc.ProgramHash = models.ComputeProgramHash(programName, conEdisonUtility)
 
 	if amount != nil {

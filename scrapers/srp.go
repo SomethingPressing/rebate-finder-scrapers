@@ -443,8 +443,9 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
-	// Infer category from URL and title.
+	// Infer category and segment from URL, title, and body text.
 	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
+	segments := inferSegments(pageURL+" "+programName, pageText)
 
 	// Build stable ID.
 	id := models.DeterministicID(srpSourceName, pageURL)
@@ -471,6 +472,7 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
+	inc.Segment = segments
 	inc.ProgramHash = models.ComputeProgramHash(programName, srpUtility)
 
 	if amount != nil {

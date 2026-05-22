@@ -556,8 +556,9 @@ func (s *XcelEnergyScraper) extractPage(
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
-	// Category inference.
+	// Category and segment inference.
 	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
+	segments := inferSegments(pageURL+" "+programName, pageText)
 
 	if format == "" {
 		format = "narrative"
@@ -581,6 +582,7 @@ func (s *XcelEnergyScraper) extractPage(
 	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
+	inc.Segment = segments
 	inc.ProgramHash = models.ComputeProgramHash(programName, xcelUtility)
 
 	// Only set state / ZIP if we detected them from the page.

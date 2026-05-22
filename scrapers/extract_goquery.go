@@ -14,6 +14,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
+	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/models"
 )
 
@@ -62,6 +63,14 @@ type PageExtractConfig struct {
 	// the page URL. Used by scrapers (e.g. Con Edison) whose program pages don't
 	// include category keywords in the visible page text.
 	CategoryHintFn func(pageURL string) string
+
+	// SegmentHintFn injects extra keyword hints for segment inference based on
+	// the page URL (e.g. "/residential" → "residential customer").
+	SegmentHintFn func(pageURL string) string
+
+	// SegmentInferrer is optional. When set and inferSegments returns no match,
+	// the hybrid inferrer (embeddings + GPT-4o mini) is used as a fallback.
+	SegmentInferrer *segmentinfer.SegmentInferrer
 }
 
 // ExtractPageGoquery extracts a single models.Incentive from a goquery
@@ -229,6 +238,22 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 		}
 	}
 
+	// ── Segment inference (#1 keyword, #3 LLM fallback) ──────────────────────
+	segHints := ""
+	if cfg.SegmentHintFn != nil {
+		segHints = cfg.SegmentHintFn(pageURL) + " "
+	}
+	segments := inferSegments(segHints+pageURL+" "+programName, pageText)
+	if len(segments) == 0 && cfg.SegmentInferrer != nil {
+		desc := ""
+		if d := strings.TrimSpace(pageText[:min(len(pageText), 500)]); d != "" {
+			desc = d
+		}
+		if segs, err := cfg.SegmentInferrer.Infer(programName, desc); err == nil {
+			segments = segs
+		}
+	}
+
 	if format == "" {
 		format = "narrative"
 	}
@@ -253,6 +278,7 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
+	inc.Segment = segments
 	inc.ProgramHash = models.ComputeProgramHash(programName, cfg.UtilityCompany)
 
 	if state != "" {

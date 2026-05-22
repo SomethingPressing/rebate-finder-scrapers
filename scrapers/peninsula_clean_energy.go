@@ -458,8 +458,9 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
-	// Infer category from URL and title.
+	// Infer category and segment from URL, title, and body text.
 	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
+	segments := inferSegments(pageURL+" "+programName, pageText)
 
 	// Build stable ID.
 	id := models.DeterministicID(pceSourceName, pageURL)
@@ -486,6 +487,7 @@ func (s *PeninsulaCleanEnergyScraper) extractPage(e *colly.HTMLElement, pageURL 
 	inc.SourceURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
+	inc.Segment = segments
 	inc.ProgramHash = models.ComputeProgramHash(programName, pceUtility)
 
 	if amount != nil {

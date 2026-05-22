@@ -119,3 +119,63 @@ func (c *Client) ClassifyCategory(productDescription string, categories []string
 	}
 	return cat, nil
 }
+
+// ClassifySegment asks GPT-4o mini to pick the single best audience segment
+// for the given program description. Returns "" when no segment fits confidently.
+func (c *Client) ClassifySegment(programDescription string, segments []string) (string, error) {
+	prompt := "You are an energy rebate program audience classifier.\n" +
+		"Given a rebate program description, return ONLY the single most appropriate audience segment from the list below.\n" +
+		"If none apply clearly, return exactly: Other\n\n" +
+		"Program: " + programDescription + "\n\n" +
+		"Segments:\n" + strings.Join(segments, "\n")
+
+	body, err := json.Marshal(map[string]any{
+		"model":       classifyModel,
+		"temperature": 0,
+		"max_tokens":  20,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, openAIURL, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("classify segment request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("classify segment read: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("classify segment HTTP %d: %s", resp.StatusCode, raw)
+	}
+
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &apiResp); err != nil || len(apiResp.Choices) == 0 {
+		return "", fmt.Errorf("classify segment parse: %w", err)
+	}
+
+	seg := strings.TrimSpace(apiResp.Choices[0].Message.Content)
+	if seg == "Other" || seg == "" {
+		return "", nil
+	}
+	return seg, nil
+}
