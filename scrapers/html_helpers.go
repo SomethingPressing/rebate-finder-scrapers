@@ -742,8 +742,9 @@ func ExtractIncentiveFromPDFText(text, pageURL string, opts PDFIncentiveOpts) *m
 	startDate := extractStartDate(text)
 	endDate := extractEndDate(text)
 
-	// ── Categories ───────────────────────────────────────────────────────────
+	// ── Categories and segment ───────────────────────────────────────────────
 	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(text[:min(len(text), 4000)]))
+	segments := inferSegments(pageURL+" "+programName, text)
 
 	// ── Build incentive ───────────────────────────────────────────────────────
 	id := models.DeterministicID(opts.Source, pageURL)
@@ -758,6 +759,7 @@ func ExtractIncentiveFromPDFText(text, pageURL string, opts PDFIncentiveOpts) *m
 	inc.ProgramURL = models.PtrString(pageURL)
 	inc.AvailableNationwide = models.PtrBool(false)
 	inc.CategoryTag = categories
+	inc.Segment = segments
 	inc.ProgramHash = models.ComputeProgramHash(programName, opts.UtilityCompany)
 
 	if opts.State != "" {

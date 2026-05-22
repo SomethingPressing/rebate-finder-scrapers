@@ -199,7 +199,7 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 			State:                merged.state,
 			ServiceTerritory:     merged.serviceTerritory,
 			AvailableNationwide:  merged.availableNationwide,
-			Segment:              models.StringSlice(merged.segment),
+			Segment:              models.StringSlice(deriveSegment(merged)),
 			Portfolio:            models.StringSlice(portfoliosByRebateID[id]),
 			CustomerType:         merged.customerType,
 			Administrator:        merged.administrator,
