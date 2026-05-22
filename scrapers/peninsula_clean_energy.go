@@ -28,6 +28,7 @@ import (
 
 	"github.com/gocolly/colly/v2"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
+	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
 )
@@ -214,6 +215,8 @@ type PeninsulaCleanEnergyScraper struct {
 	Limit int
 	// CategoryInferrer enables smart embedding+LLM category inference as a fallback.
 	CategoryInferrer *categoryinfer.CategoryInferrer
+	// SegmentInferrer enables smart embedding+LLM segment inference as a fallback.
+	SegmentInferrer *segmentinfer.SegmentInferrer
 }
 
 // pceExtractCfg is the shared goquery extraction config for PCE.
@@ -295,6 +298,7 @@ func (s *PeninsulaCleanEnergyScraper) Scrape(ctx context.Context) ([]models.Ince
 	extractCfg := pceExtractCfg
 	extractCfg.ScraperVersion = s.ScraperVersion
 	extractCfg.CategoryInferrer = s.CategoryInferrer
+	extractCfg.SegmentInferrer = s.SegmentInferrer
 
 	c := s.newCollector(pceDomain)
 	permBlocked := trackPermissionErrors(c)

@@ -38,6 +38,7 @@ import (
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
+	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/internal/logutil"
 	"github.com/incenva/rebate-scraper/internal/zipdata"
@@ -133,13 +134,16 @@ func main() {
 		logger.Info("uszips.csv loaded", zap.Int("states", len(stateZIPs)))
 	}
 
-	// ── Smart category inferrer (optional — requires OPENAI_API_KEY) ─────────
+	// ── Smart category + segment inferrers (optional — requires OPENAI_API_KEY) ─
 	var catInferrer *categoryinfer.CategoryInferrer
+	var segInferrer *segmentinfer.SegmentInferrer
 	if cfg.OpenAIKey != "" {
-		catInferrer = categoryinfer.New(llm.NewClient(cfg.OpenAIKey), 0)
-		logger.Info("smart category inferrer enabled (embedding + GPT-4o mini)")
+		llmClient := llm.NewClient(cfg.OpenAIKey)
+		catInferrer = categoryinfer.New(llmClient, 0)
+		segInferrer = segmentinfer.New(llmClient, 0)
+		logger.Info("smart category + segment inferrers enabled (embedding + GPT-4o mini)")
 	} else {
-		logger.Info("smart category inferrer disabled — set OPENAI_API_KEY to enable")
+		logger.Info("smart category + segment inferrers disabled — set OPENAI_API_KEY to enable")
 	}
 
 	// ── Scraper registry ──────────────────────────────────────────────────────
@@ -181,11 +185,11 @@ func main() {
 		StateZIPs: stateZIPs, Logger: logger, Limit: effectiveLimit,
 		CategoryInferrer: catInferrer,
 	})
-	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
-	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
-	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
-	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
-	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer})
+	reg.Register(&scrapers.ConEdisonScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer, SegmentInferrer: segInferrer})
+	reg.Register(&scrapers.PNMScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer, SegmentInferrer: segInferrer})
+	reg.Register(&scrapers.XcelEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer, SegmentInferrer: segInferrer})
+	reg.Register(&scrapers.SRPScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer, SegmentInferrer: segInferrer})
+	reg.Register(&scrapers.PeninsulaCleanEnergyScraper{ScraperVersion: cfg.ScraperVersion, Logger: logger, ProxyURL: cfg.ProxyURL, Limit: effectiveLimit, CategoryInferrer: catInferrer, SegmentInferrer: segInferrer})
 
 	// ── Validate --source ─────────────────────────────────────────────────────
 	if source != "" {

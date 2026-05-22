@@ -23,6 +23,7 @@ import (
 
 	"github.com/gocolly/colly/v2"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
+	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
 )
@@ -235,6 +236,8 @@ type ConEdisonScraper struct {
 	Limit int
 	// CategoryInferrer enables smart embedding+LLM category inference as a fallback.
 	CategoryInferrer *categoryinfer.CategoryInferrer
+	// SegmentInferrer enables smart embedding+LLM segment inference as a fallback.
+	SegmentInferrer *segmentinfer.SegmentInferrer
 }
 
 // conEdisonExtractCfg is the shared goquery extraction config.
@@ -302,6 +305,7 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 	extractCfg := conEdisonExtractCfg
 	extractCfg.ScraperVersion = s.ScraperVersion
 	extractCfg.CategoryInferrer = s.CategoryInferrer
+	extractCfg.SegmentInferrer = s.SegmentInferrer
 
 	// Step 2: Colly-based HTML scraping with automatic 403-fallback.
 	c := s.newCollector("www.coned.com")
