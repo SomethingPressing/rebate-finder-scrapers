@@ -12,6 +12,7 @@ import (
 // use this map so the taxonomy stays consistent across the Go codebase.
 var CategoryPortfolioMap = map[string][]string{
 	// Energy Efficiency
+	"Energy Efficiency":    {"Energy Efficiency"},
 	"HVAC":                 {"Energy Efficiency"},
 	"Weatherization":       {"Energy Efficiency"},
 	"Lighting":             {"Energy Efficiency"},

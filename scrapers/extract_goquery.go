@@ -57,6 +57,11 @@ type PageExtractConfig struct {
 	// match, the smart hybrid inferrer (embeddings + GPT-4o mini) is used as
 	// a fallback so novel program types are classified without keyword additions.
 	CategoryInferrer *categoryinfer.CategoryInferrer
+
+	// CategoryHintFn injects extra keyword hints for category inference based on
+	// the page URL. Used by scrapers (e.g. Con Edison) whose program pages don't
+	// include category keywords in the visible page text.
+	CategoryHintFn func(pageURL string) string
 }
 
 // ExtractPageGoquery extracts a single models.Incentive from a goquery
@@ -124,6 +129,11 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	}
 	if description == "" {
 		description = programName
+	}
+
+	// Guard: JS-rendered pages where Colly only captured a copyright footer.
+	if isFooterOnlyDescription(description) {
+		return nil
 	}
 	if len(description) > 1000 {
 		description = description[:997] + "..."
@@ -207,7 +217,11 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	endDate := extractEndDate(pageText)
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
-	inferText := pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 2000)])
+	urlHints := ""
+	if cfg.CategoryHintFn != nil {
+		urlHints = cfg.CategoryHintFn(pageURL) + " "
+	}
+	inferText := urlHints + pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 4000)])
 	categories := inferCategories(inferText)
 	if len(categories) == 0 && cfg.CategoryInferrer != nil {
 		if tags, err := cfg.CategoryInferrer.Infer(programName); err == nil {

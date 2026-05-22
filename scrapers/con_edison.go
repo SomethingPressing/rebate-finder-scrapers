@@ -106,6 +106,21 @@ var conEdisonFilterCfg = FilterConfig{
 
 		// Archive / historical pages — programs no longer active
 		"/archive",
+
+		// FAQ / tips / tools sub-pages — not program pages; scrape the parent instead
+		"/frequently-asked-questions",
+		"/faqs",
+		"/faq",
+		"/tips-to-lower-your-bill",
+		"/tips-library",
+		"/tools-technical-guidelines",
+		"/program-tools",
+		"/technical-guidelines",
+
+		// Contractor-facing resources — not customer-facing program pages
+		"/contractor-resources",
+		"/participating-contractor",
+		"/smb-participating-contractor",
 	},
 
 	// ── Inclusions ─────────────────────────────────────────────────────────
@@ -180,12 +195,23 @@ var conEdisonFilterCfg = FilterConfig{
 // the sitemap is unavailable or returns no matching URLs.
 func conEdisonSeedURLs() []string {
 	return []string{
+		// ── Residential ───────────────────────────────────────────────────────
 		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers",
-		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-for-businesses",
-		"https://www.coned.com/en/save-money/weatherization",
 		"https://www.coned.com/en/save-money/heat-pumps",
-		"https://www.coned.com/en/our-energy-future/electric-vehicles/power-ready-program",
+		"https://www.coned.com/en/save-money/weatherization",
 		"https://www.coned.com/en/save-money/smart-usage-rewards",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers/energy-exchange",
+		// ── Commercial & Industrial ───────────────────────────────────────────
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-commercial-industrial-buildings-customers/save-with-energy-efficiency-upgrades",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-commercial-industrial-buildings-customers/commercial-neighborhood-program",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/small-business",
+		// ── Multifamily ───────────────────────────────────────────────────────
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-for-multifamily-customers/market-rate-buildings",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-for-multifamily-customers/affordable-buildings",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-for-multifamily-customers/multifamily-neighborhood-program",
+		// ── Electric Vehicles ─────────────────────────────────────────────────
+		"https://www.coned.com/en/our-energy-future/electric-vehicles/power-ready-program",
+		// ── Income Qualified ──────────────────────────────────────────────────
 		"https://www.coned.com/en/accounts-billing/payment-plans-assistance/help-paying-your-bill",
 	}
 }
@@ -221,6 +247,7 @@ var conEdisonExtractCfg = PageExtractConfig{
 	Territory:      conEdisonTerritory,
 	DefaultApply:   conEdisonDefaultApply,
 	BaseURL:        "https://www.coned.com",
+	CategoryHintFn: conEdisonCategoryHints,
 }
 
 // Name implements Scraper.
@@ -373,6 +400,13 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	}
 
 	description := CollyDescriptionMarkdown(e, programName, 1000)
+
+	// Guard: if the description is just a copyright footer (JS-rendered page
+	// with no static content), skip this page entirely.
+	if isFooterOnlyDescription(description) {
+		return nil
+	}
+
 	imageURL := CollyImageURL(e, "https://www.coned.com")
 
 	// Full page text for all regex extractions.
@@ -439,7 +473,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	contactEmail := extractEmail(pageText)
 
 	// Infer category from URL and title.
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)]))
+	categories := inferCategories(conEdisonCategoryHints(pageURL) + " " + pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)]))
 
 	// Build stable ID.
 	id := models.DeterministicID(conEdisonSourceName, pageURL)
@@ -501,6 +535,70 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	}
 
 	return &inc
+}
+
+// isFooterOnlyDescription returns true when the extracted description is just
+// a copyright footer — a signal that the page body is JavaScript-rendered and
+// Colly only captured static boilerplate.
+func isFooterOnlyDescription(desc string) bool {
+	if len(desc) == 0 {
+		return true
+	}
+	lower := strings.ToLower(desc)
+	footerPhrases := []string{
+		"consolidated edison company of new york",
+		"all rights reserved",
+		"© 20",
+		"copyright 20",
+	}
+	for _, p := range footerPhrases {
+		if strings.Contains(lower, p) && len(desc) < 200 {
+			return true
+		}
+	}
+	return false
+}
+
+// conEdisonCategoryHints injects keyword hints derived from Con Edison's URL
+// path structure so inferCategories can assign the right category even when
+// the page body lacks explicit keywords.
+func conEdisonCategoryHints(pageURL string) string {
+	lower := strings.ToLower(pageURL)
+	var hints []string
+
+	// URL segments → category keywords
+	urlCategoryMap := []struct {
+		segment string
+		hint    string
+	}{
+		{"heat-pump", "heat pump hvac"},
+		{"heat-pumps", "heat pump hvac"},
+		{"weatherization", "weatherization insulation air sealing"},
+		{"smart-usage-rewards", "smart thermostat demand response"},
+		{"electric-vehicles", "electric vehicle ev charging"},
+		{"power-ready", "electric vehicle ev charging"},
+		{"energy-exchange", "electrification appliance"},
+		{"building-automation", "hvac building automation industrial equipment"},
+		{"clean-energy-incentives-viewer", "energy efficiency hvac"},
+		{"multifamily", "multifamily residential whole building"},
+		{"affordable-housing", "income qualified whole building"},
+		{"affordable-buildings", "income qualified whole building"},
+		{"market-rate-buildings", "multifamily whole building"},
+		{"small-business", "energy efficiency commercial"},
+		{"commercial-industrial", "energy efficiency commercial industrial"},
+		{"commercial-neighborhood", "energy efficiency commercial industrial"},
+		{"financing", "financing"},
+		{"solar", "solar"},
+		{"battery", "energy storage battery"},
+		{"lighting", "lighting led"},
+		{"water-heater", "water heater"},
+	}
+	for _, m := range urlCategoryMap {
+		if strings.Contains(lower, m.segment) {
+			hints = append(hints, m.hint)
+		}
+	}
+	return strings.Join(hints, " ")
 }
 
 func (s *ConEdisonScraper) httpClient() *http.Client {

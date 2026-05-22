@@ -155,6 +155,9 @@ var (
 	rePercent = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)\s*%`)
 	rePerKwh  = regexp.MustCompile(`\$([0-9]+(?:\.[0-9]+)?)\s*/\s*(?:k[Ww][Hh]|kwh)`)
 	reUpTo    = regexp.MustCompile(`(?i)up\s+to\s+\$([0-9,]+(?:\.[0-9]+)?)`)
+	// rePerUnit matches dollar amounts followed by a "per <unit>" qualifier,
+	// e.g. "$2,600 per dwelling unit", "$0.35 per sq ft", "$500/kW".
+	rePerUnit = regexp.MustCompile(`(?i)\$([0-9,]+(?:\.[0-9]+)?)\s*(?:/|per)\s*(?:dwelling unit|unit|sq\.?\s*ft|square foot|kw\b|kilowatt|ton\b|plug\b|port\b|charger\b|door\b|window\b|appliance\b|fixture\b|lamp\b|device\b)`)
 )
 
 // ParseAmount parses a human-readable incentive amount string into an
@@ -172,6 +175,13 @@ func ParseAmount(s string) (format string, amount *float64) {
 
 	// Per-unit (kWh) — check before generic dollar
 	if m := rePerKwh.FindStringSubmatch(s); len(m) == 2 {
+		if f := parseCommaFloat(m[1]); f != 0 {
+			return "per_unit", &f
+		}
+	}
+
+	// Per-unit with explicit unit qualifier ($X per dwelling unit, $X/kW, etc.)
+	if m := rePerUnit.FindStringSubmatch(s); len(m) == 2 {
 		if f := parseCommaFloat(m[1]); f != 0 {
 			return "per_unit", &f
 		}
