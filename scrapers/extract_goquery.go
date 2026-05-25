@@ -200,6 +200,11 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	applicationURL := ""
 	doc.Find("a[href]").EachWithBreak(func(_ int, s *goquery.Selection) bool {
 		href, _ := s.Attr("href")
+		hrefLower := strings.ToLower(href)
+		// Skip known false-positive portal paths (e.g. Con Edison telecom portal).
+		if strings.Contains(hrefLower, "/business-partners/") || strings.Contains(hrefLower, "telecom") {
+			return true
+		}
 		text := strings.ToLower(s.Text() + " " + href)
 		if strings.Contains(text, "apply") || strings.Contains(text, "application") ||
 			strings.Contains(text, "enroll") || strings.Contains(text, "sign up") ||

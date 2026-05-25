@@ -122,6 +122,23 @@ var conEdisonFilterCfg = FilterConfig{
 		"/contractor-resources",
 		"/participating-contractor",
 		"/smb-participating-contractor",
+
+		// Telecom / business-partner portals — not customer rebate programs
+		"/business-partners/",
+		"/telecom-application-management",
+
+		// Marketing / editorial content — not structured program pages
+		"/success-stories",
+		"/videos",
+		"/contractor-training",
+		"/eco-friendly-cars",
+		"/liquefied-natural-gas",
+		"/energy-savings-options",
+		"/interest-form",
+		"/financial-statement-form",
+
+		// JS-rendered incentive viewer sub-pages (parent landing page is fine)
+		"/clean-energy-incentives-viewer/",
 	},
 
 	// ── Inclusions ─────────────────────────────────────────────────────────
@@ -251,6 +268,7 @@ var conEdisonExtractCfg = PageExtractConfig{
 	DefaultApply:   conEdisonDefaultApply,
 	BaseURL:        "https://www.coned.com",
 	CategoryHintFn: conEdisonCategoryHints,
+	SegmentHintFn:  conEdisonSegmentHints,
 }
 
 // Name implements Scraper.
@@ -447,13 +465,18 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		}
 	}
 
-	// Extract application URL (first link containing "apply" or "application").
+	// Extract application URL — first link containing "apply"/"application"/etc.
+	// Skip telecom/business-partner portal hrefs that match spuriously.
 	applicationURL := ""
 	e.ForEach("a[href]", func(_ int, el *colly.HTMLElement) {
 		if applicationURL != "" {
 			return
 		}
 		href := el.Attr("href")
+		hrefLower := strings.ToLower(href)
+		if strings.Contains(hrefLower, "/business-partners/") || strings.Contains(hrefLower, "telecom") {
+			return
+		}
 		text := strings.ToLower(el.Text + href)
 		if strings.Contains(text, "apply") || strings.Contains(text, "application") ||
 			strings.Contains(text, "enroll") || strings.Contains(text, "sign up") {
@@ -467,7 +490,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 
 	// ── Boolean / structured field extraction (from html_helpers.go) ────────
 	contractorRequired := extractContractorRequired(pageText)
-	energyAuditRequired := extractEnergyAuditRequired(pageText)
+	energyAuditRequired := extractEnergyAuditRequired(pageText + " " + description)
 	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, pageText)
 	startDate := extractStartDate(pageText)
 	endDate := extractEndDate(pageText)
@@ -478,7 +501,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 
 	// Infer category and segment from URL, title, and body text.
 	categories := inferCategories(conEdisonCategoryHints(pageURL) + " " + pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)]))
-	segments := inferSegments(pageURL+" "+programName, pageText)
+	segments := inferSegments(conEdisonSegmentHints(pageURL)+" "+pageURL+" "+programName, pageText)
 
 	// Build stable ID.
 	id := models.DeterministicID(conEdisonSourceName, pageURL)
@@ -598,12 +621,46 @@ func conEdisonCategoryHints(pageURL string) string {
 		{"battery", "energy storage battery"},
 		{"lighting", "lighting led"},
 		{"water-heater", "water heater"},
+		{"payment-plans-assistance", "income qualified bill assistance"},
+		{"help-paying", "income qualified bill assistance"},
+		{"smart-energy", "smart thermostat demand response"},
+		{"residential-customers", "residential energy efficiency"},
+		{"commercial-neighborhood", "energy efficiency commercial industrial"},
 	}
 	for _, m := range urlCategoryMap {
 		if strings.Contains(lower, m.segment) {
 			hints = append(hints, m.hint)
 		}
 	}
+	return strings.Join(hints, " ")
+}
+
+// conEdisonSegmentHints returns extra keyword phrases for segment inference
+// based on Con Edison URL path conventions that don't surface in page body text.
+func conEdisonSegmentHints(pageURL string) string {
+	lower := strings.ToLower(pageURL)
+	var hints []string
+
+	switch {
+	case strings.Contains(lower, "for-residential-customers") ||
+		strings.Contains(lower, "residential-customers") ||
+		strings.Contains(lower, "/residential"):
+		hints = append(hints, "residential customer")
+	case strings.Contains(lower, "for-commercial-industrial") ||
+		strings.Contains(lower, "commercial-industrial"):
+		hints = append(hints, "commercial customer for businesses")
+	case strings.Contains(lower, "/small-business"):
+		hints = append(hints, "small business")
+	}
+
+	if strings.Contains(lower, "multifamily") {
+		hints = append(hints, "multifamily")
+	}
+	if strings.Contains(lower, "affordable-buildings") || strings.Contains(lower, "affordable-housing") ||
+		strings.Contains(lower, "help-paying") || strings.Contains(lower, "payment-plans-assistance") {
+		hints = append(hints, "income eligible residential customer")
+	}
+
 	return strings.Join(hints, " ")
 }
 

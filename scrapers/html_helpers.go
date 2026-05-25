@@ -44,7 +44,7 @@ var (
 
 	// Boolean field patterns from the LLM schema rules.
 	reContractorRequired   = regexp.MustCompile(`(?i)(?:must be (?:installed|completed) by|licensed contractor|approved contractor|trade ally|contractor required|participating contractor)`)
-	reEnergyAuditRequired  = regexp.MustCompile(`(?i)(?:energy audit required|home assessment required|home energy assessment|home energy checkup required|pre-inspection required)`)
+	reEnergyAuditRequired = regexp.MustCompile(`(?i)(?:energy audit required|energy assessment required|home assessment required|home energy assessment|home energy checkup required|pre-inspection required|site inspection required|pre-installation inspection|must (?:complete|schedule|obtain|get) an? (?:energy audit|energy assessment|home assessment))`)
 	reCurrentlyActive      = regexp.MustCompile(`(?i)(?:expired|program ended|no longer available|program closed|funding exhausted|wait ?list)`)
 	reIncomeQualified      = regexp.MustCompile(`(?i)(?:low.income|income.qualified|income.eligible|CARE|FERA|LIHEAP|Good Neighbor|affordable|<\s*\d+%\s*AMI|\d+%\s*(?:of\s+)?(?:area\s+median|AMI))`)
 	reStartDate = regexp.MustCompile(`(?i)(?:effective|start(?:s|ing)?|begin(?:s|ning)?|as of|from)\s+(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},?\s*\d{4})`)
@@ -377,6 +377,10 @@ var categoryKeywords = []struct {
 	{"window rebate", "Weatherization"},
 	{"door replacement", "Weatherization"},
 	{"weather-ready", "Weatherization"},
+	{"whole-building retrofit", "Weatherization"},
+	{"whole building retrofit", "Weatherization"},
+	{"whole-building", "Energy Efficiency"},
+	{"whole building", "Energy Efficiency"},
 
 	// ── Lighting ──────────────────────────────────────────────────────────────
 	{"lighting", "Lighting"},
@@ -606,6 +610,8 @@ var segmentGroups = []struct {
 		"residential customer", "for homeowners", "for renters",
 		"home energy", "single-family", "qualifying household",
 		"eligible household", "residential program", "residential rebate",
+		"for-residential-customers", "residential-customers",
+		"homeowner rebate", "home rebate", "homeowner",
 		"/residential", "/home-",
 	}},
 }

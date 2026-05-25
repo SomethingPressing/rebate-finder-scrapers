@@ -201,9 +201,9 @@ func ParseAmount(s string) (format string, amount *float64) {
 		}
 	}
 
-	// Percent
+	// Percent — reject values > 100 (rate-schedule numbers, day counts, etc.)
 	if m := rePercent.FindStringSubmatch(s); len(m) == 2 {
-		if f, err := strconv.ParseFloat(m[1], 64); err == nil && f != 0 {
+		if f, err := strconv.ParseFloat(m[1], 64); err == nil && f > 0 && f <= 100 {
 			return "percent", &f
 		}
 	}

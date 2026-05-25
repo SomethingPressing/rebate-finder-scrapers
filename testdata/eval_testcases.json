@@ -14,6 +14,34 @@
     "content_type": "text/html"
   },
   {
+    "id": "con_edison_heat_pumps",
+    "source": "con_edison",
+    "description": "Con Edison residential heat pump rebates — expects Residential segment and HVAC category",
+    "url": "https://www.coned.com/en/save-money/heat-pumps",
+    "content_type": "text/html"
+  },
+  {
+    "id": "con_edison_smart_usage_rewards",
+    "source": "con_edison",
+    "description": "Con Edison Smart Usage Rewards demand response — expects Demand Response category",
+    "url": "https://www.coned.com/en/save-money/smart-usage-rewards",
+    "content_type": "text/html"
+  },
+  {
+    "id": "con_edison_small_business_savings",
+    "source": "con_edison",
+    "description": "Con Edison small business energy efficiency — expects Commercial segment",
+    "url": "https://www.coned.com/en/save-money/rebates-incentives-tax-credits/small-business",
+    "content_type": "text/html"
+  },
+  {
+    "id": "con_edison_help_paying_bill",
+    "source": "con_edison",
+    "description": "Con Edison bill payment assistance — expects Income Qualified category",
+    "url": "https://www.coned.com/en/accounts-billing/payment-plans-assistance/help-paying-your-bill",
+    "content_type": "text/html"
+  },
+  {
     "id": "pnm_save_money",
     "source": "pnm",
     "description": "PNM main savings and energy efficiency hub",
