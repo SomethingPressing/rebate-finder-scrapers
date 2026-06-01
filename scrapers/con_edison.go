@@ -478,8 +478,12 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 
 	imageURL := CollyImageURL(e, "https://www.coned.com")
 
-	// Full page text for all regex extractions.
-	pageText := e.Text
+	// Full page text for regex extractions.
+	// Clone and strip nav/header/footer so that navigation items like
+	// "Electric Heating & Cooling" don't pollute category inference.
+	contentDOM := e.DOM.Clone()
+	contentDOM.Find("nav, header, footer").Remove()
+	pageText := contentDOM.Text()
 
 	// Extract dollar amounts — only when incentive keywords are present on the page.
 	format, amount := ParseAmountContextual(pageText)
