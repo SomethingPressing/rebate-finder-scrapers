@@ -59,14 +59,6 @@ type PageExtractConfig struct {
 	// a fallback so novel program types are classified without keyword additions.
 	CategoryInferrer *categoryinfer.CategoryInferrer
 
-	// CategoryHintFn injects extra keyword hints for category inference based on
-	// the page URL. Used by scrapers (e.g. Con Edison) whose program pages don't
-	// include category keywords in the visible page text.
-	CategoryHintFn func(pageURL string) string
-
-	// SegmentHintFn injects extra keyword hints for segment inference based on
-	// the page URL (e.g. "/residential" → "residential customer").
-	SegmentHintFn func(pageURL string) string
 
 	// SegmentInferrer is optional. When set and inferSegments returns no match,
 	// the hybrid inferrer (embeddings + GPT-4o mini) is used as a fallback.
@@ -231,11 +223,7 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	endDate := extractEndDate(pageText)
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
-	urlHints := ""
-	if cfg.CategoryHintFn != nil {
-		urlHints = cfg.CategoryHintFn(pageURL) + " "
-	}
-	inferText := urlHints + pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 4000)])
+	inferText := pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 4000)])
 	categories := inferCategories(inferText)
 	if len(categories) == 0 && cfg.CategoryInferrer != nil {
 		if tags, err := cfg.CategoryInferrer.Infer(programName); err == nil {
@@ -243,12 +231,8 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 		}
 	}
 
-	// ── Segment inference (#1 keyword, #3 LLM fallback) ──────────────────────
-	segHints := ""
-	if cfg.SegmentHintFn != nil {
-		segHints = cfg.SegmentHintFn(pageURL) + " "
-	}
-	segments := inferSegments(segHints+pageURL+" "+programName, pageText)
+	// ── Segment inference ──────────────────────────────────────────────────────
+	segments := inferSegments(pageURL+" "+programName, pageText)
 	if len(segments) == 0 && cfg.SegmentInferrer != nil {
 		desc := ""
 		if d := strings.TrimSpace(pageText[:min(len(pageText), 500)]); d != "" {

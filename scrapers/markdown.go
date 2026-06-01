@@ -159,7 +159,17 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 		maxLen = 1000
 	}
 
-	// Collect inner HTML of substantial paragraphs up to ~2 KB of raw HTML.
+	// Prefer the meta description when it is substantive — it is written by the
+	// site owner specifically to summarise the page and avoids the geographic
+	// boilerplate that often appears first in body paragraphs on utility sites.
+	if meta := strings.TrimSpace(e.ChildAttr(`meta[name="description"]`, "content")); len(meta) >= 60 {
+		if len(meta) > maxLen {
+			meta = meta[:maxLen-3] + "..."
+		}
+		return meta
+	}
+
+	// Fall back to collecting inner HTML of substantial paragraphs.
 	var parts []string
 	rawTotal := 0
 	e.DOM.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
@@ -188,7 +198,7 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 		}
 	}
 
-	// Fall back to meta description.
+	// Last resort: short meta description we skipped above.
 	if meta := strings.TrimSpace(e.ChildAttr(`meta[name="description"]`, "content")); meta != "" {
 		if len(meta) > maxLen {
 			meta = meta[:maxLen-3] + "..."

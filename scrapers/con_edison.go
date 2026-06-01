@@ -267,8 +267,6 @@ var conEdisonExtractCfg = PageExtractConfig{
 	Territory:      conEdisonTerritory,
 	DefaultApply:   conEdisonDefaultApply,
 	BaseURL:        "https://www.coned.com",
-	CategoryHintFn: conEdisonCategoryHints,
-	SegmentHintFn:  conEdisonSegmentHints,
 }
 
 // Name implements Scraper.
@@ -456,6 +454,17 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		amount = nil
 	}
 
+	// Rate/tariff pages and payment-assistance pages contain stray numbers
+	// (rate schedule IDs, government benefit amounts) that are not Con Edison
+	// incentive amounts. Override to narrative to avoid false positives.
+	pageURLLower := strings.ToLower(pageURL)
+	if strings.Contains(pageURLLower, "incentive-rate") ||
+		strings.Contains(pageURLLower, "payment-plans-assistance") ||
+		strings.Contains(pageURLLower, "help-paying") {
+		format = "narrative"
+		amount = nil
+	}
+
 	// Detect "up to" maximum amount.
 	var maxAmount *float64
 	if format == "dollar_amount" {
@@ -491,7 +500,19 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	// ── Boolean / structured field extraction (from html_helpers.go) ────────
 	contractorRequired := extractContractorRequired(pageText)
 	energyAuditRequired := extractEnergyAuditRequired(pageText + " " + description)
+	// Rate/economic-development pages mention "energy rebates" in eligibility
+	// criteria but don't actually require an energy audit — clear false positives.
+	if energyAuditRequired != nil && strings.Contains(strings.ToLower(pageURL), "economic-development") {
+		energyAuditRequired = nil
+	}
 	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, pageText)
+	// Bill-assistance and payment-plans pages are always residential.
+	if customerType == "" {
+		lower := strings.ToLower(pageURL)
+		if strings.Contains(lower, "payment-plans-assistance") || strings.Contains(lower, "help-paying") {
+			customerType = "Residential"
+		}
+	}
 	startDate := extractStartDate(pageText)
 	endDate := extractEndDate(pageText)
 
@@ -499,9 +520,17 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
-	// Infer category and segment from URL, title, and body text.
-	categories := inferCategories(conEdisonCategoryHints(pageURL) + " " + pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)]))
-	segments := inferSegments(conEdisonSegmentHints(pageURL)+" "+pageURL+" "+programName, pageText)
+	// Infer category and segment from URL + title + body text.
+	// categoryKeywords and segmentGroups include URL-path (hyphenated) variants
+	// so passing the full URL is sufficient — no separate URL rule layer needed.
+	inferText := pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)])
+	categories := inferCategories(inferText)
+	// Rate/tariff pages have no incentive category — URL keywords like
+	// "commercial-industrial" would otherwise tag them as Energy Efficiency.
+	if strings.Contains(pageURLLower, "incentive-rate") {
+		categories = nil
+	}
+	segments := inferSegments(pageURL+" "+programName, pageText)
 
 	// Build stable ID.
 	id := models.DeterministicID(conEdisonSourceName, pageURL)
@@ -533,7 +562,11 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	inc.ProgramHash = models.ComputeProgramHash(programName, conEdisonUtility)
 
 	if amount != nil {
-		inc.IncentiveAmount = amount
+		if format == "percent" {
+			inc.PercentValue = amount
+		} else {
+			inc.IncentiveAmount = amount
+		}
 	}
 	if maxAmount != nil {
 		inc.MaximumAmount = maxAmount
@@ -588,81 +621,6 @@ func isFooterOnlyDescription(desc string) bool {
 	return false
 }
 
-// conEdisonCategoryHints injects keyword hints derived from Con Edison's URL
-// path structure so inferCategories can assign the right category even when
-// the page body lacks explicit keywords.
-func conEdisonCategoryHints(pageURL string) string {
-	lower := strings.ToLower(pageURL)
-	var hints []string
-
-	// URL segments → category keywords
-	urlCategoryMap := []struct {
-		segment string
-		hint    string
-	}{
-		{"heat-pump", "heat pump hvac"},
-		{"heat-pumps", "heat pump hvac"},
-		{"weatherization", "weatherization insulation air sealing"},
-		{"smart-usage-rewards", "smart thermostat demand response"},
-		{"electric-vehicles", "electric vehicle ev charging"},
-		{"power-ready", "electric vehicle ev charging"},
-		{"energy-exchange", "electrification appliance"},
-		{"building-automation", "hvac building automation industrial equipment"},
-		{"clean-energy-incentives-viewer", "energy efficiency hvac"},
-		{"multifamily", "multifamily residential whole building"},
-		{"affordable-housing", "income qualified whole building"},
-		{"affordable-buildings", "income qualified whole building"},
-		{"market-rate-buildings", "multifamily whole building"},
-		{"small-business", "energy efficiency commercial"},
-		{"commercial-industrial", "energy efficiency commercial industrial"},
-		{"commercial-neighborhood", "energy efficiency commercial industrial"},
-		{"financing", "financing"},
-		{"solar", "solar"},
-		{"battery", "energy storage battery"},
-		{"lighting", "lighting led"},
-		{"water-heater", "water heater"},
-		{"payment-plans-assistance", "income qualified bill assistance"},
-		{"help-paying", "income qualified bill assistance"},
-		{"smart-energy", "smart thermostat demand response"},
-		{"residential-customers", "residential energy efficiency"},
-		{"commercial-neighborhood", "energy efficiency commercial industrial"},
-	}
-	for _, m := range urlCategoryMap {
-		if strings.Contains(lower, m.segment) {
-			hints = append(hints, m.hint)
-		}
-	}
-	return strings.Join(hints, " ")
-}
-
-// conEdisonSegmentHints returns extra keyword phrases for segment inference
-// based on Con Edison URL path conventions that don't surface in page body text.
-func conEdisonSegmentHints(pageURL string) string {
-	lower := strings.ToLower(pageURL)
-	var hints []string
-
-	switch {
-	case strings.Contains(lower, "for-residential-customers") ||
-		strings.Contains(lower, "residential-customers") ||
-		strings.Contains(lower, "/residential"):
-		hints = append(hints, "residential customer")
-	case strings.Contains(lower, "for-commercial-industrial") ||
-		strings.Contains(lower, "commercial-industrial"):
-		hints = append(hints, "commercial customer for businesses")
-	case strings.Contains(lower, "/small-business"):
-		hints = append(hints, "small business")
-	}
-
-	if strings.Contains(lower, "multifamily") {
-		hints = append(hints, "multifamily")
-	}
-	if strings.Contains(lower, "affordable-buildings") || strings.Contains(lower, "affordable-housing") ||
-		strings.Contains(lower, "help-paying") || strings.Contains(lower, "payment-plans-assistance") {
-		hints = append(hints, "income eligible residential customer")
-	}
-
-	return strings.Join(hints, " ")
-}
 
 func (s *ConEdisonScraper) httpClient() *http.Client {
 	if s.HTTPClient != nil {

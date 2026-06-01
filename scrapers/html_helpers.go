@@ -249,6 +249,7 @@ var categoryKeywords = []struct {
 	{"domestic hot water", "Water Heating"},
 	{"dhw", "Water Heating"},
 	{"water heating", "Water Heating"},
+	{"water-heater", "Water Heating"},
 	{"solar water heat", "Water Heating"},
 
 	// ── Geothermal (before HVAC — more specific) ─────────────────────────────
@@ -328,6 +329,7 @@ var categoryKeywords = []struct {
 
 	// ── Electric Vehicles ─────────────────────────────────────────────────────
 	{"electric vehicle", "Electric Vehicles"},
+	{"electric-vehicle", "Electric Vehicles"},
 	{"plug-in hybrid", "Electric Vehicles"},
 	{"phev", "Electric Vehicles"},
 	{"level 2 charg", "Electric Vehicles"},
@@ -469,6 +471,7 @@ var categoryKeywords = []struct {
 	{"load control", "Demand Response"},
 	{"load shifting", "Demand Response"},
 	{"smart usage", "Demand Response"},
+	{"smart-usage", "Demand Response"},
 	{"direct load control", "Demand Response"},
 	{"interruptible rate", "Demand Response"},
 	{"curtailment", "Demand Response"},
@@ -571,6 +574,24 @@ var categoryKeywords = []struct {
 	{"energy-saving", "Energy Efficiency"},
 	{"energy saving", "Energy Efficiency"},
 	{"retrofit program", "Energy Efficiency"},
+
+	// ── URL-path keywords (hyphenated forms used in utility website URLs) ─────
+	// These allow inferCategories to tag pages from the URL alone when page
+	// body text is sparse (e.g. JS-rendered pages). No separate per-scraper
+	// mapping layer is needed — inferCategories already receives the full URL.
+	{"small-business", "Energy Efficiency"},
+	{"commercial-neighborhood", "Energy Efficiency"},
+	{"building-automation", "Energy Efficiency"},
+	{"market-rate-buildings", "Energy Efficiency"},
+	{"multifamily-rebate", "Energy Efficiency"},
+	{"explore-clean-energy", "Energy Efficiency"},
+	{"clean-energy-incentive", "Energy Efficiency"},
+	{"energy-exchange", "Electrification"},
+	{"power-ready", "Electric Vehicles"},
+	{"help-paying", "Income Qualified"},
+	{"payment-plans-assistance", "Income Qualified"},
+	{"affordable-buildings", "Income Qualified"},
+	{"affordable-housing", "Income Qualified"},
 }
 
 // segmentGroups maps canonical segment names to the keyword phrases that
@@ -584,6 +605,7 @@ var segmentGroups = []struct {
 	{"Multifamily", []string{
 		"multifamily", "multi-family", "apartment resident", "rental housing",
 		"affordable housing", "rental property", "multifamily residential",
+		"affordable-buildings", "affordable-housing",
 	}},
 	{"Agricultural", []string{
 		"agricultural", "agriculture", "farm", "irrigation", "livestock", "crop",
@@ -613,6 +635,7 @@ var segmentGroups = []struct {
 		"for-residential-customers", "residential-customers",
 		"homeowner rebate", "home rebate", "homeowner",
 		"/residential", "/home-",
+		"payment-plans-assistance", "help-paying",
 	}},
 }
 
