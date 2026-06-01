@@ -519,10 +519,22 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	}
 
 	// Detect "up to" maximum amount.
+	// Scan the description first (most reliable — it's the focused program summary),
+	// then fall back to the full page text.
 	var maxAmount *float64
 	if format == "dollar_amount" {
-		_, upToAmt := ParseAmount(pageText)
-		if upToAmt != nil && amount != nil && *upToAmt > *amount {
+		for _, src := range []string{description, pageText} {
+			_, upToAmt := ParseAmount(src)
+			if upToAmt != nil && amount != nil && *upToAmt > *amount {
+				maxAmount = upToAmt
+				break
+			}
+		}
+	}
+	// Also check description for maximum_amount on narrative pages — e.g. "Receive
+	// up to $10,000" where the hub-page guard already forced format=narrative.
+	if maxAmount == nil && format == "narrative" {
+		if _, upToAmt := ParseAmount(description); upToAmt != nil {
 			maxAmount = upToAmt
 		}
 	}
@@ -559,7 +571,18 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 
 	// ── Boolean / structured field extraction (from html_helpers.go) ────────
 	contractorRequired := extractContractorRequired(pageText)
+	// Default to false (not required) when no contractor language is found — the
+	// scraper is on a real program page, so absence of language means not required.
+	if contractorRequired == nil {
+		f := false
+		contractorRequired = &f
+	}
 	energyAuditRequired := extractEnergyAuditRequired(pageText + " " + description)
+	// Same default-to-false logic for energy audit.
+	if energyAuditRequired == nil {
+		f := false
+		energyAuditRequired = &f
+	}
 	// Rate/economic-development pages mention "energy rebates" in eligibility
 	// criteria but don't actually require an energy audit — clear false positives.
 	if energyAuditRequired != nil && strings.Contains(strings.ToLower(pageURL), "economic-development") {
@@ -589,10 +612,11 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		}
 	}
 
-	// Infer category and segment from URL + title + body text.
-	// categoryKeywords and segmentGroups include URL-path (hyphenated) variants
-	// so passing the full URL is sufficient — no separate URL rule layer needed.
-	inferText := pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 8000)])
+	// Infer category from URL + program name + meta description only.
+	// Using the full page body caused over-categorization: body text mentions
+	// many related programs, firing unrelated category keywords. The description
+	// is specifically written for this program's primary focus.
+	inferText := pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(description)
 	categories := inferCategories(inferText)
 	// Rate/tariff pages have no incentive category — URL keywords like
 	// "commercial-industrial" would otherwise tag them as Energy Efficiency.
