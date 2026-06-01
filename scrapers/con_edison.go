@@ -680,8 +680,10 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 
 	// Extract rate tiers from Con Edison's "Bill Breakdown by Time Period" tables
 	// (e.g. Smart Energy Plan peak/off-peak cost comparison).
+	// When tiers are present, override format to "tiered" so the UI renders them.
 	if tiers := extractConEdisonRateTiers(e); len(tiers) > 0 {
 		inc.RateTiers = tiers
+		inc.IncentiveFormat = models.PtrString("tiered")
 	}
 
 	return &inc
