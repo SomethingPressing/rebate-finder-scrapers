@@ -28,6 +28,11 @@
     "refresh:dsireusa": "node scripts/run.mjs dsireusa --force-refresh",
     "refresh:rewiring_america": "node scripts/run.mjs rewiring_america --force-refresh",
     "refresh:energy_star": "node scripts/run.mjs energy_star --force-refresh",
+    "refresh:con_edison": "node scripts/run.mjs con_edison --force-refresh",
+    "refresh:pnm": "node scripts/run.mjs pnm --force-refresh",
+    "refresh:xcel_energy": "node scripts/run.mjs xcel_energy --force-refresh",
+    "refresh:srp": "node scripts/run.mjs srp --force-refresh",
+    "refresh:peninsula_clean_energy": "node scripts/run.mjs peninsula_clean_energy --force-refresh",
 
     "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql",
 
