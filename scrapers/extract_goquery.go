@@ -223,7 +223,7 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	endDate := extractEndDate(pageText)
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
-	inferText := pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 4000)])
+	inferText := pageURL + " " + titleLower + " " + strings.ToLower(pageText[:min(len(pageText), 8000)])
 	categories := inferCategories(inferText)
 	if len(categories) == 0 && cfg.CategoryInferrer != nil {
 		if tags, err := cfg.CategoryInferrer.Infer(programName); err == nil {

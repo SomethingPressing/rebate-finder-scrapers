@@ -231,6 +231,9 @@ var incentiveContextWords = []string{
 	"rebate", "incentive", "up to $", "receive up to", "save up to",
 	"earn up to", "tax credit", "grant", "award", "discount", "reimburs",
 	"you could receive", "you may receive", "qualifying purchase",
+	// Rate / savings programs use cost language rather than rebate language.
+	"save money", "cost savings", "you could save", "you can save",
+	"bill savings", "lower your bill", "reduce your bill",
 }
 
 // ParseAmountContextual is like ParseAmount but returns ("narrative", nil)

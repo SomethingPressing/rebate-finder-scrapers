@@ -18,6 +18,7 @@ package scrapers
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -587,7 +588,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	// Infer category and segment from URL + title + body text.
 	// categoryKeywords and segmentGroups include URL-path (hyphenated) variants
 	// so passing the full URL is sufficient — no separate URL rule layer needed.
-	inferText := pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 4000)])
+	inferText := pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 8000)])
 	categories := inferCategories(inferText)
 	// Rate/tariff pages have no incentive category — URL keywords like
 	// "commercial-industrial" would otherwise tag them as Energy Efficiency.
@@ -673,6 +674,12 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		inc.EndDate = models.PtrString(endDate)
 	}
 
+	// Extract rate tiers from Con Edison's "Bill Breakdown by Time Period" tables
+	// (e.g. Smart Energy Plan peak/off-peak cost comparison).
+	if tiers := extractConEdisonRateTiers(e); len(tiers) > 0 {
+		inc.RateTiers = tiers
+	}
+
 	return &inc
 }
 
@@ -735,6 +742,70 @@ func conEdisonChildProgramLinks(e *colly.HTMLElement, pageURL string) []string {
 		links = append(links, full)
 	})
 	return links
+}
+
+// extractConEdisonRateTiers reads the "Bill Breakdown by Time Period" data table
+// that Con Edison renders on rate-comparison program pages (e.g. Smart Energy Plan).
+//
+// Table structure:
+//
+//	<tr class="data-table__row">
+//	  <td>…<p class="data-table__column-text">SUMMER PEAK</p></td>   ← period label
+//	  <td>…<p class="data-table__column-mobile">With SIMULTANEOUS Use: 4KW</p>
+//	       <p class="data-table__column-text">$122.72</p></td>       ← usage + amount
+//	  <td>…<p class="data-table__column-mobile">With STAGGERED Use: 3KW</p>
+//	       <p class="data-table__column-text">$92.04</p></td>
+//	</tr>
+func extractConEdisonRateTiers(e *colly.HTMLElement) []models.RateTier {
+	var tiers []models.RateTier
+	e.ForEach("tr.data-table__row", func(_ int, row *colly.HTMLElement) {
+		// First td → time-period label (Summer Peak, Off-Peak, etc.)
+		period := strings.TrimSpace(
+			row.DOM.Find("td.data-table__column").First().
+				Find("p.data-table__column-text").Text(),
+		)
+		if period == "" {
+			return
+		}
+		// Each subsequent td → usage scenario label + dollar amount
+		row.ForEach("td.data-table__column", func(j int, cell *colly.HTMLElement) {
+			if j == 0 {
+				return // skip the period column
+			}
+			usage := strings.TrimSpace(cell.ChildText("p.data-table__column-mobile"))
+			raw := strings.TrimSpace(cell.ChildText("p.data-table__column-text"))
+			raw = strings.TrimPrefix(raw, "$")
+			raw = strings.ReplaceAll(raw, ",", "")
+			amt, err := strconv.ParseFloat(raw, 64)
+			if err != nil || amt == 0 {
+				return
+			}
+			desc := period
+			if usage != "" {
+				desc += " – " + usage
+			}
+			tiers = append(tiers, models.RateTier{
+				ID:          conEdisonTierID(period, usage),
+				Description: desc,
+				Amount:      amt,
+				Unit:        "dollar",
+			})
+		})
+	})
+	return tiers
+}
+
+// conEdisonTierID builds a stable lowercase ID from rate tier label parts.
+func conEdisonTierID(parts ...string) string {
+	raw := strings.ToLower(strings.Join(parts, "_"))
+	raw = strings.NewReplacer(
+		" ", "_", ":", "", "/", "_",
+		"(", "", ")", "", "&", "_", ".", "",
+	).Replace(raw)
+	for strings.Contains(raw, "__") {
+		raw = strings.ReplaceAll(raw, "__", "_")
+	}
+	return strings.Trim(raw, "_")
 }
 
 func isGenericHubTitle(title string) bool {

@@ -486,6 +486,13 @@ var categoryKeywords = []struct {
 	{"critical peak", "Demand Response"},
 	{"virtual peaker", "Demand Response"},
 	{"rate program", "Demand Response"},
+	{"smart-energy", "Demand Response"},
+	{"smart energy plan", "Demand Response"},
+	{"time-of-use rate", "Demand Response"},
+	{"tou plan", "Demand Response"},
+	{"peak-hour", "Demand Response"},
+	{"off-peak hour", "Demand Response"},
+	{"on-peak", "Demand Response"},
 
 	// ── Income Qualified ─────────────────────────────────────────────────────
 	{"general income", "Income Qualified"},
