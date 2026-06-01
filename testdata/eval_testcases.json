@@ -17,14 +17,14 @@
     "id": "con_edison_heat_pumps",
     "source": "con_edison",
     "description": "Con Edison residential heat pump rebates — expects Residential segment and HVAC category",
-    "url": "https://www.coned.com/en/save-money/heat-pumps",
+    "url": "https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers/electric-heating-and-cooling-technology-for-renters-homeowners/save-on-a-central-air-source-heat-pump",
     "content_type": "text/html"
   },
   {
     "id": "con_edison_smart_usage_rewards",
     "source": "con_edison",
     "description": "Con Edison Smart Usage Rewards demand response — expects Demand Response category",
-    "url": "https://www.coned.com/en/save-money/smart-usage-rewards",
+    "url": "https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers/smart-usage-rewards",
     "content_type": "text/html"
   },
   {
