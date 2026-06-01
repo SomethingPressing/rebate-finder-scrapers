@@ -139,6 +139,33 @@ var conEdisonFilterCfg = FilterConfig{
 
 		// JS-rendered incentive viewer sub-pages (parent landing page is fine)
 		"/clean-energy-incentives-viewer/",
+
+		// ── Educational guides (not rebate program descriptions) ───────────────
+		// All Con Edison guide pages are informational; the rebate is on the parent.
+		"-guide",
+
+		// ── FAQ sub-pages (informational, not program descriptions) ──────────
+		// Extends the existing /faq exclusion to catch paths like
+		// "demand-response-faq" and "uptime-report-rule-change-faq".
+		"-faq",
+
+		// ── Contractor-facing pages (not customer rebate programs) ────────────
+		"/resources-for-contractors",
+		"/become-a-",
+
+		// ── Documentation / requirements pages ───────────────────────────────
+		"/documentation",
+
+		// ── Non-program utility and rate pages ────────────────────────────────
+		"/best-electric-delivery-rate",
+		"/electric-vehicles-and-your-bill",
+		"/make-better-energychoices-with-green-button",
+		"/upgrade-to-a-billing-interval-meter",
+		"/smart-usage-rewards-form",
+
+		// ── Informational / tool pages (not specific Con Edison programs) ─────
+		"/third-party-incentives",
+		"/find-clean-energy-incentives",
 	},
 
 	// ── Inclusions ─────────────────────────────────────────────────────────
@@ -331,6 +358,27 @@ func (s *ConEdisonScraper) Scrape(ctx context.Context) ([]models.Incentive, erro
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
+
+		// Discover child program pages linked from this page that may not be in
+		// the sitemap (e.g. specific rebate pages nested under a hub landing page).
+		childLinks := conEdisonChildProgramLinks(e, pageURL)
+		for _, child := range childLinks {
+			_ = c.Visit(child) // no-op if already queued/visited by Colly
+		}
+
+		// Hub guard: a page with 2+ child program links and no incentive amount
+		// is a category/landing page — skip it; the children carry the real data.
+		if len(childLinks) >= 2 {
+			_, amt := ParseAmountContextual(e.Text)
+			if amt == nil {
+				s.Logger.Info("con_edison: hub page skipped, children queued",
+					zap.String("url", pageURL),
+					zap.Int("children", len(childLinks)),
+				)
+				return
+			}
+		}
+
 		inc := s.extractPage(e, pageURL)
 		if inc == nil {
 			return
@@ -483,7 +531,14 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		}
 		href := el.Attr("href")
 		hrefLower := strings.ToLower(href)
-		if strings.Contains(hrefLower, "/business-partners/") || strings.Contains(hrefLower, "telecom") {
+		// Reject non-program URLs: account portals, generic dashboards, and
+		// telecom/business-partner links that match enrollment keywords spuriously.
+		if strings.Contains(hrefLower, "/business-partners/") ||
+			strings.Contains(hrefLower, "telecom") ||
+			strings.Contains(hrefLower, "/my-account") ||
+			strings.Contains(hrefLower, "/dashboard") ||
+			strings.Contains(hrefLower, "manage-my-account") ||
+			strings.Contains(hrefLower, "sectionid=") {
 			return
 		}
 		text := strings.ToLower(el.Text + href)
@@ -627,6 +682,61 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 // isGenericHubTitle returns true when the title is a section header rather
 // than a specific program name — typically ends with "Programs", "Assistance",
 // "Services", "Solutions", "Overview", or "Options".
+// conEdisonChildProgramLinks returns URLs of program pages that are directly
+// linked from e and are sub-paths of pageURL. These pages may not appear in
+// the sitemap (Con Edison often lists only parent hub pages there) but contain
+// the actual rebate details. The caller should queue them for scraping.
+func conEdisonChildProgramLinks(e *colly.HTMLElement, pageURL string) []string {
+	base := pageURL
+	if i := strings.Index(base, "?"); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.TrimRight(base, "/")
+
+	seen := make(map[string]bool)
+	var links []string
+	e.ForEach("a[href]", func(_ int, el *colly.HTMLElement) {
+		href := el.Attr("href")
+		var full string
+		switch {
+		case strings.HasPrefix(href, "https://www.coned.com"):
+			full = href
+		case strings.HasPrefix(href, "/"):
+			full = "https://www.coned.com" + href
+		default:
+			return
+		}
+		// Normalise: strip query and fragment.
+		if i := strings.Index(full, "?"); i >= 0 {
+			full = full[:i]
+		}
+		if i := strings.Index(full, "#"); i >= 0 {
+			full = full[:i]
+		}
+		full = strings.TrimRight(full, "/")
+
+		if full == base || seen[full] {
+			return
+		}
+		// Must be a direct sub-path (one level deeper than the current page).
+		if !strings.HasPrefix(full, base+"/") {
+			return
+		}
+		// No further slashes after the extra segment → direct child only.
+		remainder := full[len(base)+1:]
+		if strings.Contains(remainder, "/") {
+			return
+		}
+		// Must pass the URL filter (exclusions checked first, then inclusions).
+		if len(FilterSitemapURLs([]string{full}, conEdisonFilterCfg)) == 0 {
+			return
+		}
+		seen[full] = true
+		links = append(links, full)
+	})
+	return links
+}
+
 func isGenericHubTitle(title string) bool {
 	lower := strings.ToLower(strings.TrimSpace(title))
 	for _, suffix := range []string{
