@@ -23,8 +23,8 @@ import (
 var DefaultSkipPhrases = []string{
 	// Structural errors
 	"page not found", "404", "error", "site map",
-	// Home / generic pages
-	"home",
+	// Home / generic pages — use exact phrase to avoid matching "homeowner", "homepage", etc.
+	"home page", "go to home", "back to home",
 	// Login / auth walls — various spellings
 	"login", "log in", "sign in", "extra verification",
 	"two-factor", "verify your identity",
