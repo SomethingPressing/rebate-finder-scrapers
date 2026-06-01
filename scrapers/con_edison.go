@@ -243,10 +243,10 @@ func conEdisonSeedURLs() []string {
 	return []string{
 		// ── Residential ───────────────────────────────────────────────────────
 		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers",
-		"https://www.coned.com/en/save-money/heat-pumps",
-		"https://www.coned.com/en/save-money/weatherization",
-		"https://www.coned.com/en/save-money/smart-usage-rewards",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers/electric-heating-and-cooling-technology-for-renters-homeowners/save-on-a-central-air-source-heat-pump",
+		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers/smart-usage-rewards",
 		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-residential-customers/energy-exchange",
+		"https://www.coned.com/en/save-money/weatherization",
 		// ── Commercial & Industrial ───────────────────────────────────────────
 		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-commercial-industrial-buildings-customers/save-with-energy-efficiency-upgrades",
 		"https://www.coned.com/en/save-money/rebates-incentives-tax-credits/rebates-incentives-tax-credits-for-commercial-industrial-buildings-customers/commercial-neighborhood-program",
