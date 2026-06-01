@@ -580,6 +580,7 @@ var categoryKeywords = []struct {
 	// body text is sparse (e.g. JS-rendered pages). No separate per-scraper
 	// mapping layer is needed — inferCategories already receives the full URL.
 	{"small-business", "Energy Efficiency"},
+	{"small-business", "Electrification"},
 	{"commercial-neighborhood", "Energy Efficiency"},
 	{"building-automation", "Energy Efficiency"},
 	{"market-rate-buildings", "Energy Efficiency"},

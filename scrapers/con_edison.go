@@ -520,6 +520,15 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
+	// Refine generic hub-page titles using the application URL path segment.
+	// e.g. h1="Financial Assistance Programs" + applicationURL=".../energy-affordability-program"
+	//      → programName="Energy Affordability Program"
+	if applicationURL != "" && isGenericHubTitle(programName) {
+		if refined := titleFromURLSlug(applicationURL); refined != "" {
+			programName = refined
+		}
+	}
+
 	// Infer category and segment from URL + title + body text.
 	// categoryKeywords and segmentGroups include URL-path (hyphenated) variants
 	// so passing the full URL is sufficient — no separate URL rule layer needed.
@@ -530,7 +539,20 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 	if strings.Contains(pageURLLower, "incentive-rate") {
 		categories = nil
 	}
+	// AI fallback: when keyword inference finds nothing, use the embedding+LLM
+	// inferrer (same pattern as ExtractPageGoquery). This handles program types
+	// not yet covered by categoryKeywords without requiring taxonomy edits.
+	if len(categories) == 0 && s.CategoryInferrer != nil {
+		if tags, err := s.CategoryInferrer.Infer(programName); err == nil {
+			categories = tags
+		}
+	}
 	segments := inferSegments(pageURL+" "+programName, pageText)
+	if len(segments) == 0 && s.SegmentInferrer != nil {
+		if segs, err := s.SegmentInferrer.Infer(programName, description); err == nil {
+			segments = segs
+		}
+	}
 
 	// Build stable ID.
 	id := models.DeterministicID(conEdisonSourceName, pageURL)
@@ -602,6 +624,55 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 // isFooterOnlyDescription returns true when the extracted description is just
 // a copyright footer — a signal that the page body is JavaScript-rendered and
 // Colly only captured static boilerplate.
+// isGenericHubTitle returns true when the title is a section header rather
+// than a specific program name — typically ends with "Programs", "Assistance",
+// "Services", "Solutions", "Overview", or "Options".
+func isGenericHubTitle(title string) bool {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	for _, suffix := range []string{
+		"programs", "assistance", "services", "solutions",
+		"overview", "options", "resources",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// titleFromURLSlug converts the last meaningful path segment of a URL into a
+// title-cased program name.
+// e.g. ".../energy-affordability-program" → "Energy Affordability Program"
+// Returns "" when the segment looks like an admin page (my-account, login, etc.)
+func titleFromURLSlug(rawURL string) string {
+	// Strip query string.
+	if idx := strings.Index(rawURL, "?"); idx >= 0 {
+		rawURL = rawURL[:idx]
+	}
+	rawURL = strings.TrimRight(rawURL, "/")
+	parts := strings.Split(rawURL, "/")
+	skipSegments := map[string]bool{
+		"my-account": true, "manage-my-account": true, "login": true,
+		"sign-in": true, "enroll": true, "apply": true,
+		"application": true, "dashboard": true, "account": true,
+	}
+	for i := len(parts) - 1; i >= 0; i-- {
+		seg := parts[i]
+		if len(seg) < 5 || skipSegments[seg] {
+			continue
+		}
+		words := strings.Split(seg, "-")
+		titled := make([]string, 0, len(words))
+		for _, w := range words {
+			if len(w) > 0 {
+				titled = append(titled, strings.ToUpper(w[:1])+w[1:])
+			}
+		}
+		return strings.Join(titled, " ")
+	}
+	return ""
+}
+
 func isFooterOnlyDescription(desc string) bool {
 	if len(desc) == 0 {
 		return true
