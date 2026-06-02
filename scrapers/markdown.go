@@ -170,6 +170,9 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 	}
 
 	// Fall back to collecting inner HTML of substantial paragraphs.
+	// FAQ-style question paragraphs ("Q: …") are typically short but carry
+	// meaning — include them regardless of length so the paired answer is
+	// not orphaned in the description.
 	var parts []string
 	rawTotal := 0
 	e.DOM.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
@@ -178,7 +181,9 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 			return true
 		}
 		text := strings.TrimSpace(s.Text())
-		if len(text) >= 60 && !isJunkParagraph(text) {
+		isFAQItem := len(text) >= 5 && (strings.HasPrefix(text, "Q:") || strings.HasPrefix(text, "A:") ||
+			strings.HasPrefix(text, "Q.") || strings.HasPrefix(text, "A."))
+		if (len(text) >= 60 || isFAQItem) && !isJunkParagraph(text) {
 			if h, err := s.Html(); err == nil {
 				parts = append(parts, "<p>"+h+"</p>")
 				rawTotal += len(h)

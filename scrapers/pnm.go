@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly/v2"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/internal/segmentinfer"
@@ -225,6 +226,10 @@ var pnmExtractCfg = PageExtractConfig{
 	Territory:      pnmTerritory,
 	DefaultApply:   pnmDefaultApply,
 	BaseURL:        "https://www.pnm.com",
+	// PNM's CMS injects nav-link text into the h1 on some pages ("Navigation …").
+	// "navigation" is added here so ExtractPageGoquery (used by the evaluator)
+	// rejects those pages the same way extractPage does via TrimPrefix.
+	SkipPhrases: append(append([]string{}, DefaultSkipPhrases...), "navigation"),
 }
 
 // Name implements Scraper.
@@ -288,6 +293,28 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
+
+		// Discover child program pages linked from hub pages that may not be
+		// in the sitemap (e.g. specific rebate pages nested under a hub).
+		childLinks := pnmChildProgramLinks(e, pageURL)
+
+		for _, child := range childLinks {
+			_ = c.Visit(child)
+		}
+
+		// Hub guard: 2+ child links and no incentive amount → this is a
+		// category/landing page; the children carry the real data.
+		if len(childLinks) >= 2 {
+			_, amt := ParseAmountContextual(e.Text)
+			if amt == nil {
+				s.Logger.Info("pnm: hub page skipped, children queued",
+					zap.String("url", pageURL),
+					zap.Int("children", len(childLinks)),
+				)
+				return
+			}
+		}
+
 		inc := s.extractPage(e, pageURL)
 		if inc == nil {
 			return
@@ -351,10 +378,25 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 
 // extractPage extracts a single Incentive from a PNM rebate page.
 func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.Incentive {
-	// Extract page title: use the FIRST <h1> only to avoid concatenating
-	// multiple headings that appear as separate h1 elements on some pages.
-	programName := strings.Join(strings.Fields(e.DOM.Find("h1").First().Text()), " ")
+	// PNM injects two hide-accessible h1 elements before the visible one:
+	//   <h1 class="hide-accessible">Navigation</h1>
+	//   <h1 class="hide-accessible">PNM Good Neighbor Fund</h1>
+	//   <h1 style="...">PNM Good Neighbor Fund: ...</h1>  ← real title
+	// Skip any h1 with class "hide-accessible" and use the first visible one.
+	programName := ""
+	e.DOM.Find("h1").Each(func(_ int, sel *goquery.Selection) {
+		if programName != "" {
+			return
+		}
+		if strings.Contains(sel.AttrOr("class", ""), "hide-accessible") {
+			return
+		}
+		if text := strings.Join(strings.Fields(sel.Text()), " "); len(text) >= 5 {
+			programName = text
+		}
+	})
 	if programName == "" {
+		// Fallback: <title> tag (strip site suffix).
 		programName = strings.TrimSpace(e.ChildText("title"))
 		if idx := strings.Index(programName, "|"); idx > 0 {
 			programName = strings.TrimSpace(programName[:idx])
@@ -367,25 +409,33 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		return nil
 	}
 
-	// PNM's CMS concatenates nav-link text into the h1 — strip the prefix.
-	programName = strings.TrimPrefix(programName, "Navigation")
-	programName = strings.TrimSpace(programName)
-	if len(programName) < 5 {
-		return nil
+	// Strip a subtitle following " : " or " — " (e.g. "Fund: Supporting Our Communities")
+	// to keep the stored program name concise and matchable.
+	if idx := strings.Index(programName, ": "); idx > 10 {
+		programName = strings.TrimSpace(programName[:idx])
 	}
 
 	titleLower := strings.ToLower(programName)
-	for _, p := range DefaultSkipPhrases {
+	for _, p := range pnmExtractCfg.SkipPhrases {
 		if strings.Contains(titleLower, p) {
 			return nil
 		}
 	}
 
 	description := CollyDescriptionMarkdown(e, programName, 1000)
+
+	// Guard: JS-rendered pages where Colly only captured a copyright footer.
+	if isFooterOnlyDescription(description) {
+		return nil
+	}
+
 	imageURL := CollyImageURL(e, "https://www.pnm.com")
 
-	// Full page text for all regex extractions.
-	pageText := e.Text
+	// Strip nav/header/footer before extracting page text so navigation items
+	// (e.g. "Save Money" hub labels) don't pollute category/amount inference.
+	contentDOM := e.DOM.Clone()
+	contentDOM.Find("nav, header, footer").Remove()
+	pageText := contentDOM.Text()
 
 	// Amount extraction — only when incentive keywords are present on the page.
 	format, amount := ParseAmountContextual(pageText)
@@ -408,13 +458,52 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		amount = nil
 	}
 
-	// Application URL.
+	// Financial-assistance and bill-insert pages contain stray numbers (grant
+	// totals, phone extensions, eligibility thresholds) that are not the
+	// program's own incentive amount — override to narrative to avoid false positives.
+	pageURLLower := strings.ToLower(pageURL)
+	if strings.Contains(pageURLLower, "financial-assistance") ||
+		strings.Contains(pageURLLower, "goodneighborfund") ||
+		strings.Contains(pageURLLower, "good-neighbor-fund") ||
+		strings.Contains(pageURLLower, "bill-insert") ||
+		strings.Contains(pageURLLower, "insert") ||
+		strings.Contains(pageURLLower, "tax-rebate-resources") {
+		format = "narrative"
+		amount = nil
+	}
+
+	// Detect "up to" maximum amount — scan description first (most reliable),
+	// then fall back to full page text.
+	var maxAmount *float64
+	if format == "dollar_amount" {
+		for _, src := range []string{description, pageText} {
+			_, upToAmt := ParseAmount(src)
+			if upToAmt != nil && amount != nil && *upToAmt > *amount {
+				maxAmount = upToAmt
+				break
+			}
+		}
+	}
+	if maxAmount == nil && format == "narrative" {
+		if _, upToAmt := ParseAmount(description); upToAmt != nil {
+			maxAmount = upToAmt
+		}
+	}
+
+	// Application URL — skip Liferay portal login redirects and generic
+	// account portals that match "apply" keywords spuriously.
 	applicationURL := ""
 	e.ForEach("a[href]", func(_ int, el *colly.HTMLElement) {
 		if applicationURL != "" {
 			return
 		}
 		href := el.Attr("href")
+		hrefLower := strings.ToLower(href)
+		if strings.Contains(hrefLower, "/c/portal/login") ||
+			strings.Contains(hrefLower, "/my-account") ||
+			strings.Contains(hrefLower, "/dashboard") {
+			return
+		}
 		text := strings.ToLower(el.Text + " " + href)
 		if strings.Contains(text, "apply") || strings.Contains(text, "application") ||
 			strings.Contains(text, "submit") || strings.Contains(text, "enroll") {
@@ -426,9 +515,16 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		}
 	})
 
+	// Refine generic hub-page titles using the application URL path segment.
+	if applicationURL != "" && isGenericHubTitle(programName) {
+		if refined := titleFromURLSlug(applicationURL); refined != "" {
+			programName = refined
+		}
+	}
+
 	// ── Boolean / structured field extraction (from html_helpers.go) ────────
 	contractorRequired := extractContractorRequired(pageText)
-	energyAuditRequired := extractEnergyAuditRequired(pageText)
+	energyAuditRequired := extractEnergyAuditRequired(pageText + " " + description)
 	customerType := extractCustomerTypeWithBody(pageURL+" "+programName, pageText)
 	startDate := extractStartDate(pageText)
 	endDate := extractEndDate(pageText)
@@ -437,9 +533,33 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	contactPhone := extractPhone(pageText)
 	contactEmail := extractEmail(pageText)
 
-	// Infer category and segment from URL, title, and body text.
-	categories := inferCategories(pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(pageText[:min(len(pageText), 2000)]))
+	// Infer category from URL + title + description only — using the full body
+	// risks over-categorization when hub pages mention many related programs.
+	inferText := pageURL + " " + strings.ToLower(programName) + " " + strings.ToLower(description)
+	categories := inferCategories(inferText)
+	if len(categories) == 0 && s.CategoryInferrer != nil {
+		if tags, err := s.CategoryInferrer.Infer(programName); err == nil {
+			categories = tags
+		}
+	}
 	segments := inferSegments(pageURL+" "+programName, pageText)
+	if len(segments) == 0 && s.SegmentInferrer != nil {
+		if segs, err := s.SegmentInferrer.Infer(programName, description); err == nil {
+			segments = segs
+		}
+	}
+
+	// Income-qualified assistance programs (Good Neighbor Fund, LIHEAP, etc.)
+	// are always residential — default customer_type when keyword extraction
+	// finds nothing and the category is already determined.
+	if customerType == "" {
+		for _, cat := range categories {
+			if strings.EqualFold(cat, "Income Qualified") {
+				customerType = "Residential"
+				break
+			}
+		}
+	}
 
 	if format == "" {
 		format = "narrative"
@@ -469,7 +589,14 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	inc.ProgramHash = models.ComputeProgramHash(programName, pnmUtility)
 
 	if amount != nil {
-		inc.IncentiveAmount = amount
+		if format == "percent" {
+			inc.PercentValue = amount
+		} else {
+			inc.IncentiveAmount = amount
+		}
+	}
+	if maxAmount != nil {
+		inc.MaximumAmount = maxAmount
 	}
 	if applicationURL != "" {
 		inc.ApplicationURL = models.PtrString(applicationURL)
@@ -497,6 +624,58 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	}
 
 	return &inc
+}
+
+// pnmChildProgramLinks returns URLs of program pages directly linked from e
+// that are sub-paths of pageURL. These may not appear in the PNM sitemap
+// (PNM often lists only hub/landing pages there) but contain rebate details.
+func pnmChildProgramLinks(e *colly.HTMLElement, pageURL string) []string {
+	base := pageURL
+	if i := strings.Index(base, "?"); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.TrimRight(base, "/")
+
+	seen := make(map[string]bool)
+	var links []string
+	e.ForEach("a[href]", func(_ int, el *colly.HTMLElement) {
+		href := el.Attr("href")
+		var full string
+		switch {
+		case strings.HasPrefix(href, "https://www.pnm.com"):
+			full = href
+		case strings.HasPrefix(href, "/"):
+			full = "https://www.pnm.com" + href
+		default:
+			return
+		}
+		if i := strings.Index(full, "?"); i >= 0 {
+			full = full[:i]
+		}
+		if i := strings.Index(full, "#"); i >= 0 {
+			full = full[:i]
+		}
+		full = strings.TrimRight(full, "/")
+
+		if full == base || seen[full] {
+			return
+		}
+		// Direct child only — one level deeper, no further slashes.
+		if !strings.HasPrefix(full, base+"/") {
+			return
+		}
+		remainder := full[len(base)+1:]
+		if strings.Contains(remainder, "/") {
+			return
+		}
+		// Must pass the URL filter.
+		if len(FilterSitemapURLs([]string{full}, pnmFilterCfg)) == 0 {
+			return
+		}
+		seen[full] = true
+		links = append(links, full)
+	})
+	return links
 }
 
 func (s *PNMScraper) httpClient() *http.Client {
