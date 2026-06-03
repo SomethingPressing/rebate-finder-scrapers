@@ -30,11 +30,12 @@ func isJunkParagraph(text string) bool {
 	return false
 }
 
-// imageSkipKeywords — src substrings that indicate a logo, icon or UI asset
-// rather than a real program image. Checked case-insensitively.
+// imageSkipKeywords — src substrings that indicate a logo, icon, UI asset,
+// or loading spinner rather than a real program image. Checked case-insensitively.
 var imageSkipKeywords = []string{
 	"logo", "icon", "favicon", "sprite", "arrow", "chevron",
 	"button", "badge", "avatar", "placeholder", "tracking", "pixel",
+	"ajax", "loader", "loading", "spinner",
 	".svg", "data:image",
 }
 
@@ -92,6 +93,21 @@ func extractImageURL(doc *goquery.Document, baseURL string) string {
 		return true
 	})
 	return found
+}
+
+// CollyImageURLMetaOnly returns the og:image or twitter:image meta URL from a
+// Colly HTMLElement, and nothing else.  Use this when body <img> scanning is
+// unreliable (e.g. sites that embed spinners, banners, or logos before the
+// real programme image).  Returns "" when no meta image is present, which
+// the caller should treat as "use placeholder".
+func CollyImageURLMetaOnly(e *colly.HTMLElement) string {
+	if og := e.ChildAttr(`meta[property="og:image"]`, "content"); og != "" {
+		return og
+	}
+	if tw := e.ChildAttr(`meta[name="twitter:image"]`, "content"); tw != "" {
+		return tw
+	}
+	return ""
 }
 
 // CollyImageURL returns the best image URL from a Colly HTMLElement.

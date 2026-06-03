@@ -476,7 +476,10 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		return nil
 	}
 
-	imageURL := CollyImageURL(e, "https://www.coned.com")
+	// Con Edison pages embed ajax-loader spinners and header logos before any
+	// real programme image in the DOM, so restrict to og/twitter meta only.
+	// When neither is present the field stays empty and the UI shows its placeholder.
+	imageURL := CollyImageURLMetaOnly(e)
 
 	// Full page text for regex extractions.
 	// Clone and strip nav/header/footer so that navigation items like
