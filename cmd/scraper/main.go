@@ -315,6 +315,7 @@ func main() {
 			logger.Info("staging upsert complete",
 				zap.String("source", source),
 				zap.Int("upserted", result.Upserted),
+				zap.Int("skipped_no_url", result.Skipped),
 				zap.Bool("reset_to_pending", cfg.ForceRefresh),
 				zap.Duration("db_elapsed", time.Since(dbStarted)),
 			)

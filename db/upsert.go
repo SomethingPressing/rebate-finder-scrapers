@@ -11,6 +11,7 @@ import (
 // UpsertResult summarises a batch staging upsert.
 type UpsertResult struct {
 	Upserted int // rows inserted or updated in rebates_staging
+	Skipped  int // rows dropped because they had no program_url or application_url
 }
 
 // upsertBatchSize is the maximum number of rows per INSERT statement.
@@ -39,6 +40,24 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, force
 	if len(items) == 0 {
 		return UpsertResult{}, nil
 	}
+
+	// Drop any item that has no navigable URL — there is nothing for a user to
+	// link to, and such rows are never useful in staging.
+	filtered := make([]models.Incentive, 0, len(items))
+	for _, inc := range items {
+		hasURL := (inc.ProgramURL != nil && *inc.ProgramURL != "") ||
+			(inc.ApplicationURL != nil && *inc.ApplicationURL != "")
+		if hasURL {
+			filtered = append(filtered, inc)
+		}
+	}
+	skipped := len(items) - len(filtered)
+	items = filtered
+
+	if len(items) == 0 {
+		return UpsertResult{Skipped: skipped}, nil
+	}
+
 	doRefresh := len(forceRefresh) > 0 && forceRefresh[0]
 
 	rows := make([]models.StagedRebate, len(items))
@@ -90,7 +109,7 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, force
 			Create(&batch)
 
 		if result.Error != nil {
-			return UpsertResult{Upserted: total}, fmt.Errorf("upsert staging (batch %d-%d): %w", start, end, result.Error)
+			return UpsertResult{Upserted: total, Skipped: skipped}, fmt.Errorf("upsert staging (batch %d-%d): %w", start, end, result.Error)
 		}
 		total += int(result.RowsAffected)
 
@@ -110,7 +129,7 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, force
 						"program_url":     row.ProgramURL,
 						"application_url": row.ApplicationURL,
 					}).Error; err != nil {
-					return UpsertResult{Upserted: total}, fmt.Errorf("force url update (source %s): %w", row.SourceID, err)
+					return UpsertResult{Upserted: total, Skipped: skipped}, fmt.Errorf("force url update (source %s): %w", row.SourceID, err)
 				}
 			}
 		}
@@ -139,7 +158,7 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, force
 			Select("id, stg_source_id").
 			Where("stg_source_id IN ?", taggedSourceIDs).
 			Find(&stagingRows).Error; err != nil {
-			return UpsertResult{Upserted: total}, fmt.Errorf("upsert tenant status: lookup staging ids: %w", err)
+			return UpsertResult{Upserted: total, Skipped: skipped}, fmt.Errorf("upsert tenant status: lookup staging ids: %w", err)
 		}
 
 		sourceToStagingID := make(map[string]uint, len(stagingRows))
@@ -175,12 +194,12 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, force
 			if err := d.gorm.
 				Clauses(clause.OnConflict{DoNothing: true}).
 				CreateInBatches(statusRows, 500).Error; err != nil {
-				return UpsertResult{Upserted: total}, fmt.Errorf("upsert tenant status: insert: %w", err)
+				return UpsertResult{Upserted: total, Skipped: skipped}, fmt.Errorf("upsert tenant status: insert: %w", err)
 			}
 		}
 	}
 
-	return UpsertResult{Upserted: total}, nil
+	return UpsertResult{Upserted: total, Skipped: skipped}, nil
 }
 
 // ResetToPending resets staging rows back to "pending".

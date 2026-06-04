@@ -7,7 +7,7 @@
 # All targets load config from .env automatically (via the Go config package).
 # =============================================================================
 
-.PHONY: help build scrape scrape-coned scrape-pnm scrape-xcel scrape-srp scrape-pce promote promote-dry stats pdf-scrape clean
+.PHONY: help build scrape scrape-coned scrape-pnm scrape-xcel scrape-srp scrape-pce promote promote-dry stats pdf-scrape purge-no-url clean
 
 # ── Default target ────────────────────────────────────────────────────────────
 help:
@@ -34,6 +34,7 @@ help:
 	@echo "    make stats           Print staging table summary"
 	@echo ""
 	@echo "  Maintenance"
+	@echo "    make purge-no-url    Delete staging rows with no program_url or application_url"
 	@echo "    make clean           Remove compiled binaries"
 	@echo ""
 
@@ -43,6 +44,7 @@ build:
 	go build -o bin/scraper       ./cmd/scraper
 	go build -o bin/promoter      ./cmd/promoter
 	go build -o bin/staging-stats ./cmd/staging-stats
+	go build -o bin/purge-no-url  ./cmd/purge-no-url
 	@if [ -d cmd/pdf-scraper ]; then go build -o bin/pdf-scraper ./cmd/pdf-scraper; fi
 	@echo "✔  All binaries built in bin/"
 
@@ -80,6 +82,9 @@ stats: bin/staging-stats
 	./bin/staging-stats
 
 # ── Maintenance ───────────────────────────────────────────────────────────────
+purge-no-url: bin/purge-no-url
+	./bin/purge-no-url
+
 clean:
 	rm -rf bin/
 	@echo "✔  bin/ removed"
@@ -100,3 +105,7 @@ bin/staging-stats: $(shell find cmd/staging-stats db models config -name '*.go' 
 bin/pdf-scraper: $(shell find cmd/pdf-scraper db models config -name '*.go' 2>/dev/null)
 	@mkdir -p bin
 	go build -o bin/pdf-scraper ./cmd/pdf-scraper
+
+bin/purge-no-url: $(shell find cmd/purge-no-url db models config -name '*.go' 2>/dev/null)
+	@mkdir -p bin
+	go build -o bin/purge-no-url ./cmd/purge-no-url
