@@ -29,13 +29,18 @@ func (f LocationFilter) empty() bool {
 // The scraper's own staging DB is configured separately via DATABASE_URL and
 // SCRAPER_DB_SCHEMA in the .env file — it is not a per-tenant concern.
 type TenantConfig struct {
-	ID                    string         `json:"id"`                       // lowercase slug, e.g. "acme"
-	Name                  string         `json:"name"`                     // display name for logs
-	Active                bool           `json:"active"`                   // false = skip without removing
-	Sources               []string       `json:"sources"`                  // scraper names; empty = all
-	DBURLEnv              string         `json:"db_url_env"`               // DSN or env var name for the tenant's destination DB
-	LocationFilter        LocationFilter `json:"location_filter"`          // geographic filter; empty = all
-	MaxIncentivesPerSource int           `json:"max_incentives_per_source"` // 0 = unlimited
+	ID                     string         `json:"id"`                        // lowercase slug, e.g. "acme" — becomes clients.id
+	Name                   string         `json:"name"`                      // display name — becomes clients.name
+	Active                 bool           `json:"active"`                    // false = skip without removing
+	Sources                []string       `json:"sources"`                   // scraper names; empty = all
+	DBURLEnv               string         `json:"db_url_env"`                // DSN or env var name for the tenant's destination DB
+	LocationFilter         LocationFilter `json:"location_filter"`           // geographic filter; empty = all
+	MaxIncentivesPerSource int            `json:"max_incentives_per_source"` // 0 = unlimited
+
+	// Optional metadata written to public.clients in the tenant DB.
+	Region      string `json:"region"`       // e.g. "Pacific Northwest"
+	UtilityType string `json:"utility_type"` // e.g. "electric"
+	IsDemo      bool   `json:"is_demo"`      // true for demo/test tenants
 }
 
 // DBUrl resolves the tenant's database URL.

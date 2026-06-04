@@ -55,6 +55,12 @@ type LiveRebate struct {
 	Administrator      *string `gorm:"column:administrator"`
 	ImplementingSector   *string `gorm:"column:implementing_sector"`
 
+	// ── Tenant identity ──────────────────────────────────────────────────────
+	// ClientID is the public.clients.id of the tenant this rebate belongs to.
+	// Set by the promoter from TenantConfig.ID (multi-tenant) or CLIENT_ID env
+	// var (single-tenant) so every promoted rebate is scoped to its client.
+	ClientID *string `gorm:"column:client_id"`
+
 	// ── Source tracking ───────────────────────────────────────────────────────
 	Source         *string `gorm:"column:source"`
 	ScraperVersion *string `gorm:"column:scraper_version"`
@@ -110,5 +116,6 @@ var liveRebateUpdateCols = []string{
 	"image_url", "image_urls",
 	"contractor_required", "energy_audit_required",
 	"rate_tiers", "scraper_version",
+	"client_id",
 	"updated_at",
 }

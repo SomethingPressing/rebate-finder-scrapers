@@ -112,6 +112,13 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 		return result, nil
 	}
 
+	// ── Phase 2b: upsert the client row so promoted rebates can reference it ──
+	if opts.Client.IsSet() {
+		if err := EnsureClient(tenantDB, opts.Client); err != nil {
+			return nil, fmt.Errorf("promote_tenant %s: ensure client %q: %w", tenantID, opts.Client.ID, err)
+		}
+	}
+
 	// ── Phase 3: build LiveRebate structs ─────────────────────────────────────
 	now := time.Now()
 	draft := "draft"
@@ -178,6 +185,11 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 			id = existingID
 		}
 
+		var clientID *string
+		if opts.Client.ID != "" {
+			clientID = ptrStr(opts.Client.ID)
+		}
+
 		lr := models.LiveRebate{
 			ID:          id,
 			ProgramHash: &hash,
@@ -187,6 +199,7 @@ func PromoteTenant(stagingDB *DB, tenantDB *DB, tenantID string, opts PromoteOpt
 			Processed:  &processed,
 			CreatedAt:  &now,
 
+			ClientID:             clientID,
 			ProgramName:          merged.programName,
 			UtilityCompany:       merged.utilityCompany,
 			IncentiveDescription: merged.incentiveDescription,

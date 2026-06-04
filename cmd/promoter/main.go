@@ -39,6 +39,7 @@ import (
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/logutil"
+	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
 )
 
@@ -69,6 +70,22 @@ func main() {
 	tenants, err := config.LoadTenants(cfg.TenantsFile)
 	if err != nil {
 		logger.Fatal("load tenants failed", zap.String("file", cfg.TenantsFile), zap.Error(err))
+	}
+
+	// Derive client identity from the first active tenant in tenants.json.
+	// In single-tenant mode (all tenants share one DB) this stamps the clients
+	// row and client_id on rebates without any extra env vars.
+	// In multi-tenant mode the per-tenant loop below overrides opts.Client for
+	// each tenant individually, so this default is never used.
+	if len(tenants) > 0 {
+		t := tenants[0]
+		opts.Client = models.ClientRow{
+			ID:          t.ID,
+			Name:        t.Name,
+			Region:      t.Region,
+			UtilityType: t.UtilityType,
+			IsDemo:      t.IsDemo,
+		}
 	}
 
 	// ── Single-tenant mode ────────────────────────────────────────────────────
@@ -135,8 +152,17 @@ func main() {
 			continue
 		}
 
+		tenantOpts := opts
+		tenantOpts.Client = models.ClientRow{
+			ID:          tenant.ID,
+			Name:        tenant.Name,
+			Region:      tenant.Region,
+			UtilityType: tenant.UtilityType,
+			IsDemo:      tenant.IsDemo,
+		}
+
 		start := time.Now()
-		result, err := db.PromoteTenant(stagingDB, tenantDB, tenant.ID, opts)
+		result, err := db.PromoteTenant(stagingDB, tenantDB, tenant.ID, tenantOpts)
 		elapsed := time.Since(start)
 
 		tenantDB.Close() //nolint:errcheck

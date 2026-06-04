@@ -50,6 +50,9 @@ type PromoteOptions struct {
 	// SourcePriority is an ordered list of scraper names; highest priority first.
 	// Falls back to DefaultSourcePriority when nil/empty.
 	SourcePriority []string
+	// Client, when set, is upserted into public.clients before rebates are written
+	// and its ID is stamped as client_id on every promoted rebate.
+	Client models.ClientRow
 }
 
 // PromoteResult summarises a completed promotion run.
@@ -150,6 +153,13 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 		return result, nil
 	}
 
+	// ── Phase 2b: upsert the client row so promoted rebates can reference it ──
+	if opts.Client.IsSet() {
+		if err := EnsureClient(d, opts.Client); err != nil {
+			return nil, fmt.Errorf("promote: ensure client %q: %w", opts.Client.ID, err)
+		}
+	}
+
 	// ── Phase 3: build LiveRebate structs ─────────────────────────────────────
 	now := time.Now()
 	draft := "draft"
@@ -211,6 +221,11 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			id = existingID
 		}
 
+		var clientID *string
+		if opts.Client.ID != "" {
+			clientID = ptrStr(opts.Client.ID)
+		}
+
 		lr := models.LiveRebate{
 			ID:          id,
 			ProgramHash: &hash,
@@ -222,6 +237,7 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			CreatedAt:  &now,
 
 			// Data columns — updated on conflict.
+			ClientID:             clientID,
 			ProgramName:          merged.programName,
 			UtilityCompany:       merged.utilityCompany,
 			IncentiveDescription: merged.incentiveDescription,
