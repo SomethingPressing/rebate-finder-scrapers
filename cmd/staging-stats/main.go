@@ -64,6 +64,19 @@ func loadUSStates() ([]usState, error) {
 	return nil, fmt.Errorf("staging-stats: data/us_states.json not found")
 }
 
+// knownSources is the complete list of configured scraper source names.
+// These always appear in the BY SOURCE table even when they have no staging rows.
+var knownSources = []string{
+	"dsireusa",
+	"rewiring_america",
+	"energy_star",
+	"con_edison",
+	"pnm",
+	"xcel_energy",
+	"srp",
+	"peninsula_clean_energy",
+}
+
 // ── Query result structs ──────────────────────────────────────────────────────
 
 type statusRow struct {
@@ -172,6 +185,7 @@ func main() {
 	`).Scan(&report.ByStatus)
 
 	// ── 3. By source ──────────────────────────────────────────────────────────
+	var dbSources []sourceRow
 	g.Raw(`
 		SELECT
 			source,
@@ -188,7 +202,35 @@ func main() {
 		WHERE  deleted_at IS NULL
 		GROUP  BY source
 		ORDER  BY total DESC
-	`).Scan(&report.BySource)
+	`).Scan(&dbSources)
+
+	// Merge DB results with the full known-sources list so every scraper
+	// appears even when it has scraped zero rows.
+	sourceMap := make(map[string]sourceRow, len(dbSources))
+	for _, r := range dbSources {
+		sourceMap[r.Source] = r
+	}
+	report.BySource = make([]sourceRow, 0, len(knownSources))
+	for _, name := range knownSources {
+		if r, ok := sourceMap[name]; ok {
+			report.BySource = append(report.BySource, r)
+		} else {
+			report.BySource = append(report.BySource, sourceRow{Source: name})
+		}
+	}
+	// Append any sources in DB not in the hardcoded list.
+	for _, r := range dbSources {
+		found := false
+		for _, name := range knownSources {
+			if r.Source == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			report.BySource = append(report.BySource, r)
+		}
+	}
 
 	// ── 4. By incentive format ────────────────────────────────────────────────
 	g.Raw(`
