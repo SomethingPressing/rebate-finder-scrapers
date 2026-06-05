@@ -68,6 +68,7 @@ var pnmFilterCfg = FilterConfig{
 		"/legal",
 		"/terms",
 		"/privacy",
+		"-act-plan", // regulatory plan notices (e.g. /2025-renewable-energy-act-plan)
 
 		// Account management
 		"/login",
@@ -80,6 +81,35 @@ var pnmFilterCfg = FilterConfig{
 		"/customer-notice",
 		"/bill-insert",
 		"/insert",
+		"-insert", // catches URL slugs ending with -insert (e.g. february-2023-good-neighbor-fund-insert)
+
+		// Dated newsletter / archive pages — month-year prefixed slugs are
+		// always bill inserts or archived newsletters, never live rebate programs.
+		"/january-20",
+		"/february-20",
+		"/march-20",
+		"/april-20",
+		"/may-20",
+		"/june-20",
+		"/july-20",
+		"/august-20",
+		"/september-20",
+		"/october-20",
+		"/november-20",
+		"/december-20",
+
+		// FAQ and reference pages — informational, not program pages
+		"faqs",
+		"referencelibrary",
+		"reference-library",
+		"interconnection-benefits",
+
+		// Specific non-program pages
+		"assistancefair",
+		// Hub/listing pages — not single-program pages
+		"/rebates-and-savings",
+		// Bill insert archive pages with numeric-date prefixes (e.g. 062022-sert-*)
+		"-sert-",
 
 		// Operational / non-customer
 		"/outages",
@@ -227,9 +257,14 @@ var pnmExtractCfg = PageExtractConfig{
 	DefaultApply:   pnmDefaultApply,
 	BaseURL:        "https://www.pnm.com",
 	// PNM's CMS injects nav-link text into the h1 on some pages ("Navigation …").
-	// "navigation" is added here so ExtractPageGoquery (used by the evaluator)
-	// rejects those pages the same way extractPage does via TrimPrefix.
-	SkipPhrases: append(append([]string{}, DefaultSkipPhrases...), "navigation"),
+	// Extra phrases catch pages whose titles reveal they are newsletters or
+	// informational notices rather than live rebate programs.
+	SkipPhrases: append(append([]string{}, DefaultSkipPhrases...),
+		"navigation",
+		"customer notice",
+		"fund insert",      // "Good Neighbor Fund Insert" newsletter pages
+		"reference library", // "Solar Interconnections Reference Library"
+	),
 }
 
 // Name implements Scraper.
@@ -426,6 +461,13 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 
 	// Guard: JS-rendered pages where Colly only captured a copyright footer.
 	if isFooterOnlyDescription(description) {
+		return nil
+	}
+
+	// Guard: bill insert archive pages — PNM publishes monthly bill inserts as
+	// web pages; the page title or description ends with "Bill Insert".
+	descLower := strings.ToLower(description)
+	if strings.Contains(descLower, "bill insert") || strings.Contains(strings.ToLower(programName), "bill insert") {
 		return nil
 	}
 
