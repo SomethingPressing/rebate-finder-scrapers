@@ -24,10 +24,12 @@ package scrapers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly/v2"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/internal/segmentinfer"
@@ -355,15 +357,27 @@ var xcelExtractCfg = PageExtractConfig{
 func (s *XcelEnergyScraper) Name() string { return xcelSourceName }
 
 // Scrape implements Scraper.
+//
+// Xcel Energy migrated its program pages to Salesforce Experience Cloud
+// (my.xcelenergy.com/s/...) which is 100% JavaScript-rendered. Plain HTTP
+// clients only receive the static shell with "Xcel Energy" as the h1.
+// This scraper therefore always uses a headless Chromium instance, mirroring
+// the SRP approach.
 func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	client := s.httpClient()
 
-	// Lazy browser — only started if a permission error is encountered.
-	getBF, cleanup := lazyBrowser(s.Logger)
-	defer cleanup()
+	// Start the headless browser eagerly — every page needs JavaScript execution.
+	bf, err := newBrowserFetcher(s.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("xcel_energy: start headless browser: %w", err)
+	}
+	defer bf.Close()
+
+	getBF := func() *BrowserFetcher { return bf }
 
 	// Step 1: fetch and filter URLs from the corporate sitemap.
-	// Permission errors (403/401/407) automatically fall back to the headless browser.
+	// The static sitemap XML is fetchable via plain HTTP; individual pages
+	// redirect to my.xcelenergy.com and require the browser.
 	allURLs, err := sitemapWithFallback(ctx, client, xcelSitemapURL, getBF, s.Logger, "xcel_energy")
 	var urls []string
 	if err != nil || len(allURLs) == 0 {
@@ -388,51 +402,29 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	}
 	s.Logger.Info("xcel_energy: scraping URLs", zap.Int("count", len(urls)))
 
-	// Step 2: visit each page and extract incentive data.
-	seen := make(map[string]bool)
-	var all []models.Incentive
+	extractCfg := xcelExtractCfg
+	extractCfg.ScraperVersion = s.ScraperVersion
+	extractCfg.CategoryInferrer = s.CategoryInferrer
+	extractCfg.SegmentInferrer = s.SegmentInferrer
 
 	pdfOpts := PDFIncentiveOpts{
 		Source:         xcelSourceName,
 		ScraperVersion: s.ScraperVersion,
 		UtilityCompany: xcelUtility,
 		DefaultApply:   xcelDefaultApply,
-		// State/ZipCode/Territory omitted — Xcel is multi-state; HTML path
-		// infers these from page content.  For PDFs we leave them blank.
 	}
 
-	extractCfg := xcelExtractCfg
-	extractCfg.ScraperVersion = s.ScraperVersion
-	extractCfg.CategoryInferrer = s.CategoryInferrer
-	extractCfg.SegmentInferrer = s.SegmentInferrer
-
-	c := s.newCollector("www.xcelenergy.com")
-	permBlocked := trackPermissionErrors(c)
-
-	c.OnHTML("html", func(e *colly.HTMLElement) {
-		pageURL := e.Request.URL.String()
-		inc := s.extractPage(e, pageURL)
-		if inc == nil {
-			return
-		}
-		if seen[inc.ID] {
-			return
-		}
-		seen[inc.ID] = true
-		all = append(all, *inc)
-		s.Logger.Info("xcel_energy: program found",
-			zap.String("name", inc.ProgramName),
-			zap.Stringp("state", inc.State),
-			zap.Strings("categories", inc.CategoryTag),
-			zap.Int("total_so_far", len(all)),
-		)
-	})
+	seen := make(map[string]bool)
+	var all []models.Incentive
 
 	total := len(urls)
 	bar := NewProgressBar(total, "xcel_energy")
+
+	// Step 2: visit each page with the headless browser so JavaScript executes.
 	for i, u := range urls {
 		select {
 		case <-ctx.Done():
+			bar.Finish() //nolint:errcheck
 			return all, ctx.Err()
 		default:
 		}
@@ -441,10 +433,12 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 			zap.Int("total", total),
 			zap.String("url", u),
 		)
+
 		if IsPDFURL(u) {
-			text, err := ExtractPDFPages(u, nil)
-			if err != nil {
-				s.Logger.Warn("xcel_energy: pdf extract failed", zap.String("url", u), zap.Error(err))
+			text, pdfErr := ExtractPDFPages(u, nil)
+			if pdfErr != nil {
+				s.Logger.Warn("xcel_energy: pdf extract failed", zap.String("url", u), zap.Error(pdfErr))
+				bar.Add(1) //nolint:errcheck
 				continue
 			}
 			inc := ExtractIncentiveFromPDFText(text, u, pdfOpts)
@@ -456,18 +450,40 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 					zap.Int("total_so_far", len(all)),
 				)
 			}
+			bar.Add(1) //nolint:errcheck
 			continue
 		}
-		if err := c.Visit(u); err != nil {
-			s.Logger.Warn("xcel_energy: visit failed",
-				zap.String("url", u), zap.Error(err))
+
+		html, fetchErr := bf.FetchHTML(ctx, u)
+		if fetchErr != nil {
+			s.Logger.Warn("xcel_energy: browser fetch failed",
+				zap.String("url", u), zap.Error(fetchErr))
+			bar.Add(1) //nolint:errcheck
+			continue
+		}
+
+		doc, parseErr := goquery.NewDocumentFromReader(strings.NewReader(html))
+		if parseErr != nil {
+			s.Logger.Warn("xcel_energy: parse failed",
+				zap.String("url", u), zap.Error(parseErr))
+			bar.Add(1) //nolint:errcheck
+			continue
+		}
+
+		inc := ExtractPageGoquery(doc, u, extractCfg)
+		if inc != nil && !seen[inc.ID] {
+			seen[inc.ID] = true
+			all = append(all, *inc)
+			s.Logger.Info("xcel_energy: program found",
+				zap.String("name", inc.ProgramName),
+				zap.Stringp("state", inc.State),
+				zap.Strings("categories", inc.CategoryTag),
+				zap.Int("total_so_far", len(all)),
+			)
 		}
 		bar.Add(1) //nolint:errcheck
 	}
 	bar.Finish() //nolint:errcheck
-
-	// Step 3: retry any permission-blocked pages with the headless browser.
-	retryBlockedWithBrowser(ctx, *permBlocked, getBF, extractCfg, seen, &all, s.Logger, "xcel_energy")
 
 	s.Logger.Info("xcel_energy: scrape complete", zap.Int("programs", len(all)))
 	return all, nil

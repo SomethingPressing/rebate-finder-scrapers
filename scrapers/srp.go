@@ -111,6 +111,16 @@ var srpFilterCfg = FilterConfig{
 		"/terms",
 		"/supplier/",
 		"/vendor/",
+
+		// Rate plan pages — informational about billing structures, not rebates
+		"/price-plans/",
+
+		// Tip, event, and award pages
+		"/energy-saving",        // "Everyday energy-saving tips" (/home/energy-saving)
+		"community-offers-events",
+		"sustainability-champions",
+		"solar-demand-plans-savings", // "How to save on solar and demand price plans"
+		"time-of-day-plans-savings",  // "How to save on time-of-day price plans"
 	},
 
 	// ── Inclusions ─────────────────────────────────────────────────────────
