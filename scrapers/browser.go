@@ -167,6 +167,106 @@ func (f *BrowserFetcher) FetchHTML(ctx context.Context, u string) (string, error
 	return html, nil
 }
 
+// FetchHTMLWithStateSelect behaves like FetchHTML but, if the rendered page
+// contains the phrase "select a service area", it tries to click an element
+// whose visible text matches stateText (e.g. "Colorado") before reading the
+// final HTML.  This bypasses region-selector interstitials on Salesforce
+// Experience Cloud portals such as my.xcelenergy.com.
+//
+// If stateText is empty, or the element is not found, behaviour is identical
+// to FetchHTML.
+func (f *BrowserFetcher) FetchHTMLWithStateSelect(ctx context.Context, u string, stateText string) (string, error) {
+	page, err := f.browser.Page(proto.TargetCreateTarget{})
+	if err != nil {
+		return "", fmt.Errorf("browser: create tab: %w", err)
+	}
+	defer func() { _ = page.Close() }()
+
+	page = page.Timeout(f.pageTimeout)
+
+	if err := page.Navigate(u); err != nil {
+		return "", fmt.Errorf("browser: navigate %s: %w", u, err)
+	}
+	if err := page.WaitLoad(); err != nil && f.logger != nil {
+		f.logger.Warn("browser: WaitLoad timed out — reading partial HTML",
+			zap.String("url", u), zap.Error(err))
+	}
+	if err := sleepCtx(ctx, f.extraDelay); err != nil {
+		return "", err
+	}
+
+	html, err := page.HTML()
+	if err != nil {
+		return "", fmt.Errorf("browser: get html %s: %w", u, err)
+	}
+
+	if isCFChallengePage(html) {
+		if f.logger != nil {
+			f.logger.Debug("browser: Cloudflare challenge detected, waiting",
+				zap.String("url", u), zap.Duration("wait", f.cfRetryDelay))
+		}
+		if err := sleepCtx(ctx, f.cfRetryDelay); err != nil {
+			return "", err
+		}
+		html, err = page.HTML()
+		if err != nil {
+			return "", fmt.Errorf("browser: get html after cf wait %s: %w", u, err)
+		}
+	}
+
+	// Region-selector interstitial — try clicking the requested state via JS.
+	// ElementR-based clicking can match the wrong element (e.g. a paragraph that
+	// says "serving Colorado and Minnesota").  JavaScript evaluation finds the
+	// FIRST element whose trimmed textContent exactly equals stateText and clicks
+	// it, which is more precise for Salesforce Lightning Web Components.
+	if stateText != "" && strings.Contains(strings.ToLower(html), "select a service area") {
+		if f.logger != nil {
+			f.logger.Debug("browser: region selector detected, clicking state via JS",
+				zap.String("url", u), zap.String("state", stateText))
+		}
+		jsResult, evalErr := page.Eval(fmt.Sprintf(`() => {
+			const tags = ['a','button','[role="button"]','li'];
+			for (const tag of tags) {
+				for (const el of document.querySelectorAll(tag)) {
+					if (el.textContent.trim() === %q) {
+						el.click();
+						return 'clicked:' + tag;
+					}
+				}
+			}
+			return 'not-found';
+		}`, stateText))
+		if evalErr != nil {
+			if f.logger != nil {
+				f.logger.Debug("browser: JS eval failed for state click",
+					zap.String("url", u), zap.Error(evalErr))
+			}
+		} else {
+			result := jsResult.Value.Str()
+			if f.logger != nil {
+				f.logger.Debug("browser: state click result",
+					zap.String("url", u), zap.String("result", result))
+			}
+			if strings.HasPrefix(result, "clicked:") {
+				// Wait for Salesforce to re-render after the state selection.
+				if err := sleepCtx(ctx, 4*time.Second); err != nil {
+					return "", err
+				}
+				_ = page.WaitLoad()
+				html, err = page.HTML()
+				if err != nil {
+					return "", fmt.Errorf("browser: get html after state select %s: %w", u, err)
+				}
+			} else if f.logger != nil {
+				f.logger.Debug("browser: state selector element not found via JS",
+					zap.String("url", u), zap.String("state", stateText))
+			}
+		}
+	}
+
+	return html, nil
+}
+
 // FetchXML navigates to a URL (typically a sitemap) and returns the raw
 // document text content using JavaScript fetch() with the CF cookies already
 // set from the navigation.  This works around Chrome's XML-viewer mode which

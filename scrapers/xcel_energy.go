@@ -239,20 +239,41 @@ var xcelFilterCfg = FilterConfig{
 	MinPathSegments: 3,
 }
 
-// xcelSeedURLs are well-known Xcel program pages used as fallback.
-func xcelSeedURLs() []string {
+// xcelDirectURLs returns the Colorado-specific Salesforce Experience Cloud
+// section pages for Xcel Energy programs.
+//
+// Background: the old www.xcelenergy.com/programs_and_rebates/... pages
+// 301-redirect to generic my.xcelenergy.com/s/... Salesforce pages that show a
+// region-selector interstitial ("Select a Service Area to Explore").  Selecting
+// a state in that UI requires Shadow DOM interaction which is unreliable.
+//
+// The state-specific subdomain co.my.xcelenergy.com returns HTTP 200 directly
+// and serves Colorado content without the region-selector step, making it the
+// cleanest entry point.  The headless browser handles Cloudflare as normal.
+func xcelDirectURLs() []string {
 	return []string{
-		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/heating_and_cooling/heat_pump_rebates",
-		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/equipment_and_appliances/water_heater_rebates",
-		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/equipment_and_appliances/energy_star_appliance_rebates",
-		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/heating_and_cooling/ac_rewards_smart_thermostat_program",
-		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/solar/solar_rewards_for_residences",
-		"https://www.xcelenergy.com/programs_and_rebates/residential_programs_and_rebates/affordable_energy/income-qualified_rebate_programs",
-		"https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates/equipment_rebates/lighting_efficiency",
-		"https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates/equipment_rebates/heating_efficiency",
-		"https://www.xcelenergy.com/programs_and_rebates/business_programs_and_rebates/rate_programs/peak_partner_rewards",
+		// Colorado-specific residential rebate sections
+		"https://co.my.xcelenergy.com/s/residential/heating-cooling",
+		"https://co.my.xcelenergy.com/s/residential/home-rebates",
+		"https://co.my.xcelenergy.com/s/residential/home-rebates/home-lighting",
+		"https://co.my.xcelenergy.com/s/residential/home-services",
+		"https://co.my.xcelenergy.com/s/residential/home-services/homesmart",
+		// Billing / income-qualified assistance
+		"https://co.my.xcelenergy.com/s/billing-payment/energy-assistance",
+		// Renewable energy
+		"https://co.my.xcelenergy.com/s/renewable",
+		// Business rebates
+		"https://co.my.xcelenergy.com/s/business/lighting-equipment-rebates",
+		"https://co.my.xcelenergy.com/s/business/new-building-programs",
+		"https://co.my.xcelenergy.com/s/business/rate-plans",
+		"https://co.my.xcelenergy.com/s/business/farm-programs",
+		// Legacy CMS — PowerOn income-qualified program (not migrated to Salesforce)
+		"https://www.xcelenergy.com/billing_and_payment/understanding_your_bill/energy_assistance_options/poweron_and_gas_affordability_program",
 	}
 }
+
+// xcelSeedURLs returns the same set as xcelDirectURLs for use as fallback.
+func xcelSeedURLs() []string { return xcelDirectURLs() }
 
 // ── State detection ───────────────────────────────────────────────────────────
 
@@ -347,6 +368,13 @@ var xcelExtractCfg = PageExtractConfig{
 	DefaultApply:    xcelDefaultApply,
 	BaseURL:         "https://www.xcelenergy.com",
 	AmountSelectors: "strong",
+	// Skip Salesforce region-selector interstitial pages that slipped through.
+	SkipPhrases: append(append([]string{}, DefaultSkipPhrases...),
+		"select a service area to explore",
+		"select a service area",
+		"choose your service area",
+		"which state do you live in",
+	),
 	StateDetector: func(text string) (state, territory, zip string) {
 		s := xcelStateFromText(text)
 		return s, xcelTerritoryFromState(s), xcelZIPFromState(s)
@@ -359,13 +387,16 @@ func (s *XcelEnergyScraper) Name() string { return xcelSourceName }
 // Scrape implements Scraper.
 //
 // Xcel Energy migrated its program pages to Salesforce Experience Cloud
-// (my.xcelenergy.com/s/...) which is 100% JavaScript-rendered. Plain HTTP
-// clients only receive the static shell with "Xcel Energy" as the h1.
-// This scraper therefore always uses a headless Chromium instance, mirroring
-// the SRP approach.
+// (my.xcelenergy.com/s/...) which is 100% JavaScript-rendered.  The old
+// www.xcelenergy.com sitemap URLs all 301-redirect to ~11 unique Salesforce
+// section pages.  Visiting those redirects in Chromium triggers cross-origin
+// navigation which destroys the execution context before WaitLoad completes.
+//
+// Solution: skip the sitemap entirely.  Use xcelDirectURLs() — the unique
+// Salesforce destination URLs — as the authoritative source of pages to scrape.
+// Each section page is visited with FetchHTMLWithStateSelect("Colorado") so
+// the region selector interstitial is dismissed before content is read.
 func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
-	client := s.httpClient()
-
 	// Start the headless browser eagerly — every page needs JavaScript execution.
 	bf, err := newBrowserFetcher(s.Logger)
 	if err != nil {
@@ -373,29 +404,9 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 	}
 	defer bf.Close()
 
-	getBF := func() *BrowserFetcher { return bf }
-
-	// Step 1: fetch and filter URLs from the corporate sitemap.
-	// The static sitemap XML is fetchable via plain HTTP; individual pages
-	// redirect to my.xcelenergy.com and require the browser.
-	allURLs, err := sitemapWithFallback(ctx, client, xcelSitemapURL, getBF, s.Logger, "xcel_energy")
-	var urls []string
-	if err != nil || len(allURLs) == 0 {
-		if err != nil {
-			s.Logger.Warn("xcel_energy: sitemap fetch failed, using seed URLs", zap.Error(err))
-		}
-		urls = xcelSeedURLs()
-	} else {
-		urls = FilterSitemapURLs(allURLs, xcelFilterCfg)
-		s.Logger.Info("xcel_energy: sitemap discovery",
-			zap.Int("sitemap_total", len(allURLs)),
-			zap.Int("passed_filter", len(urls)),
-		)
-		if len(urls) == 0 {
-			s.Logger.Warn("xcel_energy: no URLs passed filter, using seed URLs")
-			urls = xcelSeedURLs()
-		}
-	}
+	// Use the direct Salesforce section URLs — no sitemap redirect needed.
+	urls := xcelDirectURLs()
+	s.Logger.Info("xcel_energy: using direct Salesforce URLs", zap.Int("count", len(urls)))
 
 	if s.Limit > 0 && len(urls) > s.Limit {
 		urls = urls[:s.Limit]
@@ -454,7 +465,10 @@ func (s *XcelEnergyScraper) Scrape(ctx context.Context) ([]models.Incentive, err
 			continue
 		}
 
-		html, fetchErr := bf.FetchHTML(ctx, u)
+		// Use FetchHTMLWithStateSelect so that Salesforce Experience Cloud pages
+		// showing a region selector ("Select a Service Area to Explore") have
+		// "Colorado" clicked automatically before the HTML is read.
+		html, fetchErr := bf.FetchHTMLWithStateSelect(ctx, u, "Colorado")
 		if fetchErr != nil {
 			s.Logger.Warn("xcel_energy: browser fetch failed",
 				zap.String("url", u), zap.Error(fetchErr))

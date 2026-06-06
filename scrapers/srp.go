@@ -116,7 +116,7 @@ var srpFilterCfg = FilterConfig{
 		"/price-plans/",
 
 		// Tip, event, and award pages
-		"/energy-saving",        // "Everyday energy-saving tips" (/home/energy-saving)
+		"/home/energy-saving",   // "Everyday energy-saving tips" (/home/energy-saving)
 		"community-offers-events",
 		"sustainability-champions",
 		"solar-demand-plans-savings", // "How to save on solar and demand price plans"

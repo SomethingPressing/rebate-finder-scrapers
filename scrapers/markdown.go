@@ -18,6 +18,9 @@ var descJunkPhrases = []string{
 	"please download the latest version of firefox",
 	"download the latest version of chrome, firefox",
 	"error: please call us at",
+	// SRP login consent overlay — appears in a sticky sign-in section on every page.
+	"by clicking log in, you agree",
+	"by logging in, you agree",
 }
 
 func isJunkParagraph(text string) bool {
