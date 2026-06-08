@@ -208,7 +208,7 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 				rawTotal += len(h)
 			}
 		}
-		return rawTotal < 2000
+		return rawTotal < 4000
 	})
 
 	if len(parts) > 0 {

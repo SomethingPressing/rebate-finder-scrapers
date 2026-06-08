@@ -63,6 +63,21 @@ type PageExtractConfig struct {
 	// SegmentInferrer is optional. When set and inferSegments returns no match,
 	// the hybrid inferrer (embeddings + GPT-4o mini) is used as a fallback.
 	SegmentInferrer *segmentinfer.SegmentInferrer
+
+	// SkipH1Class, when non-empty, causes h1 elements whose "class" attribute
+	// contains this substring to be skipped during title extraction.
+	// PNM uses class="hide-accessible" for decorative/nav h1 elements that
+	// precede the real visible page title.
+	SkipH1Class string
+
+	// HubLinkThreshold, when >0, prevents category/hub pages from being saved
+	// as programmes.  A page is treated as a hub and skipped if it links to
+	// HubLinkThreshold or more distinct program pages (as determined by
+	// HubURLCheckFn) AND has no specific incentive amount.
+	HubLinkThreshold int
+	// HubURLCheckFn, when non-nil, returns true for hrefs that count as a
+	// program link for hub detection.  Unused when HubLinkThreshold is 0.
+	HubURLCheckFn func(href string) bool
 }
 
 // ExtractPageGoquery extracts a single models.Incentive from a goquery
@@ -70,8 +85,28 @@ type PageExtractConfig struct {
 // application URL → structured helpers) as the Colly-based extractPage
 // methods.  Returns nil if the page does not look like an incentive programme.
 func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractConfig) *models.Incentive {
-	// ── Programme name ────────────────────────────────────────────────────���───
-	programName := strings.TrimSpace(doc.Find("h1").First().Text())
+	// ── Programme name ────────────────────────────────────────────────────────
+	// Iterate h1 elements: skip any whose class contains cfg.SkipH1Class (e.g.
+	// PNM's "hide-accessible" decorative titles) and extract text with spaces
+	// inserted at inline-element boundaries (<br>, <span>, etc.) so that markup
+	// like "Charge<br/>at Home" yields "Charge at Home" rather than "Chargeat Home".
+	programName := ""
+	doc.Find("h1").EachWithBreak(func(_ int, sel *goquery.Selection) bool {
+		if cfg.SkipH1Class != "" && strings.Contains(sel.AttrOr("class", ""), cfg.SkipH1Class) {
+			return true // skip this h1, try next
+		}
+		var parts []string
+		sel.Contents().Each(func(_ int, c *goquery.Selection) {
+			if t := strings.TrimSpace(c.Text()); t != "" {
+				parts = append(parts, t)
+			}
+		})
+		if text := strings.Join(parts, " "); len(text) >= 5 {
+			programName = text
+			return false // stop iterating
+		}
+		return true
+	})
 	if programName == "" {
 		programName = strings.TrimSpace(doc.Find("title").First().Text())
 		if idx := strings.Index(programName, "|"); idx > 0 {
@@ -136,8 +171,8 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	if isFooterOnlyDescription(description) {
 		return nil
 	}
-	if len(description) > 1000 {
-		description = description[:997] + "..."
+	if len(description) > 2000 {
+		description = description[:1997] + "..."
 	}
 
 	// ── Full page text (feeds all regex helpers) ──────────────────────────────
@@ -180,6 +215,42 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 		amount = nil
 	}
 
+	// Hub-link guard: if the page links to HubLinkThreshold+ distinct program
+	// pages (per HubURLCheckFn) with no incentive amount, it's a category/hub
+	// page rather than a single rebate programme — skip it.
+	if cfg.HubLinkThreshold > 0 && cfg.HubURLCheckFn != nil && format == "narrative" {
+		hubCount := 0
+		seenHub := make(map[string]bool)
+		normalizedPage := strings.TrimRight(pageURL, "/")
+		doc.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
+			href, _ := s.Attr("href")
+			if href == "" || strings.HasPrefix(href, "#") || strings.HasPrefix(href, "mailto:") {
+				return
+			}
+			absHref := href
+			if strings.HasPrefix(href, "/") && cfg.BaseURL != "" {
+				absHref = strings.TrimRight(cfg.BaseURL, "/") + href
+			}
+			if i := strings.Index(absHref, "?"); i >= 0 {
+				absHref = absHref[:i]
+			}
+			if i := strings.Index(absHref, "#"); i >= 0 {
+				absHref = absHref[:i]
+			}
+			absHref = strings.TrimRight(absHref, "/")
+			if absHref == normalizedPage || seenHub[absHref] {
+				return
+			}
+			if cfg.HubURLCheckFn(absHref) {
+				seenHub[absHref] = true
+				hubCount++
+			}
+		})
+		if hubCount >= cfg.HubLinkThreshold {
+			return nil // hub/category page — skip
+		}
+	}
+
 	var maxAmount *float64
 	if format == "dollar_amount" {
 		_, upToAmt := ParseAmountContextual(pageText)
@@ -193,8 +264,12 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	doc.Find("a[href]").EachWithBreak(func(_ int, s *goquery.Selection) bool {
 		href, _ := s.Attr("href")
 		hrefLower := strings.ToLower(href)
-		// Skip known false-positive portal paths (e.g. Con Edison telecom portal).
-		if strings.Contains(hrefLower, "/business-partners/") || strings.Contains(hrefLower, "telecom") {
+		// Skip known false-positive portal paths (e.g. Con Edison telecom portal,
+		// PNM Liferay login redirects, generic account dashboards).
+		if strings.Contains(hrefLower, "/business-partners/") || strings.Contains(hrefLower, "telecom") ||
+			strings.Contains(hrefLower, "/c/portal/login") ||
+			strings.Contains(hrefLower, "/my-account") ||
+			strings.Contains(hrefLower, "/dashboard") {
 			return true
 		}
 		text := strings.ToLower(s.Text() + " " + href)

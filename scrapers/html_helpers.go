@@ -113,6 +113,7 @@ func extractLowIncomeEligible(text string) *bool {
 func extractCustomerType(urlAndTitle string) string {
 	lower := strings.ToLower(urlAndTitle)
 	hasRes := strings.Contains(lower, "residential") || strings.Contains(lower, "/home") ||
+		strings.Contains(lower, "-home") || strings.Contains(lower, " home") ||
 		strings.Contains(lower, "homeowner") || strings.Contains(lower, "renter")
 	hasBiz := strings.Contains(lower, "business") || strings.Contains(lower, "commercial") ||
 		strings.Contains(lower, "industrial") || strings.Contains(lower, "multifamily")

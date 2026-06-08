@@ -256,13 +256,17 @@ var pnmExtractCfg = PageExtractConfig{
 	Territory:      pnmTerritory,
 	DefaultApply:   pnmDefaultApply,
 	BaseURL:        "https://www.pnm.com",
-	// PNM's CMS injects nav-link text into the h1 on some pages ("Navigation …").
-	// Extra phrases catch pages whose titles reveal they are newsletters or
+	// PNM injects h1 elements with class="hide-accessible" as decorative/nav
+	// titles before the real visible page title.  SkipH1Class skips these so
+	// ExtractPageGoquery (used in the evaluator + browser-fallback path) selects
+	// the correct visible h1, matching what PNMScraper.extractPage does via Colly.
+	SkipH1Class: "hide-accessible",
+	// Extra SkipPhrases catch pages whose titles reveal they are newsletters or
 	// informational notices rather than live rebate programs.
 	SkipPhrases: append(append([]string{}, DefaultSkipPhrases...),
 		"navigation",
 		"customer notice",
-		"fund insert",      // "Good Neighbor Fund Insert" newsletter pages
+		"fund insert",       // "Good Neighbor Fund Insert" newsletter pages
 		"reference library", // "Solar Interconnections Reference Library"
 	),
 }
@@ -329,22 +333,21 @@ func (s *PNMScraper) Scrape(ctx context.Context) ([]models.Incentive, error) {
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		pageURL := e.Request.URL.String()
 
-		// Discover child program pages linked from hub pages that may not be
-		// in the sitemap (e.g. specific rebate pages nested under a hub).
-		childLinks := pnmChildProgramLinks(e, pageURL)
-
-		for _, child := range childLinks {
+		// Discover ALL PNM program links on this page (sibling and child paths)
+		// so hub pages that link out to sibling-level programs are handled too.
+		linkedPrograms := pnmLinkedProgramURLs(e, pageURL)
+		for _, child := range linkedPrograms {
 			_ = c.Visit(child)
 		}
 
-		// Hub guard: 2+ child links and no incentive amount → this is a
-		// category/landing page; the children carry the real data.
-		if len(childLinks) >= 2 {
+		// Hub guard: 3+ distinct outbound program links and no incentive amount
+		// → this is a category/hub page; the linked programs carry the real data.
+		if len(linkedPrograms) >= 3 {
 			_, amt := ParseAmountContextual(e.Text)
 			if amt == nil {
-				s.Logger.Info("pnm: hub page skipped, children queued",
+				s.Logger.Info("pnm: hub page skipped",
 					zap.String("url", pageURL),
-					zap.Int("children", len(childLinks)),
+					zap.Int("linked_programs", len(linkedPrograms)),
 				)
 				return
 			}
@@ -426,7 +429,16 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		if strings.Contains(sel.AttrOr("class", ""), "hide-accessible") {
 			return
 		}
-		if text := strings.Join(strings.Fields(sel.Text()), " "); len(text) >= 5 {
+		// sel.Text() concatenates child text nodes without separators across
+		// inline elements like <br> (e.g. "Charge<br/>at Home" → "Chargeat Home").
+		// Collect each Content's text separately and join with spaces.
+		var parts []string
+		sel.Contents().Each(func(_ int, c *goquery.Selection) {
+			if t := strings.TrimSpace(c.Text()); t != "" {
+				parts = append(parts, t)
+			}
+		})
+		if text := strings.Join(parts, " "); len(text) >= 5 {
 			programName = text
 		}
 	})
@@ -457,7 +469,7 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		}
 	}
 
-	description := CollyDescriptionMarkdown(e, programName, 1000)
+	description := CollyDescriptionMarkdown(e, programName, 2000)
 
 	// Guard: JS-rendered pages where Colly only captured a copyright footer.
 	if isFooterOnlyDescription(description) {
@@ -668,15 +680,16 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 	return &inc
 }
 
-// pnmChildProgramLinks returns URLs of program pages directly linked from e
-// that are sub-paths of pageURL. These may not appear in the PNM sitemap
-// (PNM often lists only hub/landing pages there) but contain rebate details.
-func pnmChildProgramLinks(e *colly.HTMLElement, pageURL string) []string {
-	base := pageURL
+// pnmLinkedProgramURLs returns ALL PNM program page URLs linked from e that
+// pass the pnmFilterCfg URL filter, regardless of whether they are child or
+// sibling paths.  This replaces the old pnmChildProgramLinks which only found
+// direct sub-paths (e.g. /ev-home-charging/rates) and missed sibling paths
+// (e.g. /ev-rates linked from /ev-home-charging).
+func pnmLinkedProgramURLs(e *colly.HTMLElement, pageURL string) []string {
+	base := strings.TrimRight(pageURL, "/")
 	if i := strings.Index(base, "?"); i >= 0 {
 		base = base[:i]
 	}
-	base = strings.TrimRight(base, "/")
 
 	seen := make(map[string]bool)
 	var links []string
@@ -702,15 +715,6 @@ func pnmChildProgramLinks(e *colly.HTMLElement, pageURL string) []string {
 		if full == base || seen[full] {
 			return
 		}
-		// Direct child only — one level deeper, no further slashes.
-		if !strings.HasPrefix(full, base+"/") {
-			return
-		}
-		remainder := full[len(base)+1:]
-		if strings.Contains(remainder, "/") {
-			return
-		}
-		// Must pass the URL filter.
 		if len(FilterSitemapURLs([]string{full}, pnmFilterCfg)) == 0 {
 			return
 		}
@@ -718,6 +722,15 @@ func pnmChildProgramLinks(e *colly.HTMLElement, pageURL string) []string {
 		links = append(links, full)
 	})
 	return links
+}
+
+// init wires the hub-detection fields into pnmExtractCfg (used by the
+// evaluator / browser-fallback path via ExtractPageGoquery).
+func init() {
+	pnmExtractCfg.HubLinkThreshold = 3
+	pnmExtractCfg.HubURLCheckFn = func(href string) bool {
+		return len(FilterSitemapURLs([]string{href}, pnmFilterCfg)) > 0
+	}
 }
 
 func (s *PNMScraper) httpClient() *http.Client {
