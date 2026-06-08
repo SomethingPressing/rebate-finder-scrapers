@@ -170,34 +170,26 @@ func HTMLToMarkdown(rawHTML string) string {
 }
 
 // CollyDescriptionMarkdown extracts the incentive description from a Colly
-// HTMLElement as Markdown.  It collects the inner HTML of the first substantive
-// paragraphs (≥60 chars of text), converts them, and truncates to maxLen runes.
+// HTMLElement as Markdown.  It collects the inner HTML of all substantive
+// paragraphs (≥60 chars of text) and converts them to Markdown.
 // Falls back to the meta description, then to fallbackName.
-func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen int) string {
-	if maxLen <= 0 {
-		maxLen = 1000
-	}
-
+func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string) string {
 	// Prefer the meta description when it is substantive — it is written by the
 	// site owner specifically to summarise the page and avoids the geographic
 	// boilerplate that often appears first in body paragraphs on utility sites.
 	if meta := strings.TrimSpace(e.ChildAttr(`meta[name="description"]`, "content")); len(meta) >= 60 {
-		if len(meta) > maxLen {
-			meta = meta[:maxLen-3] + "..."
-		}
 		return meta
 	}
 
-	// Fall back to collecting inner HTML of substantial paragraphs.
+	// Collect inner HTML of all substantial paragraphs.
 	// FAQ-style question paragraphs ("Q: …") are typically short but carry
 	// meaning — include them regardless of length so the paired answer is
 	// not orphaned in the description.
 	var parts []string
-	rawTotal := 0
-	e.DOM.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+	e.DOM.Find("p").Each(func(_ int, s *goquery.Selection) {
 		// Skip paragraphs inside <noscript> — they're browser-detection fallbacks.
 		if s.Closest("noscript").Length() > 0 {
-			return true
+			return
 		}
 		text := strings.TrimSpace(s.Text())
 		isFAQItem := len(text) >= 5 && (strings.HasPrefix(text, "Q:") || strings.HasPrefix(text, "A:") ||
@@ -205,28 +197,18 @@ func CollyDescriptionMarkdown(e *colly.HTMLElement, fallbackName string, maxLen 
 		if (len(text) >= 60 || isFAQItem) && !isJunkParagraph(text) {
 			if h, err := s.Html(); err == nil {
 				parts = append(parts, "<p>"+h+"</p>")
-				rawTotal += len(h)
 			}
 		}
-		return rawTotal < 4000
 	})
 
 	if len(parts) > 0 {
-		result := HTMLToMarkdown(strings.Join(parts, "\n"))
-		if len([]rune(result)) > maxLen {
-			runes := []rune(result)
-			result = string(runes[:maxLen-3]) + "..."
-		}
-		if result != "" {
+		if result := HTMLToMarkdown(strings.Join(parts, "\n")); result != "" {
 			return result
 		}
 	}
 
 	// Last resort: short meta description we skipped above.
 	if meta := strings.TrimSpace(e.ChildAttr(`meta[name="description"]`, "content")); meta != "" {
-		if len(meta) > maxLen {
-			meta = meta[:maxLen-3] + "..."
-		}
 		return meta
 	}
 

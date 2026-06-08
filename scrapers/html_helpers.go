@@ -759,10 +759,6 @@ func ExtractIncentiveFromPDFText(text, pageURL string, opts PDFIncentiveOpts) *m
 	if description == "" {
 		description = programName
 	}
-	if len(description) > 500 {
-		description = description[:497] + "..."
-	}
-
 	// ── Amount ───────────────────────────────────────────────────────────────
 	format, amount := ParseAmount(text)
 	if format == "" {

@@ -392,7 +392,7 @@ func (s *SRPScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		}
 	}
 
-	description := CollyDescriptionMarkdown(e, programName, 1000)
+	description := CollyDescriptionMarkdown(e, programName)
 	imageURL := CollyImageURL(e, "https://www.srpnet.com")
 
 	// Full page text for regex extractions.

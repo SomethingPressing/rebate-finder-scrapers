@@ -469,7 +469,7 @@ func (s *PNMScraper) extractPage(e *colly.HTMLElement, pageURL string) *models.I
 		}
 	}
 
-	description := CollyDescriptionMarkdown(e, programName, 2000)
+	description := CollyDescriptionMarkdown(e, programName)
 
 	// Guard: JS-rendered pages where Colly only captured a copyright footer.
 	if isFooterOnlyDescription(description) {

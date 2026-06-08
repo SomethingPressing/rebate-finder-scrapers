@@ -529,7 +529,7 @@ func (s *XcelEnergyScraper) extractPage(
 		}
 	}
 
-	description := CollyDescriptionMarkdown(e, programName, 1000)
+	description := CollyDescriptionMarkdown(e, programName)
 	imageURL := CollyImageURL(e, "https://www.xcelenergy.com")
 
 	// Full page text for regex extraction.

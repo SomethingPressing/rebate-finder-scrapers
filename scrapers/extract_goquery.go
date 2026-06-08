@@ -135,10 +135,10 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	// Collect the inner HTML of the first substantive paragraphs and convert to
 	// Markdown so lists, bold text, and links are preserved.
 	var descHTMLParts []string
-	doc.Find("p").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+	doc.Find("p").Each(func(_ int, s *goquery.Selection) {
 		// Skip paragraphs inside <noscript> — they're browser-detection fallbacks.
 		if s.Closest("noscript").Length() > 0 {
-			return true
+			return
 		}
 		t := strings.TrimSpace(s.Text())
 		if len(t) >= 60 && !isJunkParagraph(t) {
@@ -146,11 +146,6 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 				descHTMLParts = append(descHTMLParts, "<p>"+h+"</p>")
 			}
 		}
-		total := 0
-		for _, p := range descHTMLParts {
-			total += len(p)
-		}
-		return total < 2000 // collect more raw HTML; Markdown output will be shorter
 	})
 
 	description := ""
@@ -171,10 +166,6 @@ func ExtractPageGoquery(doc *goquery.Document, pageURL string, cfg PageExtractCo
 	if isFooterOnlyDescription(description) {
 		return nil
 	}
-	if len(description) > 2000 {
-		description = description[:1997] + "..."
-	}
-
 	// ── Full page text (feeds all regex helpers) ──────────────────────────────
 	pageText := doc.Find("html").Text()
 

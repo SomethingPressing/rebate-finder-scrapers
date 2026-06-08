@@ -468,7 +468,7 @@ func (s *ConEdisonScraper) extractPage(e *colly.HTMLElement, pageURL string) *mo
 		}
 	}
 
-	description := CollyDescriptionMarkdown(e, programName, 1000)
+	description := CollyDescriptionMarkdown(e, programName)
 
 	// Guard: if the description is just a copyright footer (JS-rendered page
 	// with no static content), skip this page entirely.
