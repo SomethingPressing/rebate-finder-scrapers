@@ -23,7 +23,6 @@
     "scraper:promote": "node scripts/run-promoter.mjs",
     "scraper:promote:dry": "node scripts/run-promoter.mjs --dry-run",
     "eval": "node scripts/run-evaluator.mjs",
-
     "refresh": "node scripts/run.mjs all --force-refresh",
     "refresh:dsireusa": "node scripts/run.mjs dsireusa --force-refresh",
     "refresh:rewiring_america": "node scripts/run.mjs rewiring_america --force-refresh",
@@ -33,13 +32,15 @@
     "refresh:xcel_energy": "node scripts/run.mjs xcel_energy --force-refresh",
     "refresh:srp": "node scripts/run.mjs srp --force-refresh",
     "refresh:peninsula_clean_energy": "node scripts/run.mjs peninsula_clean_energy --force-refresh",
-
     "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql",
-
     "migrate": "node scripts/migrations/run-migration.mjs",
-    "migrate:001_energy_star_name_fix": "node scripts/migrations/run-migration.mjs 001_energy_star_name_fix"
+    "migrate:001_energy_star_name_fix": "node scripts/migrations/run-migration.mjs 001_energy_star_name_fix",
+    "sync:tenants": "node scripts/sync-tenants.mjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.21.0"
   }
 }

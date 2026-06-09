@@ -1,3 +1,6 @@
+# Node (sync-tenants script)
+node_modules/
+
 # Go build outputs
 bin/
 *.exe
