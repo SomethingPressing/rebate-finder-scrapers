@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ScraperSourceConfigRow mirrors the scraper_source_configs table (public schema).
@@ -67,19 +66,28 @@ func (d *DB) LoadActiveSourceConfigs() ([]ScraperSourceConfigRow, error) {
 	return rows, nil
 }
 
-// ClaimJob atomically finds one queued job and marks it as picked_up.
-// Returns nil if no job is waiting.
+// ClaimJob atomically finds one queued job for an *active* source and marks it
+// as picked_up. Returns nil if no eligible job is waiting.
 func (d *DB) ClaimJob() (*ScraperJobRow, error) {
 	var job ScraperJobRow
 	now := time.Now()
 	err := d.gorm.Transaction(func(tx *gorm.DB) error {
-		result := tx.Where("status = 'queued'").
-			Order("created_at ASC").
-			Limit(1).
-			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			First(&job)
+		// Only claim jobs whose source is currently active in scraper_source_configs.
+		// The JOIN means a job queued before the source was disabled will be silently
+		// skipped until the source is re-enabled.
+		result := tx.Raw(`
+			SELECT j.* FROM scraper_jobs j
+			JOIN scraper_source_configs c ON c.source = j.source AND c.active = true
+			WHERE j.status = 'queued'
+			ORDER BY j.created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		`).Scan(&job)
 		if result.Error != nil {
-			return result.Error // includes gorm.ErrRecordNotFound
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 		return tx.Model(&job).Updates(map[string]interface{}{
 			"status":       "picked_up",
