@@ -132,10 +132,13 @@ func main() {
 	// app not set up) we silently fall back to the file-based config.
 	if dbTenants, dbErr := config.LoadTenantsFromDB(database); dbErr != nil {
 		logger.Warn("failed to load tenant config from DB, using file", zap.Error(dbErr))
-	} else if len(dbTenants) > 0 {
+	} else if dbTenants != nil {
+		// dbTenants is non-nil: DB config table exists and should be respected.
+		// Even if empty (all sources disabled), override tenants.json so we
+		// don't accidentally run all scrapers.
 		tenants = dbTenants
 		multiTenant = true
-		logger.Info("loaded scraper config from DB", zap.Int("sources", len(tenants)))
+		logger.Info("loaded scraper config from DB", zap.Int("active_sources", len(tenants)))
 	}
 
 	// ── ZIP data ──────────────────────────────────────────────────────────────

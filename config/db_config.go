@@ -10,11 +10,16 @@ func LoadTenantsFromDB(database interface {
 	LoadActiveSourceConfigs() ([]db.ScraperSourceConfigRow, error)
 }) ([]TenantConfig, error) {
 	rows, err := database.LoadActiveSourceConfigs()
-	if err != nil || len(rows) == 0 {
-		return nil, err
+	if err != nil {
+		return nil, err // real DB error → caller falls back to tenants.json
 	}
-
-	var configs []TenantConfig
+	if rows == nil {
+		return nil, nil // table doesn't exist yet → fall back to tenants.json
+	}
+	// rows is non-nil (possibly empty): DB is set up, respect it even if no
+	// sources are active — return an empty slice so the scraper runs nothing
+	// instead of falling back to the file config.
+	configs := make([]TenantConfig, 0, len(rows))
 	for _, row := range rows {
 		maxIncentives := 0
 		if row.MaxIncentives != nil {
