@@ -9,6 +9,7 @@ import (
 
 // ScraperSourceConfigRow mirrors the scraper_source_configs table (public schema).
 type ScraperSourceConfigRow struct {
+	ClientID         string     `gorm:"column:client_id;primaryKey"`
 	Source           string     `gorm:"column:source;primaryKey"`
 	Active           bool       `gorm:"column:active"`
 	States           []string   `gorm:"column:states;type:text[]"`
@@ -19,7 +20,6 @@ type ScraperSourceConfigRow struct {
 	LastRunAt        *time.Time `gorm:"column:last_run_at"`
 	LastRunStatus    string     `gorm:"column:last_run_status"`
 	LastRunCount     *int       `gorm:"column:last_run_count"`
-	LastRunDurationS *int       `gorm:"column:last_run_duration_s"`
 	LastRunError     *string    `gorm:"column:last_run_error"`
 }
 
@@ -28,6 +28,7 @@ func (ScraperSourceConfigRow) TableName() string { return "scraper_source_config
 // ScraperJobRow mirrors the scraper_jobs table (public schema).
 type ScraperJobRow struct {
 	ID         string     `gorm:"column:id;primaryKey"`
+	ClientID   string     `gorm:"column:client_id"`
 	Source     string     `gorm:"column:source"`
 	Status     string     `gorm:"column:status"`
 	CreatedAt  time.Time  `gorm:"column:created_at"`
@@ -39,6 +40,7 @@ func (ScraperJobRow) TableName() string { return "scraper_jobs" }
 // ScraperRunLogRow mirrors the scraper_run_logs table (public schema).
 type ScraperRunLogRow struct {
 	ID           string     `gorm:"column:id;primaryKey"`
+	ClientID     string     `gorm:"column:client_id"`
 	Source       string     `gorm:"column:source"`
 	Status       string     `gorm:"column:status"`
 	StartedAt    time.Time  `gorm:"column:started_at"`
@@ -77,7 +79,7 @@ func (d *DB) ClaimJob() (*ScraperJobRow, error) {
 		// skipped until the source is re-enabled.
 		result := tx.Raw(`
 			SELECT j.* FROM scraper_jobs j
-			JOIN scraper_source_configs c ON c.source = j.source AND c.active = true
+			JOIN scraper_source_configs c ON c.client_id = j.client_id AND c.source = j.source AND c.active = true
 			WHERE j.status = 'queued'
 			ORDER BY j.created_at ASC
 			LIMIT 1
@@ -109,10 +111,10 @@ func (d *DB) ClaimJob() (*ScraperJobRow, error) {
 
 // MarkRunStart writes status=running on the source config and inserts a run log row.
 // Returns the run log ID.
-func (d *DB) MarkRunStart(source, triggeredBy string) (string, error) {
+func (d *DB) MarkRunStart(clientID, source, triggeredBy string) (string, error) {
 	now := time.Now()
 	if err := d.gorm.Model(&ScraperSourceConfigRow{}).
-		Where("source = ?", source).
+		Where("client_id = ? AND source = ?", clientID, source).
 		Updates(map[string]interface{}{
 			"last_run_status": "running",
 			"last_run_at":     now,
@@ -121,6 +123,7 @@ func (d *DB) MarkRunStart(source, triggeredBy string) (string, error) {
 		return "", err
 	}
 	log := ScraperRunLogRow{
+		ClientID:    clientID,
 		Source:      source,
 		Status:      "running",
 		StartedAt:   now,
@@ -133,7 +136,7 @@ func (d *DB) MarkRunStart(source, triggeredBy string) (string, error) {
 }
 
 // MarkRunFinish updates the source config and run log with final status.
-func (d *DB) MarkRunFinish(source, runLogID, status string, count int, durationS int, runErr error) error {
+func (d *DB) MarkRunFinish(clientID, source, runLogID, status string, count int, durationS int, runErr error) error {
 	now := time.Now()
 	errMsg := (*string)(nil)
 	if runErr != nil {
@@ -141,12 +144,11 @@ func (d *DB) MarkRunFinish(source, runLogID, status string, count int, durationS
 		errMsg = &s
 	}
 	if err := d.gorm.Model(&ScraperSourceConfigRow{}).
-		Where("source = ?", source).
+		Where("client_id = ? AND source = ?", clientID, source).
 		Updates(map[string]interface{}{
-			"last_run_status":     status,
-			"last_run_count":      count,
-			"last_run_duration_s": durationS,
-			"last_run_error":      errMsg,
+			"last_run_status": status,
+			"last_run_count":  count,
+			"last_run_error":  errMsg,
 		}).Error; err != nil {
 		return err
 	}

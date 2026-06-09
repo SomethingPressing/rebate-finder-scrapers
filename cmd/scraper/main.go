@@ -250,10 +250,19 @@ func main() {
 
 		var totalUpserted int
 
+		// Build source -> clientID map from tenants (for DB run logging).
+		sourceClientID := make(map[string]string)
+		for _, t := range tenants {
+			for _, src := range t.Sources {
+				sourceClientID[src] = t.ID
+			}
+		}
+
 		// Record schedule-triggered run start in DB for each active source.
 		runLogIDs := make(map[string]string)
 		for _, s := range activeScrapers {
-			if id, err := database.MarkRunStart(s.Name(), "schedule"); err == nil {
+			clientIDForSource := sourceClientID[s.Name()]
+			if id, err := database.MarkRunStart(clientIDForSource, s.Name(), "schedule"); err == nil {
 				runLogIDs[s.Name()] = id
 			}
 		}
@@ -408,7 +417,8 @@ func main() {
 		// Record completion in DB for each active source.
 		for _, s := range activeScrapers {
 			elapsed := int(time.Since(runStarted).Seconds())
-			_ = database.MarkRunFinish(s.Name(), runLogIDs[s.Name()], "success", totalUpserted, elapsed, nil)
+			clientIDForSource := sourceClientID[s.Name()]
+			_ = database.MarkRunFinish(clientIDForSource, s.Name(), runLogIDs[s.Name()], "success", totalUpserted, elapsed, nil)
 		}
 
 		pending, _ := db.PendingCount(database)
@@ -481,9 +491,9 @@ func main() {
 				if job == nil {
 					continue
 				}
-				logger.Info("claimed on-demand job", zap.String("source", job.Source))
-				go func(src string) {
-					runLogID, startErr := database.MarkRunStart(src, "manual")
+				logger.Info("claimed on-demand job", zap.String("source", job.Source), zap.String("client_id", job.ClientID))
+				go func(src, clientID string) {
+					runLogID, startErr := database.MarkRunStart(clientID, src, "manual")
 					if startErr != nil {
 						logger.Warn("MarkRunStart failed", zap.Error(startErr))
 					}
@@ -491,7 +501,7 @@ func main() {
 					scraper := reg.Get(src)
 					if scraper == nil {
 						logger.Warn("unknown source in job", zap.String("source", src))
-						_ = database.MarkRunFinish(src, runLogID, "error", 0, 0, fmt.Errorf("unknown source: %s", src))
+						_ = database.MarkRunFinish(clientID, src, runLogID, "error", 0, 0, fmt.Errorf("unknown source: %s", src))
 						return
 					}
 					jobCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
@@ -503,17 +513,17 @@ func main() {
 							zap.String("source", src),
 							zap.Error(scrapeErr),
 						)
-						_ = database.MarkRunFinish(src, runLogID, "error", 0, elapsed, scrapeErr)
+						_ = database.MarkRunFinish(clientID, src, runLogID, "error", 0, elapsed, scrapeErr)
 						return
 					}
 					stageItems(src, items)
-					_ = database.MarkRunFinish(src, runLogID, "success", len(items), elapsed, nil)
+					_ = database.MarkRunFinish(clientID, src, runLogID, "success", len(items), elapsed, nil)
 					logger.Info("on-demand scrape complete",
 						zap.String("source", src),
 						zap.Int("programs", len(items)),
 						zap.Int("elapsed_s", elapsed),
 					)
-				}(job.Source)
+				}(job.Source, job.ClientID)
 			case <-quit:
 				return
 			}
