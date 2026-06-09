@@ -126,6 +126,18 @@ func main() {
 	}
 	logger.Info("database connected and staging table migrated")
 
+	// ── DB-driven tenant config override ─────────────────────────────────────
+	// Try loading scraper source config from the admin portal DB. When rows
+	// exist they override tenants.json; if the table doesn't exist yet (admin
+	// app not set up) we silently fall back to the file-based config.
+	if dbTenants, dbErr := config.LoadTenantsFromDB(database); dbErr != nil {
+		logger.Warn("failed to load tenant config from DB, using file", zap.Error(dbErr))
+	} else if len(dbTenants) > 0 {
+		tenants = dbTenants
+		multiTenant = true
+		logger.Info("loaded scraper config from DB", zap.Int("sources", len(tenants)))
+	}
+
 	// ── ZIP data ──────────────────────────────────────────────────────────────
 	stateZIPs, zipErr := zipdata.LoadPath(cfg.ZipCSVPath)
 	if zipErr != nil {
@@ -237,6 +249,14 @@ func main() {
 		defer cancel()
 
 		var totalUpserted int
+
+		// Record schedule-triggered run start in DB for each active source.
+		runLogIDs := make(map[string]string)
+		for _, s := range activeScrapers {
+			if id, err := database.MarkRunStart(s.Name(), "schedule"); err == nil {
+				runLogIDs[s.Name()] = id
+			}
+		}
 
 		// Pre-register every source so that reset + stale detection runs
 		// even for scrapers that return 0 programs (blocked, no pages found, etc).
@@ -385,6 +405,12 @@ func main() {
 			}
 		}
 
+		// Record completion in DB for each active source.
+		for _, s := range activeScrapers {
+			elapsed := int(time.Since(runStarted).Seconds())
+			_ = database.MarkRunFinish(s.Name(), runLogIDs[s.Name()], "success", totalUpserted, elapsed, nil)
+		}
+
 		pending, _ := db.PendingCount(database)
 		logger.Info("scrape run finished",
 			zap.Int("total_upserted", totalUpserted),
@@ -417,6 +443,83 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// ── On-demand job polling ─────────────────────────────────────────────────
+	// stageItems is a minimal flush used by on-demand jobs: tags incentives and
+	// writes them to staging, without the stale-tracking bookkeeping that the
+	// scheduled runScrapers closure maintains internally.
+	stageItems := func(source string, items []models.Incentive) {
+		if multiTenant {
+			for i := range items {
+				for _, t := range tenants {
+					if t.MatchesIncentive(items[i].State, &items[i].UtilityCompany, items[i].ServiceTerritory, items[i].AvailableNationwide, items[i].ZipCodes) {
+						items[i].TenantIDs = append(items[i].TenantIDs, t.ID)
+					}
+				}
+			}
+		}
+		if _, err := db.UpsertToStaging(database, items, cfg.ForceURLUpdate, false); err != nil {
+			logger.Error("on-demand staging upsert failed",
+				zap.String("source", source),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Poll scraper_jobs every 30 s for manual run requests queued by the admin UI.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				job, err := database.ClaimJob()
+				if err != nil {
+					logger.Warn("job poll failed", zap.Error(err))
+					continue
+				}
+				if job == nil {
+					continue
+				}
+				logger.Info("claimed on-demand job", zap.String("source", job.Source))
+				go func(src string) {
+					runLogID, startErr := database.MarkRunStart(src, "manual")
+					if startErr != nil {
+						logger.Warn("MarkRunStart failed", zap.Error(startErr))
+					}
+					start := time.Now()
+					scraper := reg.Get(src)
+					if scraper == nil {
+						logger.Warn("unknown source in job", zap.String("source", src))
+						_ = database.MarkRunFinish(src, runLogID, "error", 0, 0, fmt.Errorf("unknown source: %s", src))
+						return
+					}
+					jobCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+					defer cancel()
+					items, scrapeErr := scraper.Scrape(jobCtx)
+					elapsed := int(time.Since(start).Seconds())
+					if scrapeErr != nil {
+						logger.Error("on-demand scrape failed",
+							zap.String("source", src),
+							zap.Error(scrapeErr),
+						)
+						_ = database.MarkRunFinish(src, runLogID, "error", 0, elapsed, scrapeErr)
+						return
+					}
+					stageItems(src, items)
+					_ = database.MarkRunFinish(src, runLogID, "success", len(items), elapsed, nil)
+					logger.Info("on-demand scrape complete",
+						zap.String("source", src),
+						zap.Int("programs", len(items)),
+						zap.Int("elapsed_s", elapsed),
+					)
+				}(job.Source)
+			case <-quit:
+				return
+			}
+		}
+	}()
+
 	<-quit
 
 	logger.Info("shutdown signal received — stopping cron")
