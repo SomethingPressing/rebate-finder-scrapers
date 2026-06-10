@@ -55,6 +55,28 @@ type ScraperRunLogRow struct {
 
 func (ScraperRunLogRow) TableName() string { return "scraper_run_logs" }
 
+// ResetStalledRuns marks any rows stuck in 'running' state as 'error'.
+// Called at scraper startup so a killed/crashed process never permanently
+// locks a source — the next tick will treat the source as due normally.
+func (d *DB) ResetStalledRuns() error {
+	msg := "Run interrupted — scraper process was restarted"
+	if err := d.gorm.Model(&ScraperSourceConfigRow{}).
+		Where("last_run_status = ?", "running").
+		Updates(map[string]interface{}{
+			"last_run_status": "error",
+			"last_run_error":  msg,
+		}).Error; err != nil {
+		return err
+	}
+	return d.gorm.Model(&ScraperRunLogRow{}).
+		Where("status = ?", "running").
+		Updates(map[string]interface{}{
+			"status":      "error",
+			"finished_at": time.Now(),
+			"error":       msg,
+		}).Error
+}
+
 // LoadActiveSourceConfigs returns all active source configs from the DB.
 // Returns nil (not error) if the table doesn't exist — enables graceful
 // degradation when the admin app hasn't been set up yet.
