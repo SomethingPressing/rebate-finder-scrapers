@@ -726,6 +726,12 @@ func isSourceDue(row db.ScraperSourceConfigRow) bool {
 	if row.Schedule == "manual_only" {
 		return false
 	}
+	// Always retry sources that failed — don't wait out the full schedule interval
+	// after an error. last_run_at is set at run START so a killed/crashed run
+	// would otherwise block the source for the entire schedule period.
+	if row.LastRunStatus == "error" {
+		return true
+	}
 	if row.LastRunAt == nil {
 		return true // never run → always due
 	}
