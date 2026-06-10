@@ -73,7 +73,7 @@ func (d *DB) ResetStalledRuns() error {
 		Where("status = ?", "running").
 		Updates(map[string]interface{}{
 			"status":      "error",
-			"finished_at": time.Now(),
+			"finished_at": time.Now().UTC(),
 			"error":       msg,
 		}).Error
 }
@@ -83,7 +83,7 @@ func (d *DB) ResetStalledRuns() error {
 func (d *DB) UpdateHeartbeat(runLogID string) error {
 	return d.gorm.Model(&ScraperRunLogRow{}).
 		Where("id = ?", runLogID).
-		Update("last_heartbeat_at", time.Now()).Error
+		Update("last_heartbeat_at", time.Now().UTC()).Error
 }
 
 // ResetStalledByHeartbeat finds run logs stuck in 'running' whose heartbeat
@@ -114,7 +114,7 @@ func (d *DB) ResetStalledByHeartbeat(cutoff time.Time) ([]string, error) {
 	}
 
 	msg := "Run stalled — no heartbeat received for 5+ minutes"
-	now := time.Now()
+	now := time.Now().UTC()
 	if err := d.gorm.Model(&ScraperRunLogRow{}).
 		Where(stalledCond, cutoff, cutoff).
 		Updates(map[string]interface{}{
@@ -154,7 +154,7 @@ func (d *DB) LoadActiveSourceConfigs() ([]ScraperSourceConfigRow, error) {
 // as picked_up. Returns nil if no eligible job is waiting.
 func (d *DB) ClaimJob() (*ScraperJobRow, error) {
 	var job ScraperJobRow
-	now := time.Now()
+	now := time.Now().UTC()
 	err := d.gorm.Transaction(func(tx *gorm.DB) error {
 		// Only claim jobs whose source is currently active in scraper_source_configs.
 		// The JOIN means a job queued before the source was disabled will be silently
@@ -194,7 +194,7 @@ func (d *DB) ClaimJob() (*ScraperJobRow, error) {
 // MarkRunStart writes status=running on the source config and inserts a run log row.
 // Returns the run log ID.
 func (d *DB) MarkRunStart(clientID, source, triggeredBy string) (string, error) {
-	now := time.Now()
+	now := time.Now().UTC()
 	if err := d.gorm.Model(&ScraperSourceConfigRow{}).
 		Where("client_id = ? AND source = ?", clientID, source).
 		Updates(map[string]interface{}{
@@ -220,7 +220,7 @@ func (d *DB) MarkRunStart(clientID, source, triggeredBy string) (string, error) 
 
 // MarkRunFinish updates the source config and run log with final status.
 func (d *DB) MarkRunFinish(clientID, source, runLogID, status string, count int, durationS int, runErr error) error {
-	now := time.Now()
+	now := time.Now().UTC()
 	errMsg := (*string)(nil)
 	if runErr != nil {
 		s := runErr.Error()

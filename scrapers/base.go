@@ -134,7 +134,14 @@ func RunList(ctx context.Context, list []Scraper, logger *zap.Logger) []models.I
 // RunListFlush executes scrapers one at a time and calls flush as results
 // arrive. Scrapers that implement StreamScraper flush per-batch (per state,
 // per page, etc.); others flush once after all items are collected.
-func RunListFlush(ctx context.Context, list []Scraper, logger *zap.Logger, flush func(source string, items []models.Incentive)) {
+// onDone, if non-nil, is called once per scraper after it completes (success or error).
+func RunListFlush(
+	ctx context.Context,
+	list []Scraper,
+	logger *zap.Logger,
+	flush func(source string, items []models.Incentive),
+	onDone func(source string, err error, elapsed time.Duration),
+) {
 	for _, s := range list {
 		t0 := time.Now()
 		logger.Info("scraper starting", zap.String("source", s.Name()))
@@ -150,38 +157,52 @@ func RunListFlush(ctx context.Context, list []Scraper, logger *zap.Logger, flush
 				flush(s.Name(), batch)
 				total += len(batch)
 			})
+			elapsed := time.Since(t0)
 			if err != nil {
 				logger.Error("scraper failed",
 					zap.String("source", s.Name()),
 					zap.Error(err),
-					zap.Duration("elapsed", time.Since(t0)),
+					zap.Duration("elapsed", elapsed),
 				)
+				if onDone != nil {
+					onDone(s.Name(), err, elapsed)
+				}
 				continue
 			}
 			logger.Info("scraper finished",
 				zap.String("source", s.Name()),
 				zap.Int("count", total),
-				zap.Duration("elapsed", time.Since(t0)),
+				zap.Duration("elapsed", elapsed),
 			)
+			if onDone != nil {
+				onDone(s.Name(), nil, elapsed)
+			}
 		} else {
 			// Batch path: collect all items, then flush once.
 			items, err := s.Scrape(ctx)
+			elapsed := time.Since(t0)
 			if err != nil {
 				logger.Error("scraper failed",
 					zap.String("source", s.Name()),
 					zap.Error(err),
-					zap.Duration("elapsed", time.Since(t0)),
+					zap.Duration("elapsed", elapsed),
 				)
+				if onDone != nil {
+					onDone(s.Name(), err, elapsed)
+				}
 				continue
 			}
 			logger.Info("scraper finished",
 				zap.String("source", s.Name()),
 				zap.Int("count", len(items)),
-				zap.Duration("elapsed", time.Since(t0)),
+				zap.Duration("elapsed", elapsed),
 			)
 			logItemsDebug(logger, s.Name(), items)
 			if len(items) > 0 {
 				flush(s.Name(), items)
+			}
+			if onDone != nil {
+				onDone(s.Name(), nil, elapsed)
 			}
 		}
 	}

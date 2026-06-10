@@ -261,7 +261,7 @@ func main() {
 
 		// Free any sources whose last run stalled (no heartbeat for 5+ min).
 		if multiTenant {
-			stalledCutoff := time.Now().Add(-5 * time.Minute)
+			stalledCutoff := time.Now().UTC().Add(-5 * time.Minute)
 			if freed, err := database.ResetStalledByHeartbeat(stalledCutoff); err != nil {
 				logger.Warn("stall check failed", zap.Error(err))
 			} else if len(freed) > 0 {
@@ -301,6 +301,8 @@ func main() {
 		defer cancel()
 
 		var totalUpserted int
+		// Per-source upserted counts so MarkRunFinish records accurate program counts.
+		sourceCounts := make(map[string]int)
 
 		// Build source -> clientID map from tenants (for DB run logging).
 		sourceClientID := make(map[string]string)
@@ -326,12 +328,33 @@ func main() {
 				heartbeatStops[src] = startHeartbeat(ctx, database, runLogID, logger)
 			}
 		}
-		stopAllHeartbeats := func() {
+		// stopAllHeartbeats is a safety-net defer; individual sources stop their
+		// own heartbeat in onSourceDone so the "running" state clears immediately.
+		defer func() {
 			for _, stop := range heartbeatStops {
 				stop()
 			}
+		}()
+
+		// onSourceDone is called by RunListFlush after each scraper finishes.
+		// It stops that source's heartbeat and marks the run complete so the
+		// UI updates immediately instead of waiting for the full batch to end.
+		onSourceDone := func(src string, err error, elapsed time.Duration) {
+			if stopHB, ok := heartbeatStops[src]; ok {
+				stopHB()
+				delete(heartbeatStops, src) // prevent double-stop in the defer
+			}
+			runLogID := runLogIDs[src]
+			if runLogID == "" {
+				return
+			}
+			clientID := sourceClientID[src]
+			status := "success"
+			if err != nil {
+				status = "error"
+			}
+			_ = database.MarkRunFinish(clientID, src, runLogID, status, sourceCounts[src], int(elapsed.Seconds()), err)
 		}
-		defer stopAllHeartbeats()
 
 		// Pre-register every source so that reset + stale detection runs
 		// even for scrapers that return 0 programs (blocked, no pages found, etc).
@@ -407,6 +430,7 @@ func main() {
 				return
 			}
 			totalUpserted += result.Upserted
+			sourceCounts[source] += result.Upserted
 			logger.Info("staging upsert complete",
 				zap.String("source", source),
 				zap.Int("upserted", result.Upserted),
@@ -429,7 +453,7 @@ func main() {
 		if cfg.ForceRefresh {
 				runRehydrate(ctx, activeScrapers, database, logger, flush)
 			} else {
-				scrapers.RunListFlush(ctx, activeScrapers, logger, flush)
+				scrapers.RunListFlush(ctx, activeScrapers, logger, flush, onSourceDone)
 			}
 
 		// Post-run: for sources that produced 0 items (scraper failed or returned
@@ -478,13 +502,6 @@ func main() {
 					)
 				}
 			}
-		}
-
-		// Record completion in DB for each active source.
-		for _, s := range activeScrapers {
-			elapsed := int(time.Since(runStarted).Seconds())
-			clientIDForSource := sourceClientID[s.Name()]
-			_ = database.MarkRunFinish(clientIDForSource, s.Name(), runLogIDs[s.Name()], "success", totalUpserted, elapsed, nil)
 		}
 
 		pending, _ := db.PendingCount(database)
