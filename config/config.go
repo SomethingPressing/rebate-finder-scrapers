@@ -143,7 +143,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		DatabaseURL:            getEnv("DATABASE_URL", ""),
-		ScraperInterval:        getEnv("SCRAPER_INTERVAL", "@every 6h"),
+		ScraperInterval:        getEnv("SCRAPER_INTERVAL", "@every 1h"),
 		DSIREBaseURL:           getEnv("DSIREUSA_BASE_URL", "https://programs.dsireusa.org/api/v1/programs"),
 		RewiringAmericaAPIKey:        getEnv("REWIRING_AMERICA_API_KEY", ""),
 		RewiringAmericaBaseURL:       getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),

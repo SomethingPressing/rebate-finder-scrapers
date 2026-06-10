@@ -12,6 +12,7 @@ type ScraperSourceConfigRow struct {
 	ClientID         string     `gorm:"column:client_id;primaryKey"`
 	Source           string     `gorm:"column:source;primaryKey"`
 	Active           bool       `gorm:"column:active"`
+	Schedule         string     `gorm:"column:schedule"`
 	States           []string   `gorm:"column:states;type:text[]"`
 	Utilities        []string   `gorm:"column:utilities;type:text[]"`
 	ServiceAreas     []string   `gorm:"column:service_areas;type:text[]"`

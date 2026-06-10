@@ -247,6 +247,37 @@ func main() {
 	canMarkStale := cfg.ForceRefresh && effectiveLimit == 0
 
 	runScrapers := func() {
+		// Shadow activeScrapers with a schedule-filtered subset so the rest of the
+		// function works without changes. In multi-tenant mode we re-read the DB to
+		// get up-to-date schedule + last_run_at values before deciding what to run.
+		activeScrapers := activeScrapers
+		if multiTenant {
+			if freshRows, err := database.LoadActiveSourceConfigs(); err == nil && freshRows != nil {
+				scheduleMap := make(map[string]db.ScraperSourceConfigRow, len(freshRows))
+				for _, r := range freshRows {
+					scheduleMap[r.Source] = r
+				}
+				var due []scrapers.Scraper
+				for _, s := range activeScrapers {
+					if row, ok := scheduleMap[s.Name()]; !ok || isSourceDue(row) {
+						due = append(due, s)
+					}
+				}
+				if len(due) == 0 {
+					logger.Info("schedule check: no sources due on this tick — skipping run")
+					return
+				}
+				if len(due) < len(activeScrapers) {
+					names := make([]string, len(due))
+					for i, s := range due {
+						names[i] = s.Name()
+					}
+					logger.Info("schedule check: running only due sources", zap.Strings("sources", names))
+				}
+				activeScrapers = due
+			}
+		}
+
 		runStarted := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
@@ -609,6 +640,29 @@ func runRehydrate(
 				zap.String("source", s.Name()), zap.Error(err))
 		}
 	}
+}
+
+// isSourceDue returns true when a source should run on the current tick based
+// on its configured schedule and when it last ran.
+// Unknown or empty schedule values are treated as "run every tick".
+func isSourceDue(row db.ScraperSourceConfigRow) bool {
+	if row.Schedule == "manual_only" {
+		return false
+	}
+	if row.LastRunAt == nil {
+		return true // never run → always due
+	}
+	intervals := map[string]time.Duration{
+		"every_6h":  6 * time.Hour,
+		"every_12h": 12 * time.Hour,
+		"daily":     24 * time.Hour,
+		"weekly":    7 * 24 * time.Hour,
+	}
+	d, ok := intervals[row.Schedule]
+	if !ok {
+		return true // unknown schedule → run every tick
+	}
+	return time.Since(*row.LastRunAt) >= d
 }
 
 type zapCronLogger struct{ z *zap.Logger }
