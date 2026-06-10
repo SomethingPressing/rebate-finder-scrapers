@@ -126,6 +126,13 @@ func main() {
 	}
 	logger.Info("database connected and staging table migrated")
 
+	// ── Clean up any stalled runs from a previous crash / kill ───────────────
+	if err := database.ResetStalledRuns(); err != nil {
+		logger.Warn("failed to reset stalled runs", zap.Error(err))
+	} else {
+		logger.Info("stalled runs cleared")
+	}
+
 	// ── DB-driven tenant config override ─────────────────────────────────────
 	// Try loading scraper source config from the admin portal DB. When rows
 	// exist they override tenants.json; if the table doesn't exist yet (admin
@@ -251,6 +258,17 @@ func main() {
 		// function works without changes. In multi-tenant mode we re-read the DB to
 		// get up-to-date schedule + last_run_at values before deciding what to run.
 		activeScrapers := activeScrapers
+
+		// Free any sources whose last run stalled (no heartbeat for 5+ min).
+		if multiTenant {
+			stalledCutoff := time.Now().Add(-5 * time.Minute)
+			if freed, err := database.ResetStalledByHeartbeat(stalledCutoff); err != nil {
+				logger.Warn("stall check failed", zap.Error(err))
+			} else if len(freed) > 0 {
+				logger.Warn("freed stalled sources", zap.Strings("sources", freed))
+			}
+		}
+
 		if multiTenant {
 			if freshRows, err := database.LoadActiveSourceConfigs(); err == nil && freshRows != nil {
 				scheduleMap := make(map[string]db.ScraperSourceConfigRow, len(freshRows))
@@ -300,6 +318,20 @@ func main() {
 				runLogIDs[s.Name()] = id
 			}
 		}
+
+		// Start a heartbeat goroutine for each run so stall detection works.
+		heartbeatStops := make(map[string]func(), len(runLogIDs))
+		for src, runLogID := range runLogIDs {
+			if runLogID != "" {
+				heartbeatStops[src] = startHeartbeat(ctx, database, runLogID, logger)
+			}
+		}
+		stopAllHeartbeats := func() {
+			for _, stop := range heartbeatStops {
+				stop()
+			}
+		}
+		defer stopAllHeartbeats()
 
 		// Pre-register every source so that reset + stale detection runs
 		// even for scrapers that return 0 programs (blocked, no pages found, etc).
@@ -531,6 +563,12 @@ func main() {
 					if startErr != nil {
 						logger.Warn("MarkRunStart failed", zap.Error(startErr))
 					}
+					jobCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+					defer cancel()
+					if runLogID != "" {
+						stopHB := startHeartbeat(jobCtx, database, runLogID, logger)
+						defer stopHB()
+					}
 					start := time.Now()
 					scraper := reg.Get(src)
 					if scraper == nil {
@@ -538,8 +576,6 @@ func main() {
 						_ = database.MarkRunFinish(clientID, src, runLogID, "error", 0, 0, fmt.Errorf("unknown source: %s", src))
 						return
 					}
-					jobCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
-					defer cancel()
 					items, scrapeErr := scraper.Scrape(jobCtx)
 					elapsed := int(time.Since(start).Seconds())
 					if scrapeErr != nil {
@@ -645,6 +681,30 @@ func runRehydrate(
 // isSourceDue returns true when a source should run on the current tick based
 // on its configured schedule and when it last ran.
 // Unknown or empty schedule values are treated as "run every tick".
+// startHeartbeat launches a goroutine that updates last_heartbeat_at every 30 s
+// for the given run log. Call the returned stop function when the run finishes.
+func startHeartbeat(ctx context.Context, database *db.DB, runLogID string, logger *zap.Logger) func() {
+	hbCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := database.UpdateHeartbeat(runLogID); err != nil {
+					logger.Warn("heartbeat update failed",
+						zap.String("run_log_id", runLogID),
+						zap.Error(err),
+					)
+				}
+			case <-hbCtx.Done():
+				return
+			}
+		}
+	}()
+	return cancel
+}
+
 func isSourceDue(row db.ScraperSourceConfigRow) bool {
 	if row.Schedule == "manual_only" {
 		return false

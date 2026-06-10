@@ -41,16 +41,17 @@ func (ScraperJobRow) TableName() string { return "scraper_jobs" }
 
 // ScraperRunLogRow mirrors the scraper_run_logs table (public schema).
 type ScraperRunLogRow struct {
-	ID           string     `gorm:"column:id;primaryKey"`
-	ClientID     string     `gorm:"column:client_id"`
-	Source       string     `gorm:"column:source"`
-	Status       string     `gorm:"column:status"`
-	StartedAt    time.Time  `gorm:"column:started_at"`
-	FinishedAt   *time.Time `gorm:"column:finished_at"`
-	ProgramCount *int       `gorm:"column:program_count"`
-	DurationS    *int       `gorm:"column:duration_s"`
-	Error        *string    `gorm:"column:error"`
-	TriggeredBy  *string    `gorm:"column:triggered_by"`
+	ID               string     `gorm:"column:id;primaryKey"`
+	ClientID         string     `gorm:"column:client_id"`
+	Source           string     `gorm:"column:source"`
+	Status           string     `gorm:"column:status"`
+	StartedAt        time.Time  `gorm:"column:started_at"`
+	FinishedAt       *time.Time `gorm:"column:finished_at"`
+	ProgramCount     *int       `gorm:"column:program_count"`
+	DurationS        *int       `gorm:"column:duration_s"`
+	Error            *string    `gorm:"column:error"`
+	TriggeredBy      *string    `gorm:"column:triggered_by"`
+	LastHeartbeatAt  *time.Time `gorm:"column:last_heartbeat_at"`
 }
 
 func (ScraperRunLogRow) TableName() string { return "scraper_run_logs" }
@@ -75,6 +76,63 @@ func (d *DB) ResetStalledRuns() error {
 			"finished_at": time.Now(),
 			"error":       msg,
 		}).Error
+}
+
+// UpdateHeartbeat stamps last_heartbeat_at = now on a run log row.
+// Called every 30 s by each active scraper goroutine.
+func (d *DB) UpdateHeartbeat(runLogID string) error {
+	return d.gorm.Model(&ScraperRunLogRow{}).
+		Where("id = ?", runLogID).
+		Update("last_heartbeat_at", time.Now()).Error
+}
+
+// ResetStalledByHeartbeat finds run logs stuck in 'running' whose heartbeat
+// hasn't been updated since cutoff (5 min ago), marks them as error, and
+// clears the corresponding source config status so the next tick re-runs them.
+// Returns the list of freed source names.
+func (d *DB) ResetStalledByHeartbeat(cutoff time.Time) ([]string, error) {
+	// A run is stalled when:
+	//   - status is still 'running', AND
+	//   - either the heartbeat exists but is older than cutoff,
+	//     OR no heartbeat has been sent yet but the run started before cutoff.
+	const stalledCond = `status = 'running' AND (
+		(last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?) OR
+		(last_heartbeat_at IS NULL     AND started_at          < ?)
+	)`
+
+	var rows []ScraperRunLogRow
+	if err := d.gorm.Where(stalledCond, cutoff, cutoff).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	sources := make([]string, len(rows))
+	for i, r := range rows {
+		sources[i] = r.Source
+	}
+
+	msg := "Run stalled — no heartbeat received for 5+ minutes"
+	now := time.Now()
+	if err := d.gorm.Model(&ScraperRunLogRow{}).
+		Where(stalledCond, cutoff, cutoff).
+		Updates(map[string]interface{}{
+			"status":      "error",
+			"finished_at": now,
+			"error":       msg,
+		}).Error; err != nil {
+		return sources, err
+	}
+	if err := d.gorm.Model(&ScraperSourceConfigRow{}).
+		Where("source IN ? AND last_run_status = 'running'", sources).
+		Updates(map[string]interface{}{
+			"last_run_status": "error",
+			"last_run_error":  msg,
+		}).Error; err != nil {
+		return sources, err
+	}
+	return sources, nil
 }
 
 // LoadActiveSourceConfigs returns all active source configs from the DB.
