@@ -53,6 +53,7 @@ func main() {
 	debugFlag          := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
 	forceURLUpdateFlag := flag.Bool("force-url-update", false, "overwrite program_url and application_url on ALL matching staging rows regardless of promotion status (also set via FORCE_URL_UPDATE=true)")
 	forceRefreshFlag   := flag.Bool("force-refresh", false, "re-scrape and reset promotion status to pending so the promoter re-pushes fresh data to live (also set via FORCE_REFRESH=true)")
+	refreshAgeFlag     := flag.Int("refresh-age", 7, "with --force-refresh: only re-scrape programs not updated within this many days (0 = re-scrape all regardless of age)")
 	limitFlag          := flag.Int("limit", 0, "cap the number of programs fetched per source (0 = no limit); useful for quick smoke tests")
 	flag.Parse()
 
@@ -82,6 +83,10 @@ func main() {
 	if *forceRefreshFlag {
 		cfg.ForceRefresh = true
 	}
+
+	// refreshAge is the minimum age (in days) a program must have before it is
+	// re-scraped during --force-refresh. 0 means re-scrape everything.
+	refreshAge := time.Duration(*refreshAgeFlag) * 24 * time.Hour
 
 	// ── Logger ────────────────────────────────────────────────────────────────
 	logger := logutil.New(cfg.LogLevel, cfg.LogFormat)
@@ -451,7 +456,7 @@ func main() {
 		}
 
 		if cfg.ForceRefresh {
-				runRehydrate(ctx, activeScrapers, database, logger, flush)
+				runRehydrate(ctx, activeScrapers, database, logger, flush, refreshAge)
 			} else {
 				scrapers.RunListFlush(ctx, activeScrapers, logger, flush, onSourceDone)
 			}
@@ -627,14 +632,21 @@ func main() {
 
 // runRehydrate runs each scraper's RehydrateStream (if implemented), falling
 // back to the normal Scrape path for scrapers that don't support it.
-// This replaces the old "re-discover from scratch" force-refresh behaviour.
+// refreshAge filters out records updated more recently than the given duration
+// (0 means re-scrape everything regardless of age).
 func runRehydrate(
 	ctx context.Context,
 	active []scrapers.Scraper,
 	database *db.DB,
 	logger *zap.Logger,
 	flush func(source string, items []models.Incentive),
+	refreshAge time.Duration,
 ) {
+	staleAfter := time.Now().UTC()
+	if refreshAge > 0 {
+		staleAfter = time.Now().UTC().Add(-refreshAge)
+	}
+
 	for _, s := range active {
 		rh, ok := s.(scrapers.Rehydrater)
 		if !ok {
@@ -664,9 +676,32 @@ func runRehydrate(
 			continue
 		}
 
+		// Filter to only records not updated within refreshAge.
+		// When refreshAge is 0, staleAfter == now so all records are included.
+		var stale []db.StagingRecord
+		for _, r := range dbRecords {
+			if r.UpdatedAt.Before(staleAfter) {
+				stale = append(stale, r)
+			}
+		}
+		skipped := len(dbRecords) - len(stale)
+		if skipped > 0 {
+			logger.Info("rehydrate: skipping recently updated records",
+				zap.String("source", s.Name()),
+				zap.Int("stale", len(stale)),
+				zap.Int("skipped_recent", skipped),
+				zap.Duration("refresh_age", refreshAge),
+			)
+		}
+		if len(stale) == 0 {
+			logger.Info("rehydrate: all records are recent — nothing to refresh",
+				zap.String("source", s.Name()))
+			continue
+		}
+
 		// Convert db.StagingRecord → scrapers.RehydrateRecord.
-		records := make([]scrapers.RehydrateRecord, len(dbRecords))
-		for i, r := range dbRecords {
+		records := make([]scrapers.RehydrateRecord, len(stale))
+		for i, r := range stale {
 			rec := scrapers.RehydrateRecord{SourceID: r.SourceID}
 			if r.State != nil {
 				rec.State = *r.State
