@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -123,17 +124,18 @@ func (d *DB) MarkRunStart(clientID, source, triggeredBy string) (string, error) 
 		}).Error; err != nil {
 		return "", err
 	}
-	log := ScraperRunLogRow{
+	runLog := ScraperRunLogRow{
+		ID:          uuid.NewString(),
 		ClientID:    clientID,
 		Source:      source,
 		Status:      "running",
 		StartedAt:   now,
 		TriggeredBy: &triggeredBy,
 	}
-	if err := d.gorm.Create(&log).Error; err != nil {
+	if err := d.gorm.Create(&runLog).Error; err != nil {
 		return "", err
 	}
-	return log.ID, nil
+	return runLog.ID, nil
 }
 
 // MarkRunFinish updates the source config and run log with final status.
