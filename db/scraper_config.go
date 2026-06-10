@@ -13,10 +13,10 @@ type ScraperSourceConfigRow struct {
 	Source           string     `gorm:"column:source;primaryKey"`
 	Active           bool       `gorm:"column:active"`
 	Schedule         string     `gorm:"column:schedule"`
-	States           []string   `gorm:"column:states;type:text[]"`
-	Utilities        []string   `gorm:"column:utilities;type:text[]"`
-	ServiceAreas     []string   `gorm:"column:service_areas;type:text[]"`
-	ZipCodes         []string   `gorm:"column:zip_codes;type:text[]"`
+	States           StringSlice `gorm:"column:states;type:text[]"`
+	Utilities        StringSlice `gorm:"column:utilities;type:text[]"`
+	ServiceAreas     StringSlice `gorm:"column:service_areas;type:text[]"`
+	ZipCodes         StringSlice `gorm:"column:zip_codes;type:text[]"`
 	MaxIncentives    *int       `gorm:"column:max_incentives"`
 	LastRunAt        *time.Time `gorm:"column:last_run_at"`
 	LastRunStatus    string     `gorm:"column:last_run_status"`
