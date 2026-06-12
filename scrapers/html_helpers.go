@@ -61,8 +61,19 @@ func extractPhone(text string) string {
 }
 
 // extractEmail finds the first email address in text.
+// Rejects false positives where the regex matches retina image filenames
+// (e.g. "bg-info@2x.png") or other file asset paths.
 func extractEmail(text string) string {
 	m := reEmail.FindString(text)
+	if m == "" {
+		return ""
+	}
+	lower := strings.ToLower(m)
+	for _, ext := range []string{".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".pdf", ".zip", ".mp4", ".mp3"} {
+		if strings.HasSuffix(lower, ext) {
+			return ""
+		}
+	}
 	return strings.ToLower(strings.TrimSpace(m))
 }
 
