@@ -15,10 +15,14 @@ type FieldStatus string
 const (
 	StatusMatch       FieldStatus = "✓ match"
 	StatusPartial     FieldStatus = "~ partial"
-	StatusMissing     FieldStatus = "✗ missing"    // scraper empty, LLM found it
-	StatusMismatch    FieldStatus = "✗ mismatch"   // both have values but they disagree
-	StatusEmptyBoth   FieldStatus = "  empty"      // neither side found it
+	StatusMissing     FieldStatus = "✗ missing"      // scraper empty, LLM found it
+	StatusMismatch    FieldStatus = "✗ mismatch"     // both have values but they disagree
+	StatusEmptyBoth   FieldStatus = "  empty"        // neither side found it
 	StatusScraperOnly FieldStatus = "? scraper-only" // scraper has it, LLM does not
+
+	// Field-population mode (JS-rendered sources where LLM comparison is not feasible).
+	StatusPopulated   FieldStatus = "✓ populated" // scraper captured the field
+	StatusUnpopulated FieldStatus = "✗ empty"     // scraper left the field blank
 )
 
 // FieldScore holds the per-field comparison result.
@@ -82,6 +86,7 @@ func DiffFields(staged models.StagedRebate, ext *llm.LLMExtraction) []FieldScore
 
 // OverallScore returns a 0–1 score: matched weight / total countable weight.
 // Fields where neither side found a value (empty_both) are excluded from the denominator.
+// In field-population mode, StatusPopulated counts as a full match.
 func OverallScore(scores []FieldScore) float64 {
 	var total, matched float64
 	for _, s := range scores {
@@ -90,7 +95,7 @@ func OverallScore(scores []FieldScore) float64 {
 		}
 		total += s.Weight
 		switch s.Status {
-		case StatusMatch:
+		case StatusMatch, StatusPopulated:
 			matched += s.Weight
 		case StatusPartial:
 			matched += s.Weight * 0.5
@@ -102,15 +107,74 @@ func OverallScore(scores []FieldScore) float64 {
 	return matched / total
 }
 
-// MissingFields returns field names where the scraper is empty but the LLM found a value.
+// MissingFields returns field names where the scraper is empty or mismatched.
+// Includes StatusUnpopulated for field-population mode.
 func MissingFields(scores []FieldScore) []string {
 	var out []string
 	for _, s := range scores {
-		if s.Status == StatusMissing || s.Status == StatusMismatch {
+		if s.Status == StatusMissing || s.Status == StatusMismatch || s.Status == StatusUnpopulated {
 			out = append(out, s.Name)
 		}
 	}
 	return out
+}
+
+// ScoreFieldPopulation scores a staged DB row purely on which fields are non-empty.
+// Used for JS-rendered sources (e.g. xcel_energy) where re-fetching would return
+// a JavaScript shell and LLM comparison is not feasible.
+// Each field is StatusPopulated (scraper captured it) or StatusUnpopulated (blank).
+func ScoreFieldPopulation(row models.StagedRebate) []FieldScore {
+	pop := func(name string, val *string, w float64) FieldScore {
+		v := derefStr(val)
+		if v != "" {
+			return FieldScore{Name: name, Status: StatusPopulated, ScraperValue: trunc(v, 48), Weight: w}
+		}
+		return FieldScore{Name: name, Status: StatusUnpopulated, Weight: w}
+	}
+	popStr := func(name, val string, w float64) FieldScore {
+		if val != "" {
+			return FieldScore{Name: name, Status: StatusPopulated, ScraperValue: trunc(val, 48), Weight: w}
+		}
+		return FieldScore{Name: name, Status: StatusUnpopulated, Weight: w}
+	}
+	popFloat := func(name string, val *float64, w float64) FieldScore {
+		if val != nil && *val != 0 {
+			return FieldScore{Name: name, Status: StatusPopulated, ScraperValue: fmt.Sprintf("%.2f", *val), Weight: w}
+		}
+		return FieldScore{Name: name, Status: StatusUnpopulated, Weight: w}
+	}
+	popBool := func(name string, val *bool, w float64) FieldScore {
+		if val != nil {
+			return FieldScore{Name: name, Status: StatusPopulated, ScraperValue: fmt.Sprintf("%v", *val), Weight: w}
+		}
+		return FieldScore{Name: name, Status: StatusUnpopulated, Weight: w}
+	}
+	popSlice := func(name string, val []string, w float64) FieldScore {
+		if len(val) > 0 {
+			return FieldScore{Name: name, Status: StatusPopulated, ScraperValue: trunc(strings.Join(val, ", "), 48), Weight: w}
+		}
+		return FieldScore{Name: name, Status: StatusUnpopulated, Weight: w}
+	}
+	return []FieldScore{
+		popStr("program_name", row.ProgramName, 2.0),
+		popStr("utility_company", row.UtilityCompany, 1.5),
+		pop("incentive_description", row.IncentiveDescription, 1.0),
+		popFloat("incentive_amount", row.IncentiveAmount, 2.0),
+		popFloat("maximum_amount", row.MaximumAmount, 1.5),
+		popFloat("percent_value", row.PercentValue, 1.5),
+		popFloat("per_unit_amount", row.PerUnitAmount, 1.5),
+		pop("incentive_format", row.IncentiveFormat, 1.0),
+		pop("state", row.State, 1.0),
+		popSlice("categories", []string(row.CategoryTag), 1.5),
+		pop("customer_type", row.CustomerType, 1.0),
+		pop("start_date", row.StartDate, 1.0),
+		pop("end_date", row.EndDate, 1.0),
+		pop("application_url", row.ApplicationURL, 1.0),
+		pop("contact_email", row.ContactEmail, 0.5),
+		pop("contact_phone", row.ContactPhone, 0.5),
+		popBool("contractor_required", row.ContractorRequired, 0.5),
+		popBool("energy_audit_required", row.EnergyAuditRequired, 0.5),
+	}
 }
 
 // ── comparison helpers ────────────────────────────────────────────────────────

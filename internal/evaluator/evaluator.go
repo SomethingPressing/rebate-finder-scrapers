@@ -27,6 +27,15 @@ var apiSources = map[string]bool{
 	"energy_star": true,
 }
 
+// jsRenderedSources are scrapers whose program pages require a JavaScript engine
+// to render (Salesforce Experience Cloud, React SPAs, etc.).  A plain HTTP fetch
+// returns only the app shell, so GPT-4o extraction is meaningless.  These sources
+// are evaluated in "field population" mode instead: the staged DB row is scored
+// directly on how many fields the scraper populated, with no LLM call or re-fetch.
+var jsRenderedSources = map[string]bool{
+	"xcel_energy": true,
+}
+
 // Config controls the evaluation run.
 type Config struct {
 	DB           *db.DB
@@ -47,6 +56,7 @@ type EvalResult struct {
 	ProgramURL    string            `json:"program_url,omitempty"`
 	SourceURL     string            `json:"source_url,omitempty"` // URL in the originating data source (DSIRE page, ES listing, etc.)
 	ContentType   string            `json:"content_type"`
+	EvalMode      string            `json:"eval_mode,omitempty"` // "field_population" for JS-rendered sources; "" = normal LLM comparison
 	OverallScore  float64           `json:"overall_score"`
 	FieldScores   []FieldScore      `json:"field_scores"`
 	MissingFields []string          `json:"missing_fields"`
@@ -98,6 +108,18 @@ func Run(cfg Config) ([]EvalResult, error) {
 			ProgramURL:  programURL,
 			SourceURL:   resolveSourceURL(row),
 			DBValues:    stagedToDBValues(row),
+		}
+
+		// JS-rendered sources: skip HTTP fetch and LLM entirely.
+		// Score the staged row directly on field population.
+		if jsRenderedSources[row.Source] {
+			res.EvalMode = "field_population"
+			scores := ScoreFieldPopulation(row)
+			res.FieldScores = scores
+			res.OverallScore = OverallScore(scores)
+			res.MissingFields = MissingFields(scores)
+			results = append(results, res)
+			continue
 		}
 
 		// Resolve content:

@@ -131,12 +131,22 @@ func printResult(r EvalResult) {
 	// ── Field-by-field comparison ──────────────────────────────────────────
 	fmt.Printf("│\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "│  %-22s\t%-15s\t%-30s\t%-30s\n", "FIELD", "STATUS", "SCRAPER (fresh)", "LLM")
-	fmt.Fprintf(w, "│  %-22s\t%-15s\t%-30s\t%-30s\n",
-		"──────────────────────", "───────────────", "────────────────────────────────", "────────────────────────────────")
-	for _, fs := range r.FieldScores {
+	if r.EvalMode == "field_population" {
+		fmt.Printf("│  (field population mode — JS-rendered page, no LLM comparison)\n│\n")
+		fmt.Fprintf(w, "│  %-22s\t%-15s\t%-48s\n", "FIELD", "STATUS", "VALUE")
+		fmt.Fprintf(w, "│  %-22s\t%-15s\t%-48s\n",
+			"──────────────────────", "───────────────", "────────────────────────────────────────────────")
+		for _, fs := range r.FieldScores {
+			fmt.Fprintf(w, "│  %-22s\t%-15s\t%-48s\n", fs.Name, string(fs.Status), fs.ScraperValue)
+		}
+	} else {
+		fmt.Fprintf(w, "│  %-22s\t%-15s\t%-30s\t%-30s\n", "FIELD", "STATUS", "SCRAPER (fresh)", "LLM")
 		fmt.Fprintf(w, "│  %-22s\t%-15s\t%-30s\t%-30s\n",
-			fs.Name, string(fs.Status), fs.ScraperValue, fs.LLMValue)
+			"──────────────────────", "───────────────", "────────────────────────────────", "────────────────────────────────")
+		for _, fs := range r.FieldScores {
+			fmt.Fprintf(w, "│  %-22s\t%-15s\t%-30s\t%-30s\n",
+				fs.Name, string(fs.Status), fs.ScraperValue, fs.LLMValue)
+		}
 	}
 	_ = w.Flush()
 
@@ -290,20 +300,33 @@ func mdPrintResult(w *os.File, r EvalResult) {
 		fmt.Fprintf(w, "\n")
 	}
 
-	// ── Field comparison table ────────────────────────────────────────────
-	fmt.Fprintf(w, "#### Field Comparison\n\n")
-	fmt.Fprintf(w, "| Field | Status | Scraper (fresh) | LLM |\n")
-	fmt.Fprintf(w, "|-------|--------|----------------|-----|\n")
-	for _, fs := range r.FieldScores {
-		if fs.Status == StatusEmptyBoth {
-			continue // skip rows where both sides are empty — not interesting
+	// ── Field comparison / population table ──────────────────────────────
+	if r.EvalMode == "field_population" {
+		fmt.Fprintf(w, "#### Field Population _(JS-rendered — no LLM comparison)_\n\n")
+		fmt.Fprintf(w, "| Field | Status | Value |\n")
+		fmt.Fprintf(w, "|-------|--------|-------|\n")
+		for _, fs := range r.FieldScores {
+			fmt.Fprintf(w, "| `%s` | %s | %s |\n",
+				fs.Name,
+				mdStatusBadge(fs.Status),
+				mdEscape(fs.ScraperValue),
+			)
 		}
-		fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n",
-			fs.Name,
-			mdStatusBadge(fs.Status),
-			mdEscape(fs.ScraperValue),
-			mdEscape(fs.LLMValue),
-		)
+	} else {
+		fmt.Fprintf(w, "#### Field Comparison\n\n")
+		fmt.Fprintf(w, "| Field | Status | Scraper (fresh) | LLM |\n")
+		fmt.Fprintf(w, "|-------|--------|----------------|-----|\n")
+		for _, fs := range r.FieldScores {
+			if fs.Status == StatusEmptyBoth {
+				continue // skip rows where both sides are empty — not interesting
+			}
+			fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n",
+				fs.Name,
+				mdStatusBadge(fs.Status),
+				mdEscape(fs.ScraperValue),
+				mdEscape(fs.LLMValue),
+			)
+		}
 	}
 	fmt.Fprintf(w, "\n")
 
@@ -344,6 +367,10 @@ func mdStatusBadge(s FieldStatus) string {
 		return "⚠️ mismatch"
 	case StatusScraperOnly:
 		return "🔵 scraper-only"
+	case StatusPopulated:
+		return "✅ populated"
+	case StatusUnpopulated:
+		return "❌ empty"
 	default:
 		return string(s)
 	}

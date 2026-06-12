@@ -54,6 +54,25 @@ func RunTestcases(cfg Config, filter string) ([]EvalResult, error) {
 			ContentType: tc.ContentType,
 		}
 
+		// JS-rendered sources: skip HTTP fetch and LLM; score the staged row directly.
+		if jsRenderedSources[tc.Source] {
+			res.EvalMode = "field_population"
+			staged, found := lookupByURL(cfg.DB, tc.URL)
+			if !found {
+				res.Error = "no staged row — scraper has not stored this URL yet"
+				results = append(results, res)
+				continue
+			}
+			res.ProgramName = staged.ProgramName
+			res.DBValues = stagedToDBValues(*staged)
+			scores := ScoreFieldPopulation(*staged)
+			res.FieldScores = scores
+			res.OverallScore = OverallScore(scores)
+			res.MissingFields = MissingFields(scores)
+			results = append(results, res)
+			continue
+		}
+
 		body, ct, err := fetchURL(tc.URL, tc.ContentType)
 		if err != nil {
 			res.Error = err.Error()
