@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/llm"
@@ -24,100 +25,47 @@ type TestCase struct {
 	ContentType string `json:"content_type"`
 }
 
-// RunTestcases evaluates every entry in testdata/eval_testcases.json.
+// RunTestcases evaluates every entry in testdata/eval_testcases.json using the
+// SourceEvaluator registered for each test case's scraper source.
 //
-// For each URL it:
-//  1. Fetches the page live
-//  2. Sends content to GPT-4o for structured extraction
-//  3. Looks up the matching staging row (by program_url)
-//  4. Diffs LLM output vs staged data (or reports "no staged row" if the
-//     scraper has never stored this URL — showing what it should capture)
+// Each evaluator decides whether to fetch the URL live, use cached data, or
+// score the staged row directly — see strategy.go for the registry.
 func RunTestcases(cfg Config, filter string) ([]EvalResult, error) {
 	cases, err := loadTestcases()
 	if err != nil {
 		return nil, fmt.Errorf("load testcases: %w", err)
 	}
 
-	client := llm.NewClient(cfg.OpenAIKey).WithDebug(cfg.Debug)
 	var results []EvalResult
+	var lastLLMAt time.Time
 
 	for i, tc := range cases {
 		if filter != "" && tc.Source != filter {
 			continue
 		}
+
+		ev := evaluatorFor(tc.Source)
+
+		// Throttle LLM calls to stay within OpenAI rate limits (30K tokens/min).
+		if ev.UsesLLM() && !lastLLMAt.IsZero() {
+			if elapsed := time.Since(lastLLMAt); elapsed < 5*time.Second {
+				time.Sleep(5*time.Second - elapsed)
+			}
+		}
+
 		log.Printf("[%d/%d] testcase %s  url=%s", i+1, len(cases), tc.ID, tc.URL)
 
-		res := EvalResult{
-			Source:      tc.Source,
-			ProgramName: tc.Description,
-			SourceID:    tc.ID,
-			ContentType: tc.ContentType,
+		var staged *models.StagedRebate
+		if s, found := lookupByURL(cfg.DB, tc.URL); found {
+			staged = s
 		}
 
-		// JS-rendered sources: skip HTTP fetch and LLM; score the staged row directly.
-		if jsRenderedSources[tc.Source] {
-			res.EvalMode = "field_population"
-			staged, found := lookupByURL(cfg.DB, tc.URL)
-			if !found {
-				res.Error = "no staged row — scraper has not stored this URL yet"
-				results = append(results, res)
-				continue
-			}
-			res.ProgramName = staged.ProgramName
-			res.DBValues = stagedToDBValues(*staged)
-			scores := ScoreFieldPopulation(*staged)
-			res.FieldScores = scores
-			res.OverallScore = OverallScore(scores)
-			res.MissingFields = MissingFields(scores)
-			results = append(results, res)
-			continue
+		res := ev.EvaluateTestcase(cfg, tc, staged)
+
+		if ev.UsesLLM() {
+			lastLLMAt = time.Now()
 		}
 
-		body, ct, err := fetchURL(tc.URL, tc.ContentType)
-		if err != nil {
-			res.Error = err.Error()
-			results = append(results, res)
-			continue
-		}
-		res.ContentType = ct
-
-		if cfg.Debug {
-			preview := body
-			if len(preview) > 1000 {
-				preview = preview[:1000] + fmt.Sprintf("\n... [%d more bytes]", len(body)-1000)
-			}
-			log.Printf("[DEBUG] fetched content for testcase %s (%s, %d bytes):\n%s\n",
-				tc.ID, ct, len(body), preview)
-		}
-
-		ext, err := client.ExtractIncentive(body, ct)
-		if err != nil {
-			res.Error = fmt.Sprintf("LLM extraction failed: %v", err)
-			results = append(results, res)
-			continue
-		}
-
-		// Update program name from what LLM extracted (more accurate than test case description)
-		if ext.ProgramName != "" {
-			res.ProgramName = ext.ProgramName
-		}
-
-		// Try to find a matching staging row.
-		staged, found := lookupByURL(cfg.DB, tc.URL)
-		if !found {
-			// No staged row — show LLM-only extraction so user can see what the scraper should capture.
-			res.FieldScores = llmOnlyScores(ext)
-			res.OverallScore = 0
-			res.MissingFields = allExtractedFields(ext)
-			res.Error = "no staged row — scraper has not stored this URL yet"
-			results = append(results, res)
-			continue
-		}
-
-		scores := DiffFields(*staged, ext)
-		res.OverallScore = OverallScore(scores)
-		res.FieldScores = scores
-		res.MissingFields = MissingFields(scores)
 		results = append(results, res)
 	}
 

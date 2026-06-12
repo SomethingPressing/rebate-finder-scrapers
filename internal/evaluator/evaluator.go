@@ -12,29 +12,10 @@ import (
 	"time"
 
 	"github.com/incenva/rebate-scraper/db"
-	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/models"
-	"github.com/incenva/rebate-scraper/scrapers"
 )
 
 var fetchClient = &http.Client{Timeout: 15 * time.Second}
-
-// apiSources are scrapers whose raw response is an API JSON blob, not an HTML
-// page. For these, we re-use the cached stg_raw_response rather than fetching
-// the program URL (which points to the public website, not the API endpoint).
-var apiSources = map[string]bool{
-	"dsireusa":    true,
-	"energy_star": true,
-}
-
-// jsRenderedSources are scrapers whose program pages require a JavaScript engine
-// to render (Salesforce Experience Cloud, React SPAs, etc.).  A plain HTTP fetch
-// returns only the app shell, so GPT-4o extraction is meaningless.  These sources
-// are evaluated in "field population" mode instead: the staged DB row is scored
-// directly on how many fields the scraper populated, with no LLM call or re-fetch.
-var jsRenderedSources = map[string]bool{
-	"xcel_energy": true,
-}
 
 // Config controls the evaluation run.
 type Config struct {
@@ -54,9 +35,9 @@ type EvalResult struct {
 	ProgramName   string            `json:"program_name"`
 	SourceID      string            `json:"source_id"`
 	ProgramURL    string            `json:"program_url,omitempty"`
-	SourceURL     string            `json:"source_url,omitempty"` // URL in the originating data source (DSIRE page, ES listing, etc.)
+	SourceURL     string            `json:"source_url,omitempty"` // URL in the originating data source
 	ContentType   string            `json:"content_type"`
-	EvalMode      string            `json:"eval_mode,omitempty"` // "field_population" for JS-rendered sources; "" = normal LLM comparison
+	EvalMode      string            `json:"eval_mode,omitempty"` // "field_population" for JS-rendered; "" = LLM comparison
 	OverallScore  float64           `json:"overall_score"`
 	FieldScores   []FieldScore      `json:"field_scores"`
 	MissingFields []string          `json:"missing_fields"`
@@ -64,14 +45,15 @@ type EvalResult struct {
 	Error         string            `json:"error,omitempty"`
 }
 
-// Run fetches a sample of staging rows, sends each program's content to GPT-4o,
-// re-runs the current scraper extraction on the same content, then diffs the two.
+// Run fetches a sample of staging rows and evaluates each one using the
+// SourceEvaluator registered for its scraper source.
 //
-// For HTML-based scrapers the program URL is always fetched live so the
-// evaluation reflects both current page content and current extraction code.
-// For API-based scrapers (dsireusa, energy_star) the cached stg_raw_response is
-// re-used (the live API is not easily re-callable by URL alone) but the
-// extraction logic is re-run so code fixes are reflected immediately.
+// Each evaluator decides how to resolve content and score the row:
+//   - htmlEvaluator     — live HTTP fetch + GPT-4o diff (default)
+//   - cachedEvaluator   — cached API JSON + GPT-4o diff (dsireusa, energy_star)
+//   - fieldPopEvaluator — no fetch; score staged row field coverage (xcel_energy)
+//
+// Register new source types in strategy.go's registry map.
 func Run(cfg Config) ([]EvalResult, error) {
 	rows, err := fetchSample(cfg.DB, cfg.Source, cfg.SampleN)
 	if err != nil {
@@ -81,92 +63,27 @@ func Run(cfg Config) ([]EvalResult, error) {
 		return nil, fmt.Errorf("no staging rows found — run the scraper first")
 	}
 
-	client := llm.NewClient(cfg.OpenAIKey).WithDebug(cfg.Debug)
 	results := make([]EvalResult, 0, len(rows))
+	var lastLLMAt time.Time
 
 	for i, row := range rows {
-		// Throttle to avoid hitting the OpenAI TPM rate limit (30K tokens/min).
+		ev := evaluatorFor(row.Source)
+
+		// Throttle LLM calls to stay within OpenAI rate limits (30K tokens/min).
 		// Each request uses ~2400 tokens → max ~12/min → 5s minimum spacing.
-		if i > 0 {
-			time.Sleep(5 * time.Second)
+		if ev.UsesLLM() && !lastLLMAt.IsZero() {
+			if elapsed := time.Since(lastLLMAt); elapsed < 5*time.Second {
+				time.Sleep(5*time.Second - elapsed)
+			}
 		}
 
 		log.Printf("[%d/%d] evaluating: %q  (source=%s)", i+1, len(rows), row.ProgramName, row.Source)
 
-		// Resolve the best URL to show for visual inspection.
-		programURL := ""
-		if row.ProgramURL != nil && *row.ProgramURL != "" {
-			programURL = *row.ProgramURL
-		} else if row.ApplicationURL != nil && *row.ApplicationURL != "" {
-			programURL = *row.ApplicationURL
-		}
+		res := ev.EvaluateDB(cfg, row)
 
-		res := EvalResult{
-			Source:      row.Source,
-			ProgramName: row.ProgramName,
-			SourceID:    row.SourceID,
-			ProgramURL:  programURL,
-			SourceURL:   resolveSourceURL(row),
-			DBValues:    stagedToDBValues(row),
+		if ev.UsesLLM() {
+			lastLLMAt = time.Now()
 		}
-
-		// JS-rendered sources: skip HTTP fetch and LLM entirely.
-		// Score the staged row directly on field population.
-		if jsRenderedSources[row.Source] {
-			res.EvalMode = "field_population"
-			scores := ScoreFieldPopulation(row)
-			res.FieldScores = scores
-			res.OverallScore = OverallScore(scores)
-			res.MissingFields = MissingFields(scores)
-			results = append(results, res)
-			continue
-		}
-
-		// Resolve content:
-		// - API-based scrapers: use cached JSON (re-extracting is sufficient).
-		// - HTML scrapers: always fetch live so the eval reflects current page content.
-		rawContent, ct, fetchErr := resolveContentFresh(row)
-		if fetchErr != nil {
-			res.Error = fetchErr.Error()
-			results = append(results, res)
-			continue
-		}
-		res.ContentType = ct
-
-		if cfg.Debug {
-			preview := rawContent
-			if len(preview) > 1000 {
-				preview = preview[:1000] + fmt.Sprintf("\n... [%d more bytes]", len(rawContent)-1000)
-			}
-			log.Printf("[DEBUG] content for %q (%s, %d bytes):\n%s\n",
-				row.ProgramName, ct, len(rawContent), preview)
-		}
-
-		// LLM extraction.
-		ext, err := client.ExtractIncentive(rawContent, ct)
-		if err != nil {
-			res.Error = fmt.Sprintf("LLM extraction failed: %v", err)
-			results = append(results, res)
-			continue
-		}
-
-		// Fresh scraper extraction — re-runs current code on the same content.
-		pageURL := ""
-		if row.ProgramURL != nil {
-			pageURL = *row.ProgramURL
-		}
-		fresh := scrapers.Reextract(row.Source, rawContent, ct, pageURL, row.ScraperVersion, nil)
-
-		var scores []FieldScore
-		if fresh != nil {
-			scores = DiffFieldsFresh(fresh, ext)
-		} else {
-			// Fallback: diff against DB row when re-extraction is unsupported.
-			scores = DiffFields(row, ext)
-		}
-		res.FieldScores = scores
-		res.OverallScore = OverallScore(scores)
-		res.MissingFields = MissingFields(scores)
 
 		results = append(results, res)
 	}
@@ -174,21 +91,18 @@ func Run(cfg Config) ([]EvalResult, error) {
 	return results, nil
 }
 
-// resolveContentFresh returns the raw content to evaluate.
-// HTML scrapers always fetch live; API-based scrapers re-use the cached response.
-func resolveContentFresh(row models.StagedRebate) (content, contentType string, err error) {
-	if apiSources[row.Source] {
-		// API-based: cached response IS the API payload — use it.
-		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
-			ct := "application/json"
-			if row.StgRawContentType != nil && *row.StgRawContentType != "" {
-				ct = *row.StgRawContentType
-			}
-			return *row.StgRawResponse, ct, nil
+// resolveCache returns the cached raw API response for a staged row.
+// Falls back to a live HTTP fetch when no cache is present.
+func resolveCache(row models.StagedRebate) (content, contentType string, err error) {
+	if row.StgRawResponse != nil && *row.StgRawResponse != "" {
+		ct := "application/json"
+		if row.StgRawContentType != nil && *row.StgRawContentType != "" {
+			ct = *row.StgRawContentType
 		}
+		return *row.StgRawResponse, ct, nil
 	}
 
-	// HTML-based (or API-based with no cache): fetch the program URL live.
+	// No cached response: fall back to fetching the program URL live.
 	url := ""
 	if row.ProgramURL != nil && *row.ProgramURL != "" {
 		url = *row.ProgramURL
@@ -196,10 +110,10 @@ func resolveContentFresh(row models.StagedRebate) (content, contentType string, 
 		url = *row.ApplicationURL
 	}
 	if url == "" {
-		return "", "", fmt.Errorf("no URL to fetch for %q", row.ProgramName)
+		return "", "", fmt.Errorf("no cached response and no URL for %q", row.ProgramName)
 	}
 
-	log.Printf("  → fetching live: %s", url)
+	log.Printf("  → no cache, fetching live: %s", url)
 	return fetchLiveURL(url)
 }
 
@@ -289,16 +203,13 @@ func fetchSample(d *db.DB, source string, n int) ([]models.StagedRebate, error) 
 }
 
 // resolveSourceURL returns the canonical URL in the originating data system for
-// the given staged row. Uses the stored source_url column when available (set by
-// current scraper versions); falls back to constructing it from the raw response
-// for older rows that pre-date the column.
+// the given staged row. Uses the stored source_url column when available;
+// falls back to constructing it from the raw response for older rows.
 func resolveSourceURL(row models.StagedRebate) string {
-	// Prefer the persisted DB value — most accurate and fastest path.
 	if row.SourceURL != nil && *row.SourceURL != "" {
 		return *row.SourceURL
 	}
 
-	// Fallback: reconstruct from raw response for rows scraped before source_url existed.
 	switch row.Source {
 	case "dsireusa":
 		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
@@ -319,7 +230,6 @@ func resolveSourceURL(row models.StagedRebate) string {
 			}
 		}
 	case "rewiring_america":
-		// RA stores the program_url in the raw response item.
 		if row.StgRawResponse != nil && *row.StgRawResponse != "" {
 			var enriched struct {
 				Item struct {
@@ -335,7 +245,6 @@ func resolveSourceURL(row models.StagedRebate) string {
 					return enriched.Item.MoreInfoURL
 				}
 			}
-			// Legacy format: raw raIncentive.
 			var item struct {
 				ProgramURL  string `json:"program_url"`
 				MoreInfoURL string `json:"more_info_url"`
@@ -350,7 +259,7 @@ func resolveSourceURL(row models.StagedRebate) string {
 			}
 		}
 	}
-	// For HTML scrapers and fallback: the program_url IS the scraped source URL.
+
 	if row.ProgramURL != nil && *row.ProgramURL != "" {
 		return *row.ProgramURL
 	}
@@ -358,8 +267,7 @@ func resolveSourceURL(row models.StagedRebate) string {
 }
 
 // stagedToDBValues extracts every non-empty field from a StagedRebate into a
-// flat string map so the report can show the full DB state side-by-side with
-// the LLM extraction for visual comparison.
+// flat string map for side-by-side display in the report.
 func stagedToDBValues(r models.StagedRebate) map[string]string {
 	m := make(map[string]string)
 	set := func(k string, v *string) {
@@ -438,10 +346,8 @@ func isJunkRow(row models.StagedRebate) bool {
 			return true
 		}
 	}
-	// Reject very short program names (< 10 chars) — almost certainly noise.
 	if len(strings.TrimSpace(row.ProgramName)) < 10 {
 		return true
 	}
 	return false
 }
-
