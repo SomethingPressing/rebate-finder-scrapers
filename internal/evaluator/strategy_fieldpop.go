@@ -1,6 +1,10 @@
 package evaluator
 
-import "github.com/incenva/rebate-scraper/models"
+import (
+	"log"
+
+	"github.com/incenva/rebate-scraper/models"
+)
 
 // fieldPopEvaluator handles JS-rendered sources (e.g. Salesforce Experience Cloud,
 // React SPAs) where a plain HTTP re-fetch returns only an app shell — making LLM
@@ -20,6 +24,11 @@ func (e *fieldPopEvaluator) UsesLLM() bool { return false }
 func (e *fieldPopEvaluator) EvaluateDB(cfg Config, row models.StagedRebate) EvalResult {
 	res := buildBaseResult(row)
 	res.EvalMode = e.Mode()
+	url := res.ProgramURL
+	if url == "" {
+		url = res.SourceURL
+	}
+	log.Printf("  → field population (JS-rendered): %s", url)
 	scores := ScoreFieldPopulation(row)
 	res.FieldScores = scores
 	res.OverallScore = OverallScore(scores)
