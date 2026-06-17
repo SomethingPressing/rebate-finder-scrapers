@@ -257,15 +257,16 @@ func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Log
 		zap.Int("promoted", result.Promoted),
 		zap.Int("merged", result.Merged),
 		zap.Int("failed", result.Failed),
+		zap.Int("archived", result.Archived),
 		zap.Int("zips_written", result.ZipsWritten),
 		zap.Int("links_written", result.LinksWritten),
 		zap.Duration("elapsed", elapsed),
 	)
 
 	fmt.Printf("\n[promoter] done — %d staging row(s) → %d program(s)"+
-		" (%d merge(s), %d zip(s), %d link(s), %d failed) in %s\n",
+		" (%d merge(s), %d archived, %d zip(s), %d link(s), %d failed) in %s\n",
 		result.Promoted, result.Programs,
-		result.Merged, result.ZipsWritten, result.LinksWritten,
+		result.Merged, result.Archived, result.ZipsWritten, result.LinksWritten,
 		result.Failed, elapsed.Round(time.Millisecond),
 	)
 

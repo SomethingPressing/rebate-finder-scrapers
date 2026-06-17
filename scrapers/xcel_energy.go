@@ -425,12 +425,14 @@ var xcelExtractCfg = PageExtractConfig{
 	DefaultApply:    xcelDefaultApply,
 	BaseURL:         "https://www.xcelenergy.com",
 	AmountSelectors: "strong",
-	// Skip Salesforce region-selector interstitial pages that slipped through.
+	// Skip Salesforce region-selector interstitial pages and error pages.
 	SkipPhrases: append(append([]string{}, DefaultSkipPhrases...),
 		"select a service area to explore",
 		"select a service area",
 		"choose your service area",
 		"which state do you live in",
+		"uh-oh",         // Salesforce error page ("Uh-oh. We may have left this page unplugged.")
+		"page unplugged", // same error, alternate phrasing
 	),
 	StateDetector: func(text string) (state, territory, zip string) {
 		s := xcelStateFromText(text)

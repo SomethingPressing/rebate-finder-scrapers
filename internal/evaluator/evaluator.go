@@ -154,6 +154,7 @@ var junkNamePatterns = []string{
 	"log in", "sign in", "extra verification", "access denied",
 	"we welcome your feedback", "page not found", "404",
 	"customer notice", "session expired",
+	"uh-oh", "page unplugged",
 }
 
 // fetchSample returns up to n quality-filtered rows per source.

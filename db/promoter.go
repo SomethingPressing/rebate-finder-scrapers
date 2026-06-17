@@ -62,6 +62,7 @@ type PromoteResult struct {
 	Promoted     int // staging rows moved to 'promoted'
 	Merged       int // groups that had more than one source
 	Failed       int // groups that could not be matched after upsert
+	Archived     int // live rebates set to 'archived' because all their staging rows are stale
 	ZipsWritten  int // unique zipcodes upserted
 	LinksWritten int // rebate↔zipcode links inserted
 }
@@ -90,7 +91,14 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 	// staging rows (e.g. first promote after a fresh deploy).
 	ensurePortfolios(d)
 
-	result := &PromoteResult{StagingRows: len(pending)}
+	// Archive live rebates whose every staging row is now stale.
+	// Runs unconditionally so stale cleanup happens even when no new rows are pending.
+	archived, err := archiveStaleRebates(d, stgTable)
+	if err != nil {
+		return nil, fmt.Errorf("promote: stale archiving: %w", err)
+	}
+
+	result := &PromoteResult{StagingRows: len(pending), Archived: archived}
 	if len(pending) == 0 {
 		return result, nil
 	}
@@ -453,6 +461,50 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 	}
 
 	return result, nil
+}
+
+// ── Stale archiving ──────────────────────────────────────────────────────────
+
+// archiveStaleRebates finds live rebates where every staging row pointing to
+// them is marked 'stale' (i.e. the program is no longer returned by any
+// scraper source) and sets their status to 'archived' in the live table.
+//
+// A rebate is only archived when NO active (non-stale) staging row exists for
+// that rebate ID.  This prevents archiving rebates that are still valid from
+// at least one other source.
+func archiveStaleRebates(d *DB, stgTable string) (int, error) {
+	var staleIDs []string
+	if err := d.gorm.Raw(`
+		SELECT DISTINCT stg_rebate_id
+		FROM `+stgTable+`
+		WHERE stg_promotion_status = ?
+		  AND stg_rebate_id IS NOT NULL
+		  AND deleted_at IS NULL
+		  AND stg_rebate_id NOT IN (
+		      SELECT DISTINCT stg_rebate_id
+		      FROM `+stgTable+`
+		      WHERE stg_promotion_status != ?
+		        AND stg_rebate_id IS NOT NULL
+		        AND deleted_at IS NULL
+		  )`,
+		models.PromotionStale, models.PromotionStale).
+		Scan(&staleIDs).Error; err != nil {
+		return 0, fmt.Errorf("archiveStaleRebates: find IDs: %w", err)
+	}
+
+	if len(staleIDs) == 0 {
+		return 0, nil
+	}
+
+	res := d.gorm.
+		Table("rebates").
+		Where("id IN ? AND status != 'archived'", staleIDs).
+		Update("status", "archived")
+	if res.Error != nil {
+		return 0, fmt.Errorf("archiveStaleRebates: update status: %w", res.Error)
+	}
+
+	return int(res.RowsAffected), nil
 }
 
 // ── Category sync ────────────────────────────────────────────────────────────
