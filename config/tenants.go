@@ -41,6 +41,18 @@ type TenantConfig struct {
 	Region      string `json:"region"`       // e.g. "Pacific Northwest"
 	UtilityType string `json:"utility_type"` // e.g. "electric"
 	IsDemo      bool   `json:"is_demo"`      // true for demo/test tenants
+
+	// AppURL is the base URL of this tenant's Next.js frontend
+	// (e.g. "http://localhost:3000" or "http://10.0.0.5:3000").
+	// When set together with SyncSecret, the promoter automatically calls
+	// POST /api/typesense/sync after each successful promotion run.
+	// Leave empty to disable the automatic sync trigger for this tenant.
+	AppURL string `json:"app_url"`
+
+	// SyncSecret is the pre-shared bearer token used to authenticate the
+	// promoter's call to /api/typesense/sync.  Must match PROMOTER_SYNC_SECRET
+	// in that tenant's Next.js .env.  Generate with: openssl rand -hex 32
+	SyncSecret string `json:"sync_secret"`
 }
 
 // DBUrl resolves the tenant's database URL.

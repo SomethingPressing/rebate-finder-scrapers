@@ -32,6 +32,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -102,7 +103,13 @@ func main() {
 		}
 	}
 	if len(tenants) == 0 || allSameDB {
-		runSingleTenant(cfg, opts, logger, *dryRun, priority)
+		// Pass the first tenant so runSingleTenant can trigger the sync using
+		// the app_url and sync_secret from tenants.json.
+		var firstTenant *config.TenantConfig
+		if len(tenants) > 0 {
+			firstTenant = &tenants[0]
+		}
+		runSingleTenant(cfg, opts, logger, *dryRun, priority, firstTenant)
 		return
 	}
 
@@ -194,6 +201,10 @@ func main() {
 			zap.Duration("elapsed", elapsed),
 		)
 		totalPromoted += result.Promoted
+
+		if !*dryRun && tenant.AppURL != "" && tenant.SyncSecret != "" {
+			triggerTypesenseSync(tenant.AppURL, tenant.SyncSecret, logger)
+		}
 	}
 
 	fmt.Printf("\n[promoter] done — %d tenant(s), %d row(s) promoted, %d tenant(s) failed\n",
@@ -205,8 +216,10 @@ func main() {
 }
 
 // runSingleTenant runs the original single-DB promotion pipeline.
-// Used when no active tenants are configured (backward compat with PM2 deployments).
-func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Logger, dryRun bool, priority []string) {
+// Used when no active tenants are configured, or when all tenants share DATABASE_URL.
+// tenant is the first entry from tenants.json (nil when no tenants.json exists) and
+// is used only to read app_url and sync_secret for the Typesense sync trigger.
+func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Logger, dryRun bool, priority []string, tenant *config.TenantConfig) {
 	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
 	if err != nil {
 		logger.Fatal("db connect failed", zap.Error(err))
@@ -270,7 +283,42 @@ func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Log
 		result.Failed, elapsed.Round(time.Millisecond),
 	)
 
+	if !dryRun && tenant != nil && tenant.AppURL != "" && tenant.SyncSecret != "" {
+		triggerTypesenseSync(tenant.AppURL, tenant.SyncSecret, logger)
+	}
+
 	if result.Failed > 0 {
 		os.Exit(1)
 	}
+}
+
+// triggerTypesenseSync calls POST /api/typesense/sync on the Next.js app so
+// the search index reflects newly promoted and archived rebates.
+// Non-fatal — a sync failure is logged as a warning but never stops promotion.
+func triggerTypesenseSync(appURL, secret string, logger *zap.Logger) {
+	url := strings.TrimRight(appURL, "/") + "/api/typesense/sync"
+
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader("{}"))
+	if err != nil {
+		logger.Warn("typesense sync trigger: build request", zap.Error(err))
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Warn("typesense sync trigger: request failed", zap.Error(err))
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode >= 400 {
+		logger.Warn("typesense sync trigger: unexpected status",
+			zap.Int("status", resp.StatusCode), zap.String("url", url))
+		return
+	}
+
+	logger.Info("typesense sync triggered", zap.String("url", url))
 }

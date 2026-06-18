@@ -127,6 +127,7 @@ type Config struct {
 	// on rebate id), so no duplicates are created.
 	// Env var: FORCE_REFRESH — CLI flag: --force-refresh — default: false
 	ForceRefresh bool
+
 }
 
 // Load reads configuration from the environment.
