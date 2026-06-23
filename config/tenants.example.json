@@ -5,7 +5,7 @@
         "active": true,
         "db_url_env": "TENANT_ACME_DB_URL",
         "sources": [],
-        "max_incentives_per_source": 0,
+        "max_incentives_per_source": 10,
         "app_url": "http://localhost:5173",
         "sync_secret": "",
         "location_filter": {
