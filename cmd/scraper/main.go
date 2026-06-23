@@ -38,7 +38,7 @@ import (
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
-	"github.com/incenva/rebate-scraper/internal/jobsync"
+	"github.com/incenva/rebate-scraper/internal/jobtracker"
 	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/internal/logutil"
@@ -154,18 +154,9 @@ func main() {
 		logger.Info("loaded scraper config from DB", zap.Int("active_sources", len(tenants)))
 	}
 
-	// ── Job sync client (Ingestion Monitor) ──────────────────────────────────
-	// Prefer env vars; fall back to first active tenant's app_url / sync_secret.
-	appURL, syncSecret := cfg.AppURL, cfg.SyncSecret
-	if (appURL == "" || syncSecret == "") && len(tenants) > 0 {
-		if appURL == "" {
-			appURL = tenants[0].AppURL
-		}
-		if syncSecret == "" {
-			syncSecret = tenants[0].SyncSecret
-		}
-	}
-	jobs := jobsync.New(appURL, syncSecret)
+	// ── Job tracker (Ingestion Monitor) ───────────────────────────────────────
+	// Writes scraper_run jobs directly to public.upload_jobs on the staging DB.
+	jobs := jobtracker.NewDB(database.GORM())
 
 	// ── ZIP data ──────────────────────────────────────────────────────────────
 	stateZIPs, zipErr := zipdata.LoadPath(cfg.ZipCSVPath)
@@ -344,10 +335,10 @@ func main() {
 		scraperJobIDs := make(map[string]string, len(activeScrapers))
 		now := time.Now()
 		for _, s := range activeScrapers {
-			jobID, err := jobs.CreateJob(ctx, jobsync.CreateJobRequest{
+			jobID, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
 				Type:      "scraper_run",
 				Source:    s.Name(),
-				StartedAt: jobsync.TimePtr(now),
+				StartedAt: jobtracker.TimePtr(now),
 			})
 			if err != nil {
 				logger.Warn("jobsync: create scraper_run failed",
@@ -392,14 +383,14 @@ func main() {
 
 			// Update Ingestion Monitor job.
 			if jobID := scraperJobIDs[src]; jobID != "" {
-				upd := jobsync.UpdateJobRequest{
-					RowsProcessed: jobsync.IntPtr(sourceCounts[src]),
-					CompletedAt:   jobsync.TimePtr(time.Now()),
+				upd := jobtracker.UpdateJobRequest{
+					RowsProcessed: jobtracker.IntPtr(sourceCounts[src]),
+					CompletedAt:   jobtracker.TimePtr(time.Now()),
 				}
 				if scrapeErr != nil {
 					upd.Status = "failed"
-					upd.ErrorCount = jobsync.IntPtr(1)
-					upd.ErrorMessage = jobsync.StrPtr(scrapeErr.Error())
+					upd.ErrorCount = jobtracker.IntPtr(1)
+					upd.ErrorMessage = jobtracker.StrPtr(scrapeErr.Error())
 				} else {
 					upd.Status = "completed"
 				}
@@ -586,10 +577,10 @@ func main() {
 							break
 						}
 						nextRun := time.Now().Add(d)
-						if _, err := jobs.CreateJob(ctx, jobsync.CreateJobRequest{
+						if _, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
 							Type:        "scraper_run",
 							Source:      s.Name(),
-							ScheduledAt: jobsync.TimePtr(nextRun),
+							ScheduledAt: jobtracker.TimePtr(nextRun),
 						}); err != nil {
 							logger.Warn("jobsync: register next scheduled run failed",
 								zap.String("source", s.Name()), zap.Error(err))
