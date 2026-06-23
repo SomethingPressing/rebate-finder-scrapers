@@ -30,6 +30,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -39,6 +40,7 @@ import (
 
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
+	"github.com/incenva/rebate-scraper/internal/jobsync"
 	"github.com/incenva/rebate-scraper/internal/logutil"
 	"github.com/incenva/rebate-scraper/models"
 	"go.uber.org/zap"
@@ -89,6 +91,18 @@ func main() {
 		}
 	}
 
+	// ── Job sync client (Ingestion Monitor) ──────────────────────────────────
+	appURL, syncSecret := cfg.AppURL, cfg.SyncSecret
+	if (appURL == "" || syncSecret == "") && len(tenants) > 0 {
+		if appURL == "" {
+			appURL = tenants[0].AppURL
+		}
+		if syncSecret == "" {
+			syncSecret = tenants[0].SyncSecret
+		}
+	}
+	jobs := jobsync.New(appURL, syncSecret)
+
 	// ── Single-tenant mode ────────────────────────────────────────────────────
 	// Also use single-tenant mode when every tenant points to the same DB as
 	// DATABASE_URL — this is a single-database deployment that uses tenants.json
@@ -109,7 +123,7 @@ func main() {
 		if len(tenants) > 0 {
 			firstTenant = &tenants[0]
 		}
-		runSingleTenant(cfg, opts, logger, *dryRun, priority, firstTenant)
+		runSingleTenant(cfg, opts, logger, *dryRun, priority, firstTenant, jobs)
 		return
 	}
 
@@ -168,6 +182,10 @@ func main() {
 			IsDemo:      tenant.IsDemo,
 		}
 
+		// Create per-source promoter_run jobs before promoting.
+		ctx := context.Background()
+		promoterJobIDs := createPromoterJobs(ctx, stagingDB, jobs, logger)
+
 		start := time.Now()
 		result, err := db.PromoteTenant(stagingDB, tenantDB, tenant.ID, tenantOpts)
 		elapsed := time.Since(start)
@@ -180,6 +198,7 @@ func main() {
 				zap.Error(err),
 				zap.Duration("elapsed", elapsed),
 			)
+			finishPromoterJobs(ctx, jobs, promoterJobIDs, 0, err, logger)
 			totalFailed++
 			continue
 		}
@@ -188,6 +207,7 @@ func main() {
 			logger.Info("tenant up to date — nothing to promote",
 				zap.String("tenant", tenant.ID),
 			)
+			finishPromoterJobs(ctx, jobs, promoterJobIDs, 0, nil, logger)
 			continue
 		}
 
@@ -201,6 +221,7 @@ func main() {
 			zap.Duration("elapsed", elapsed),
 		)
 		totalPromoted += result.Promoted
+		finishPromoterJobs(ctx, jobs, promoterJobIDs, result.Promoted, nil, logger)
 
 		if !*dryRun && tenant.AppURL != "" && tenant.SyncSecret != "" {
 			triggerTypesenseSync(tenant.AppURL, tenant.SyncSecret, logger)
@@ -219,7 +240,7 @@ func main() {
 // Used when no active tenants are configured, or when all tenants share DATABASE_URL.
 // tenant is the first entry from tenants.json (nil when no tenants.json exists) and
 // is used only to read app_url and sync_secret for the Typesense sync trigger.
-func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Logger, dryRun bool, priority []string, tenant *config.TenantConfig) {
+func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Logger, dryRun bool, priority []string, tenant *config.TenantConfig, jobs *jobsync.Client) {
 	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
 	if err != nil {
 		logger.Fatal("db connect failed", zap.Error(err))
@@ -250,15 +271,21 @@ func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Log
 		fmt.Println("[promoter] DRY RUN — no writes will be made.")
 	}
 
+	// Create per-source promoter_run jobs before promoting.
+	ctx := context.Background()
+	promoterJobIDs := createPromoterJobs(ctx, database, jobs, logger)
+
 	start := time.Now()
 	result, err := db.Promote(database, opts)
 	elapsed := time.Since(start)
 
 	if err != nil {
+		finishPromoterJobs(ctx, jobs, promoterJobIDs, 0, err, logger)
 		logger.Fatal("promoter run failed", zap.Error(err), zap.Duration("elapsed", elapsed))
 	}
 
 	if dryRun {
+		finishPromoterJobs(ctx, jobs, promoterJobIDs, result.Promoted, nil, logger)
 		fmt.Printf("\n[promoter] DRY RUN complete — %d program(s) would be promoted (%d cross-source merges).\n",
 			result.Programs, result.Merged)
 		return
@@ -283,12 +310,67 @@ func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Log
 		result.Failed, elapsed.Round(time.Millisecond),
 	)
 
+	finishPromoterJobs(ctx, jobs, promoterJobIDs, result.Promoted, nil, logger)
+
 	if !dryRun && tenant != nil && tenant.AppURL != "" && tenant.SyncSecret != "" {
 		triggerTypesenseSync(tenant.AppURL, tenant.SyncSecret, logger)
 	}
 
 	if result.Failed > 0 {
 		os.Exit(1)
+	}
+}
+
+// createPromoterJobs queries pending staging rows grouped by source and creates
+// one promoter_run job per source in the Ingestion Monitor.
+// Returns a map of source → job ID for later updates.
+func createPromoterJobs(ctx context.Context, database *db.DB, jobs *jobsync.Client, logger *zap.Logger) map[string]string {
+	bySource, err := db.PendingBySource(database)
+	if err != nil {
+		logger.Warn("jobsync: pending-by-source query failed", zap.Error(err))
+		return nil
+	}
+
+	jobIDs := make(map[string]string, len(bySource))
+	now := time.Now()
+	for source, count := range bySource {
+		n := count
+		jobID, err := jobs.CreateJob(ctx, jobsync.CreateJobRequest{
+			Type:      "promoter_run",
+			Source:    source,
+			RowCount:  jobsync.IntPtr(n),
+			StartedAt: jobsync.TimePtr(now),
+		})
+		if err != nil {
+			logger.Warn("jobsync: create promoter_run failed",
+				zap.String("source", source), zap.Error(err))
+			continue
+		}
+		jobIDs[source] = jobID
+	}
+	return jobIDs
+}
+
+// finishPromoterJobs marks all source jobs as completed or failed.
+// When promoted is 0 and err is nil, jobs are still marked completed (nothing to do).
+func finishPromoterJobs(ctx context.Context, jobs *jobsync.Client, jobIDs map[string]string, promoted int, promoteErr error, logger *zap.Logger) {
+	now := time.Now()
+	for source, jobID := range jobIDs {
+		upd := jobsync.UpdateJobRequest{
+			CompletedAt: jobsync.TimePtr(now),
+		}
+		if promoteErr != nil {
+			upd.Status = "failed"
+			upd.ErrorCount = jobsync.IntPtr(1)
+			upd.ErrorMessage = jobsync.StrPtr(promoteErr.Error())
+		} else {
+			upd.Status = "completed"
+			upd.RowsProcessed = jobsync.IntPtr(promoted)
+		}
+		if err := jobs.UpdateJob(ctx, jobID, upd); err != nil {
+			logger.Warn("jobsync: update promoter_run failed",
+				zap.String("source", source), zap.Error(err))
+		}
 	}
 }
 

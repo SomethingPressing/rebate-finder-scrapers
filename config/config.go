@@ -103,6 +103,19 @@ type Config struct {
 	// Env var: OPENAI_API_KEY
 	OpenAIKey string
 
+	// AppURL is the base URL of the Next.js frontend for this deployment.
+	// Used by the scraper and promoter to report job progress to the Ingestion
+	// Monitor via the upload-jobs API.
+	// Falls back to the first active tenant's app_url when set in tenants.json.
+	// Env var: APP_URL
+	AppURL string
+
+	// SyncSecret is the bearer token used to authenticate calls to the Next.js
+	// upload-jobs API.  Must match PROMOTER_SYNC_SECRET in the app's .env.
+	// Falls back to the first active tenant's sync_secret when set in tenants.json.
+	// Env var: PROMOTER_SYNC_SECRET
+	SyncSecret string
+
 	// Debug enables verbose per-item logging: every scraped incentive is logged
 	// at debug level with all fields and a raw response preview.
 	// Equivalent to setting LOG_LEVEL=debug but also enables structured
@@ -166,6 +179,8 @@ func Load() (*Config, error) {
 		ForceURLUpdate:         getBoolEnv("FORCE_URL_UPDATE", false),
 		ForceRefresh:           getBoolEnv("FORCE_REFRESH", false),
 		OpenAIKey:              getEnv("OPENAI_API_KEY", ""),
+		AppURL:                 getEnv("APP_URL", ""),
+		SyncSecret:             getEnv("PROMOTER_SYNC_SECRET", ""),
 	}
 
 	return cfg, nil

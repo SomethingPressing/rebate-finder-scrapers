@@ -38,6 +38,7 @@ import (
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
+	"github.com/incenva/rebate-scraper/internal/jobsync"
 	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/internal/logutil"
@@ -152,6 +153,19 @@ func main() {
 		multiTenant = true
 		logger.Info("loaded scraper config from DB", zap.Int("active_sources", len(tenants)))
 	}
+
+	// ── Job sync client (Ingestion Monitor) ──────────────────────────────────
+	// Prefer env vars; fall back to first active tenant's app_url / sync_secret.
+	appURL, syncSecret := cfg.AppURL, cfg.SyncSecret
+	if (appURL == "" || syncSecret == "") && len(tenants) > 0 {
+		if appURL == "" {
+			appURL = tenants[0].AppURL
+		}
+		if syncSecret == "" {
+			syncSecret = tenants[0].SyncSecret
+		}
+	}
+	jobs := jobsync.New(appURL, syncSecret)
 
 	// ── ZIP data ──────────────────────────────────────────────────────────────
 	stateZIPs, zipErr := zipdata.LoadPath(cfg.ZipCSVPath)
@@ -326,6 +340,23 @@ func main() {
 			}
 		}
 
+		// Register a scraper_run job per source in the Ingestion Monitor.
+		scraperJobIDs := make(map[string]string, len(activeScrapers))
+		now := time.Now()
+		for _, s := range activeScrapers {
+			jobID, err := jobs.CreateJob(ctx, jobsync.CreateJobRequest{
+				Type:      "scraper_run",
+				Source:    s.Name(),
+				StartedAt: jobsync.TimePtr(now),
+			})
+			if err != nil {
+				logger.Warn("jobsync: create scraper_run failed",
+					zap.String("source", s.Name()), zap.Error(err))
+			} else {
+				scraperJobIDs[s.Name()] = jobID
+			}
+		}
+
 		// Start a heartbeat goroutine for each run so stall detection works.
 		heartbeatStops := make(map[string]func(), len(runLogIDs))
 		for src, runLogID := range runLogIDs {
@@ -344,21 +375,39 @@ func main() {
 		// onSourceDone is called by RunListFlush after each scraper finishes.
 		// It stops that source's heartbeat and marks the run complete so the
 		// UI updates immediately instead of waiting for the full batch to end.
-		onSourceDone := func(src string, err error, elapsed time.Duration) {
+		onSourceDone := func(src string, scrapeErr error, elapsed time.Duration) {
 			if stopHB, ok := heartbeatStops[src]; ok {
 				stopHB()
 				delete(heartbeatStops, src) // prevent double-stop in the defer
 			}
 			runLogID := runLogIDs[src]
-			if runLogID == "" {
-				return
+			if runLogID != "" {
+				clientID := sourceClientID[src]
+				status := "success"
+				if scrapeErr != nil {
+					status = "error"
+				}
+				_ = database.MarkRunFinish(clientID, src, runLogID, status, sourceCounts[src], int(elapsed.Seconds()), scrapeErr)
 			}
-			clientID := sourceClientID[src]
-			status := "success"
-			if err != nil {
-				status = "error"
+
+			// Update Ingestion Monitor job.
+			if jobID := scraperJobIDs[src]; jobID != "" {
+				upd := jobsync.UpdateJobRequest{
+					RowsProcessed: jobsync.IntPtr(sourceCounts[src]),
+					CompletedAt:   jobsync.TimePtr(time.Now()),
+				}
+				if scrapeErr != nil {
+					upd.Status = "failed"
+					upd.ErrorCount = jobsync.IntPtr(1)
+					upd.ErrorMessage = jobsync.StrPtr(scrapeErr.Error())
+				} else {
+					upd.Status = "completed"
+				}
+				if err := jobs.UpdateJob(ctx, jobID, upd); err != nil {
+					logger.Warn("jobsync: update scraper_run failed",
+						zap.String("source", src), zap.Error(err))
+				}
 			}
-			_ = database.MarkRunFinish(clientID, src, runLogID, status, sourceCounts[src], int(elapsed.Seconds()), err)
 		}
 
 		// Pre-register every source so that reset + stale detection runs
@@ -515,6 +564,41 @@ func main() {
 			zap.Int64("pending_total", pending),
 			zap.Duration("total_elapsed", time.Since(runStarted)),
 		)
+
+		// Register next scheduled run per source in the Ingestion Monitor.
+		// Only when running in scheduled (non-RUN_ONCE) mode so the Upcoming Jobs
+		// table shows when each source will next be scraped.
+		if !cfg.RunOnce && multiTenant {
+			if freshRows, err := database.LoadActiveSourceConfigs(); err == nil {
+				scheduleIntervals := map[string]time.Duration{
+					"every_6h":  6 * time.Hour,
+					"every_12h": 12 * time.Hour,
+					"daily":     24 * time.Hour,
+					"weekly":    7 * 24 * time.Hour,
+				}
+				for _, s := range activeScrapers {
+					for _, row := range freshRows {
+						if row.Source != s.Name() {
+							continue
+						}
+						d, ok := scheduleIntervals[row.Schedule]
+						if !ok {
+							break
+						}
+						nextRun := time.Now().Add(d)
+						if _, err := jobs.CreateJob(ctx, jobsync.CreateJobRequest{
+							Type:        "scraper_run",
+							Source:      s.Name(),
+							ScheduledAt: jobsync.TimePtr(nextRun),
+						}); err != nil {
+							logger.Warn("jobsync: register next scheduled run failed",
+								zap.String("source", s.Name()), zap.Error(err))
+						}
+						break
+					}
+				}
+			}
+		}
 	}
 
 	// ── One-shot mode ─────────────────────────────────────────────────────────
