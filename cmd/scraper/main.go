@@ -341,7 +341,7 @@ func main() {
 				StartedAt: jobtracker.TimePtr(now),
 			})
 			if err != nil {
-				logger.Warn("jobsync: create scraper_run failed",
+				logger.Warn("jobtracker: create scraper_run failed",
 					zap.String("source", s.Name()), zap.Error(err))
 			} else {
 				scraperJobIDs[s.Name()] = jobID
@@ -395,7 +395,7 @@ func main() {
 					upd.Status = "completed"
 				}
 				if err := jobs.UpdateJob(ctx, jobID, upd); err != nil {
-					logger.Warn("jobsync: update scraper_run failed",
+					logger.Warn("jobtracker: update scraper_run failed",
 						zap.String("source", src), zap.Error(err))
 				}
 			}
@@ -582,7 +582,7 @@ func main() {
 							Source:      s.Name(),
 							ScheduledAt: jobtracker.TimePtr(nextRun),
 						}); err != nil {
-							logger.Warn("jobsync: register next scheduled run failed",
+							logger.Warn("jobtracker: register next scheduled run failed",
 								zap.String("source", s.Name()), zap.Error(err))
 						}
 						break

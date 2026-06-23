@@ -29,7 +29,7 @@ type CreateJobRequest struct {
 // UpdateJobRequest patches an existing upload_jobs row. Only non-nil/non-zero
 // fields are applied.
 type UpdateJobRequest struct {
-	Status        string     // → "UploadJobStatus"
+	Status        string // → "UploadJobStatus"
 	RowsProcessed *int
 	RowsSkipped   *int
 	ErrorCount    *int
@@ -39,6 +39,6 @@ type UpdateJobRequest struct {
 
 // ── Convenience helpers ───────────────────────────────────────────────────────
 
-func IntPtr(v int) *int               { return &v }
-func StrPtr(v string) *string         { return &v }
-func TimePtr(v time.Time) *time.Time  { return &v }
+func IntPtr(v int) *int              { return &v }
+func StrPtr(v string) *string        { return &v }
+func TimePtr(v time.Time) *time.Time { return &v }
