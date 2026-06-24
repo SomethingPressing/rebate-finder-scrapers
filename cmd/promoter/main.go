@@ -266,21 +266,52 @@ func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Log
 		fmt.Println("[promoter] DRY RUN — no writes will be made.")
 	}
 
-	// Create per-source promoter_run jobs before promoting.
 	ctx := context.Background()
+
+	// Always create a top-level promoter_run job so the Ingestion Monitor shows
+	// the run even when there are no pending rows.
+	runJobID, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
+		Type:      "promoter_run",
+		Source:    "all",
+		StartedAt: jobtracker.TimePtr(time.Now().UTC()),
+	})
+	if err != nil {
+		logger.Warn("jobtracker: create top-level promoter_run failed", zap.Error(err))
+	}
+
+	// Also create per-source jobs for granular tracking when there are pending rows.
 	promoterJobIDs := createPromoterJobs(ctx, database, jobs, logger)
 
 	start := time.Now()
 	result, err := db.Promote(database, opts)
 	elapsed := time.Since(start)
 
+	completeTopLevelJob := func(promoteErr error) {
+		if runJobID == "" {
+			return
+		}
+		upd := jobtracker.UpdateJobRequest{CompletedAt: jobtracker.TimePtr(time.Now().UTC())}
+		if promoteErr != nil {
+			upd.Status = "failed"
+			upd.ErrorMessage = jobtracker.StrPtr(promoteErr.Error())
+		} else {
+			upd.Status = "completed"
+			upd.RowsProcessed = jobtracker.IntPtr(result.Promoted)
+		}
+		if err := jobs.UpdateJob(ctx, runJobID, upd); err != nil {
+			logger.Warn("jobtracker: update top-level promoter_run failed", zap.Error(err))
+		}
+	}
+
 	if err != nil {
 		finishPromoterJobs(ctx, jobs, promoterJobIDs, 0, err, logger)
+		completeTopLevelJob(err)
 		logger.Fatal("promoter run failed", zap.Error(err), zap.Duration("elapsed", elapsed))
 	}
 
 	if dryRun {
 		finishPromoterJobs(ctx, jobs, promoterJobIDs, result.Promoted, nil, logger)
+		completeTopLevelJob(nil)
 		fmt.Printf("\n[promoter] DRY RUN complete — %d program(s) would be promoted (%d cross-source merges).\n",
 			result.Programs, result.Merged)
 		return
@@ -306,6 +337,7 @@ func runSingleTenant(cfg *config.Config, opts db.PromoteOptions, logger *zap.Log
 	)
 
 	finishPromoterJobs(ctx, jobs, promoterJobIDs, result.Promoted, nil, logger)
+	completeTopLevelJob(nil)
 
 	if !dryRun && tenant != nil && tenant.AppURL != "" && tenant.SyncSecret != "" {
 		triggerTypesenseSync(tenant.AppURL, tenant.SyncSecret, logger)
