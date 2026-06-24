@@ -54,6 +54,7 @@ func main() {
 	debugFlag          := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
 	forceURLUpdateFlag := flag.Bool("force-url-update", false, "overwrite program_url and application_url on ALL matching staging rows regardless of promotion status (also set via FORCE_URL_UPDATE=true)")
 	forceRefreshFlag   := flag.Bool("force-refresh", false, "re-scrape and reset promotion status to pending so the promoter re-pushes fresh data to live (also set via FORCE_REFRESH=true)")
+	forceRunFlag       := flag.Bool("force-run", false, "bypass per-source schedule check and run all active sources immediately (also set via FORCE_RUN=true)")
 	refreshAgeFlag     := flag.Int("refresh-age", 7, "with --force-refresh: only re-scrape programs not updated within this many days (0 = re-scrape all regardless of age)")
 	limitFlag          := flag.Int("limit", 0, "cap the number of programs fetched per source (0 = no limit); useful for quick smoke tests")
 	flag.Parse()
@@ -83,6 +84,10 @@ func main() {
 	// --force-refresh / FORCE_REFRESH=true resets promotion status after upsert.
 	if *forceRefreshFlag {
 		cfg.ForceRefresh = true
+	}
+	// --force-run / FORCE_RUN=true bypasses per-source schedule check.
+	if *forceRunFlag {
+		cfg.ForceRun = true
 	}
 
 	// refreshAge is the minimum age (in days) a program must have before it is
@@ -279,7 +284,7 @@ func main() {
 			}
 		}
 
-		if multiTenant {
+		if multiTenant && !cfg.ForceRun {
 			if freshRows, err := database.LoadActiveSourceConfigs(); err == nil && freshRows != nil {
 				scheduleMap := make(map[string]db.ScraperSourceConfigRow, len(freshRows))
 				for _, r := range freshRows {
@@ -304,6 +309,8 @@ func main() {
 				}
 				activeScrapers = due
 			}
+		} else if cfg.ForceRun {
+			logger.Info("schedule check skipped (--force-run)")
 		}
 
 		runStarted := time.Now()

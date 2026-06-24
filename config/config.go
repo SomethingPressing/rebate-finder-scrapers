@@ -141,6 +141,13 @@ type Config struct {
 	// Env var: FORCE_REFRESH — CLI flag: --force-refresh — default: false
 	ForceRefresh bool
 
+	// ForceRun, when true, bypasses the per-source schedule check in multi-tenant
+	// mode so all active sources run immediately regardless of their last_run_at
+	// or configured interval. Has no effect in single-tenant mode (schedule checks
+	// never run there). Combine with RUN_ONCE=true for an immediate one-shot run.
+	// Env var: FORCE_RUN — CLI flag: --force-run — default: false
+	ForceRun bool
+
 }
 
 // Load reads configuration from the environment.
@@ -178,6 +185,7 @@ func Load() (*Config, error) {
 		Debug:                  getBoolEnv("DEBUG", false),
 		ForceURLUpdate:         getBoolEnv("FORCE_URL_UPDATE", false),
 		ForceRefresh:           getBoolEnv("FORCE_REFRESH", false),
+		ForceRun:               getBoolEnv("FORCE_RUN", false),
 		OpenAIKey:              getEnv("OPENAI_API_KEY", ""),
 		AppURL:                 getEnv("APP_URL", ""),
 		SyncSecret:             getEnv("PROMOTER_SYNC_SECRET", ""),
