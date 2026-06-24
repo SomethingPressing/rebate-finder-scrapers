@@ -327,7 +327,7 @@ func createPromoterJobs(ctx context.Context, database *db.DB, jobs jobtracker.Tr
 	}
 
 	jobIDs := make(map[string]string, len(bySource))
-	now := time.Now()
+	now := time.Now().UTC()
 	for source, count := range bySource {
 		n := count
 		jobID, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
@@ -349,7 +349,7 @@ func createPromoterJobs(ctx context.Context, database *db.DB, jobs jobtracker.Tr
 // finishPromoterJobs marks all source jobs as completed or failed.
 // When promoted is 0 and err is nil, jobs are still marked completed (nothing to do).
 func finishPromoterJobs(ctx context.Context, jobs jobtracker.Tracker, jobIDs map[string]string, promoted int, promoteErr error, logger *zap.Logger) {
-	now := time.Now()
+	now := time.Now().UTC()
 	for source, jobID := range jobIDs {
 		upd := jobtracker.UpdateJobRequest{
 			CompletedAt: jobtracker.TimePtr(now),

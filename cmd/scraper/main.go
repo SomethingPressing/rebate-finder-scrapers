@@ -340,7 +340,7 @@ func main() {
 
 		// Register a scraper_run job per source in the Ingestion Monitor.
 		scraperJobIDs := make(map[string]string, len(activeScrapers))
-		now := time.Now()
+		now := time.Now().UTC()
 		for _, s := range activeScrapers {
 			jobID, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
 				Type:      "scraper_run",
@@ -392,7 +392,7 @@ func main() {
 			if jobID := scraperJobIDs[src]; jobID != "" {
 				upd := jobtracker.UpdateJobRequest{
 					RowsProcessed: jobtracker.IntPtr(sourceCounts[src]),
-					CompletedAt:   jobtracker.TimePtr(time.Now()),
+					CompletedAt:   jobtracker.TimePtr(time.Now().UTC()),
 				}
 				if scrapeErr != nil {
 					upd.Status = "failed"
@@ -563,37 +563,42 @@ func main() {
 			zap.Duration("total_elapsed", time.Since(runStarted)),
 		)
 
-		// Register next scheduled run per source in the Ingestion Monitor.
-		// Only when running in scheduled (non-RUN_ONCE) mode so the Upcoming Jobs
-		// table shows when each source will next be scraped.
-		if !cfg.RunOnce && multiTenant {
+		// Register next scheduled run per source in the Ingestion Monitor so the
+		// Upcoming Jobs table shows when each source will next be scraped.
+		if !cfg.RunOnce {
+			namedIntervals := map[string]time.Duration{
+				"every_6h":  6 * time.Hour,
+				"every_12h": 12 * time.Hour,
+				"daily":     24 * time.Hour,
+				"weekly":    7 * 24 * time.Hour,
+			}
+			// Default interval: try to parse "@every Xh" from SCRAPER_INTERVAL, fall back to 6h.
+			defaultInterval := parseEveryInterval(cfg.ScraperInterval)
+			if defaultInterval == 0 {
+				defaultInterval = 6 * time.Hour
+			}
+			// Per-source overrides from DB config (if available).
+			sourceInterval := make(map[string]time.Duration)
 			if freshRows, err := database.LoadActiveSourceConfigs(); err == nil {
-				scheduleIntervals := map[string]time.Duration{
-					"every_6h":  6 * time.Hour,
-					"every_12h": 12 * time.Hour,
-					"daily":     24 * time.Hour,
-					"weekly":    7 * 24 * time.Hour,
-				}
-				for _, s := range activeScrapers {
-					for _, row := range freshRows {
-						if row.Source != s.Name() {
-							continue
-						}
-						d, ok := scheduleIntervals[row.Schedule]
-						if !ok {
-							break
-						}
-						nextRun := time.Now().Add(d)
-						if _, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
-							Type:        "scraper_run",
-							Source:      s.Name(),
-							ScheduledAt: jobtracker.TimePtr(nextRun),
-						}); err != nil {
-							logger.Warn("jobtracker: register next scheduled run failed",
-								zap.String("source", s.Name()), zap.Error(err))
-						}
-						break
+				for _, row := range freshRows {
+					if d, ok := namedIntervals[row.Schedule]; ok {
+						sourceInterval[row.Source] = d
 					}
+				}
+			}
+			for _, s := range activeScrapers {
+				d := defaultInterval
+				if sd, ok := sourceInterval[s.Name()]; ok {
+					d = sd
+				}
+				nextRun := time.Now().UTC().Add(d)
+				if _, err := jobs.CreateJob(ctx, jobtracker.CreateJobRequest{
+					Type:        "scraper_run",
+					Source:      s.Name(),
+					ScheduledAt: jobtracker.TimePtr(nextRun),
+				}); err != nil {
+					logger.Warn("jobtracker: register next scheduled run failed",
+						zap.String("source", s.Name()), zap.Error(err))
 				}
 			}
 		}
@@ -872,4 +877,18 @@ func (l zapCronLogger) Info(msg string, keysAndValues ...interface{}) {
 }
 func (l zapCronLogger) Error(err error, msg string, keysAndValues ...interface{}) {
 	l.z.Sugar().Errorw(msg, append(keysAndValues, "error", err)...)
+}
+
+// parseEveryInterval extracts the duration from "@every Xh", "@every 30m", etc.
+// Returns 0 for any other cron expression.
+func parseEveryInterval(s string) time.Duration {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "@every ") {
+		return 0
+	}
+	d, err := time.ParseDuration(strings.TrimPrefix(s, "@every "))
+	if err != nil {
+		return 0
+	}
+	return d
 }
