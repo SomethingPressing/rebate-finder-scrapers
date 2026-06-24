@@ -42,7 +42,7 @@ func (t *DBTracker) CreateJob(ctx context.Context, req CreateJobRequest) (string
 		INSERT INTO public.upload_jobs
 			(id, type, source, row_count, status, started_at, scheduled_at, created_at, updated_at)
 		VALUES
-			(?, ?::"UploadJobType", ?, ?, ?::"UploadJobStatus", ?, ?, NOW(), NOW())`
+			(?, ?::upload_job_type, ?, ?, ?::upload_job_status, ?, ?, NOW(), NOW())`
 
 	err := t.db.WithContext(ctx).Exec(q,
 		id,
@@ -70,7 +70,7 @@ func (t *DBTracker) UpdateJob(ctx context.Context, jobID string, req UpdateJobRe
 	args := []any{}
 
 	if req.Status != "" {
-		sets = append(sets, `status = ?::"UploadJobStatus"`)
+		sets = append(sets, `status = ?::upload_job_status`)
 		args = append(args, req.Status)
 	}
 	if req.RowsProcessed != nil {
