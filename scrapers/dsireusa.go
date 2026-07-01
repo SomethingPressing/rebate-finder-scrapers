@@ -528,6 +528,9 @@ func (s *DSIREScraper) applyDetail(inc *models.Incentive, d dsireDetail) {
 			inc.IncentiveDescription = models.PtrString(merged)
 		}
 	}
+	if d.ProcessNotes != "" {
+		inc.ApplicationProcess = models.PtrString(d.ProcessNotes)
+	}
 }
 
 // ── Amount / format parsing ───────────────────────────────────────────────────
