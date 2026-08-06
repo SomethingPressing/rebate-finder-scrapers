@@ -1,6 +1,8 @@
 package db
 
 import (
+	"fmt"
+
 	"github.com/incenva/rebate-scraper/models"
 	"gorm.io/gorm"
 )
@@ -26,6 +28,29 @@ func runPreMigrations(db *gorm.DB) error {
 	}
 	if err := migrateEnergyStarSourceName(db); err != nil {
 		return err
+	}
+	if err := migrateQueueReadIndex(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateQueueReadIndex creates the partial index behind the v0.8 queue read:
+// "oldest undelivered entries for this tenant, in sequence order". The queue
+// endpoint runs that query on every drain, so it must be an index scan, not a
+// table scan. Partial (undelivered, sequenced rows only) keeps it small —
+// delivered history and never-queued links don't belong in it.
+//
+// CREATE INDEX IF NOT EXISTS makes this idempotent. AutoMigrate has already
+// ensured the columns exist by the time pre-migrations run (see Connect).
+func migrateQueueReadIndex(db *gorm.DB) error {
+	stmt := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS idx_rts_pending_queue
+		ON %s.rebate_tenant_status (tenant_id, seq)
+		WHERE delivered_at IS NULL AND seq IS NOT NULL
+	`, models.ScraperSchema)
+	if err := db.Exec(stmt).Error; err != nil {
+		return fmt.Errorf("create queue read index: %w", err)
 	}
 	return nil
 }

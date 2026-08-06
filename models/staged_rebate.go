@@ -14,6 +14,18 @@ const (
 	PromotionStale     = "stale"     // was promoted but no longer returned by the source API
 )
 
+// ReleaseStatus values for StagedRebate.ReleaseStatus (stg_release_status).
+//
+// The human review gate for the shared-data-bots feed (v0.8): a staging row
+// reaches tenant queues only once it is released. The column defaults to
+// "released" so behaviour is unchanged until the review gate is actually
+// staffed — every new row auto-releases exactly as today.
+const (
+	ReleasePending  = "pending"  // awaiting human review — never enqueued
+	ReleaseReleased = "released" // visible to the feed; may receive a queue sequence
+	ReleaseRejected = "rejected" // reviewed and refused — never enqueued
+)
+
 // StagedRebate is the GORM model for the rebates_staging table.
 //
 // Scrapers never write directly to the live `rebates` table.
@@ -110,6 +122,25 @@ type StagedRebate struct {
 	// Indexed for fast reverse lookups.
 	RebateID *string `gorm:"column:stg_rebate_id;index"`
 
+	// stg_release_status: the v0.8 release gate — "pending" | "released" |
+	// "rejected" (see the Release* constants). Defaults to "released" so
+	// nothing changes until the review gate is staffed.
+	ReleaseStatus string `gorm:"column:stg_release_status;default:'released';index"`
+
+	// content_hash: SHA-256 fingerprint of this row's data fields (see
+	// models.ComputeContentHash). Lets the promoter answer "did this program
+	// actually change?" and lets tenant importers skip no-op writes. Empty for
+	// rows written before the column existed — backfilled by
+	// cmd/migrate 002_backfill_content_hash.
+	ContentHash string `gorm:"column:content_hash"`
+
+	// source_removed_at: set when the source stops returning this program
+	// (a withdrawal). This is deliberately NOT the embedded gorm.Model
+	// DeletedAt column: GORM soft delete hides rows from every query, but a
+	// withdrawn program must stay visible so its removal can still reach
+	// tenant queues.
+	SourceRemovedAt *time.Time `gorm:"column:source_removed_at"`
+
 	// stg_program_hash: SHA-256 of normalize(program_name|utility_company).
 	// Source is deliberately excluded so the same program scraped by multiple
 	// sources produces the same hash and merges (see models.ComputeProgramHash).
@@ -137,7 +168,7 @@ func (StagedRebate) TableName() string { return ScraperSchema + ".rebates_stagin
 
 // FromIncentive converts an Incentive (scraper output) into a StagedRebate.
 func FromIncentive(inc Incentive) StagedRebate {
-	return StagedRebate{
+	sr := StagedRebate{
 		SourceID:             inc.ID,
 		ProgramName:          inc.ProgramName,
 		UtilityCompany:       inc.UtilityCompany,
@@ -181,6 +212,9 @@ func FromIncentive(inc Incentive) StagedRebate {
 		StgRawContentType:    ptrNonEmpty(inc.RawContentType),
 		TenantIDs:            StringSlice(inc.TenantIDs),
 	}
+	// Computed last so it fingerprints exactly what this row will store.
+	sr.ContentHash = ComputeContentHash(&sr)
+	return sr
 }
 
 func ptrNonEmpty(s string) *string {
