@@ -9,7 +9,9 @@ package db
 //  1. Fetch all pending rows from scraper.rebates_staging.
 //  2. Group by stg_program_hash; sort each group by source priority (highest first).
 //  3. Merge each group into one canonical LiveRebate struct.
-//  4. Batch-upsert into public.rebates (ON CONFLICT program_hash → update data cols).
+//  4. Batch-upsert into public.rebates (ON CONFLICT id → update data cols;
+//     program_hash is deliberately NOT the conflict target — see the Phase 4
+//     comment in promote_tenant.go for why).
 //  5. Look up the actual rebate IDs (ON CONFLICT may have kept existing IDs).
 //  6. Bulk-upsert public.zipcodes + public.rebate_zipcodes (ON CONFLICT do nothing).
 //  7. Bulk-update staging rows to stg_promotion_status = 'promoted'.

@@ -77,7 +77,7 @@ const userPromptTpl = `Extract all available incentive program data from the con
   "incentive_description": "complete description, up to 800 chars",
   "incentive_amount": number or null (flat dollar rebate paid to the customer, e.g. 500 — do NOT use for loan amounts or financing ceilings),
   "maximum_amount": number or null (maximum rebate cap or maximum loan amount, e.g. 15000),
-  "percent_value": number or null (rebate as a percentage of equipment/project cost, 0–100, e.g. 25 — do NOT use for loan-to-value ratios or "100% financing" language; only set when the incentive IS a percentage-of-cost rebate or tax credit),
+  "percent_value": number or null (rebate as a percentage of equipment/project cost, 0–100, e.g. 25 — do NOT use for loan-to-value ratios or "100%% financing" language; only set when the incentive IS a percentage-of-cost rebate or tax credit),
   "per_unit_amount": number or null (e.g. 750 for $750/unit or 30 for $30/kW),
   "unit_type": "string or null — e.g. unit, kilowatt, kwh, watt, ton, lamp, port",
   "incentive_format": "one of: dollar_amount, percent, per_unit, tiered, financing, tax_credit, tax_deduction, tax_exemption, narrative — use 'financing' for any loan, on-bill financing, or PACE program; use 'tax_credit'/'tax_deduction'/'tax_exemption' for tax-based incentives; use 'narrative' only when no structured amount exists",
