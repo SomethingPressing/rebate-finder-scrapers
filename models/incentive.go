@@ -28,7 +28,7 @@ import (
 //	IncentiveFormat     → incentive_format      (incentive_format_type enum)
 //	UnitType            → unit_type             (incentive_unit_type enum)
 //	State               → state                 (text)
-//	ProgramHash         → stg_program_hash      (text — SHA-256 of normalize(name|utility|source))
+//	ProgramHash         → stg_program_hash      (text — SHA-256 of normalize(name|utility); source excluded)
 //	ZipCode             → zip_code              (text — staging only; becomes RebateZipcode on promotion)
 //	ServiceTerritory    → service_territory     (text)
 //	AvailableNationwide → available_nationwide  (bool)
@@ -161,8 +161,9 @@ func normalizePart(s string) string {
 // merge into a single rebate.
 //
 // This is the zipcode-agnostic dedup key written to stg_program_hash /
-// rebates.program_hash.  Must match the identical algorithm in the TypeScript
-// promoter (prisma/scripts/promote-staging.ts: computeProgramHash).
+// rebates.program_hash.  Must stay byte-identical to the TypeScript
+// implementation in the rebate-finder repo:
+// prisma/scripts/lib/map-rebate-from-source-raw.ts.
 func ComputeProgramHash(programName, utilityCompany string) string {
 	key := normalizePart(programName) + "|" + normalizePart(utilityCompany)
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))

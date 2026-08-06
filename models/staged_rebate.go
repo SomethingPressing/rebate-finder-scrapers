@@ -110,7 +110,9 @@ type StagedRebate struct {
 	// Indexed for fast reverse lookups.
 	RebateID *string `gorm:"column:stg_rebate_id;index"`
 
-	// stg_program_hash: SHA-256 of normalize(program_name|utility_company|source).
+	// stg_program_hash: SHA-256 of normalize(program_name|utility_company).
+	// Source is deliberately excluded so the same program scraped by multiple
+	// sources produces the same hash and merges (see models.ComputeProgramHash).
 	// Zipcode-agnostic dedup key.  Pre-computed by the scraper so the promoter
 	// can use it directly (and fall back to computing on-the-fly for older rows).
 	ProgramHash string `gorm:"column:stg_program_hash"`
