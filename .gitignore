@@ -27,3 +27,4 @@ tmp/
 .vscode/
 *.swp
 docs/smythos-sas-agents/
+/migrate
