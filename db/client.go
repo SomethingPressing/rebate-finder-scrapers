@@ -69,7 +69,7 @@ func Connect(dsn, logLevel, scraperSchema string) (*DB, error) {
 	// Auto-migrate first — creates the tables if they don't exist yet.
 	// Must run before pre-migrations because pre-migrations ALTER existing tables
 	// and will fail with "relation does not exist" on a fresh database.
-	if err := gormDB.AutoMigrate(&models.StagedRebate{}, &models.PDFScrapeRaw{}, &models.RebateTenantStatus{}); err != nil {
+	if err := gormDB.AutoMigrate(&models.StagedRebate{}, &models.PDFScrapeRaw{}, &models.RebateTenantStatus{}, &models.TenantScope{}); err != nil {
 		return nil, fmt.Errorf("db: automigrate: %w", err)
 	}
 

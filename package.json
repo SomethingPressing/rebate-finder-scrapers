@@ -44,6 +44,7 @@
     "backfill:zipcode-sources": "psql \"$DATABASE_URL\" -f scripts/backfill-zipcode-sources.sql",
     "migrate": "node scripts/migrations/run-migration.mjs",
     "migrate:001_energy_star_name_fix": "node scripts/migrations/run-migration.mjs 001_energy_star_name_fix",
+    "migrate:002_backfill_content_hash": "node scripts/migrations/run-migration.mjs 002_backfill_content_hash",
     "sync:tenants": "node scripts/sync-tenants.mjs"
   },
   "engines": {

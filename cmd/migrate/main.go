@@ -52,7 +52,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: migrate <migration-name> [--dry-run]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Available migrations:")
-		fmt.Fprintln(os.Stderr, "  001_energy_star_name_fix  — clean + re-scrape + re-promote Energy Star with corrected program names")
+		fmt.Fprintln(os.Stderr, "  001_energy_star_name_fix   — clean + re-scrape + re-promote Energy Star with corrected program names")
+		fmt.Fprintln(os.Stderr, "  002_backfill_content_hash  — compute content_hash for staging rows that predate the column (staging DB only)")
 		os.Exit(1)
 	}
 
@@ -74,6 +75,10 @@ func main() {
 	switch flag.Arg(0) {
 	case "001_energy_star_name_fix":
 		if err := runEnergyStarNameFix(cfg, tenants, logger, *dry); err != nil {
+			log.Fatalf("migration failed: %v", err)
+		}
+	case "002_backfill_content_hash":
+		if err := runBackfillContentHash(cfg, logger, *dry); err != nil {
 			log.Fatalf("migration failed: %v", err)
 		}
 	default:

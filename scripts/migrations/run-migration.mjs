@@ -15,6 +15,9 @@
  *                           live DBs, then re-scrapes and re-promotes with
  *                           corrected program names (no fabricated " Rebate"
  *                           suffix). Run this after deploying the scraper fix.
+ *   002_backfill_content_hash — Computes content_hash for staging rows written
+ *                           before the column existed. Staging DB only,
+ *                           idempotent (v0.8 Feature 1).
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
