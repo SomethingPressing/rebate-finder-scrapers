@@ -1,6 +1,32 @@
 // Command promoter moves pending rows from scraper.rebates_staging into the
 // live public.rebates table.
 //
+// # DEPRECATED — superseded by the shared data bots architecture (v0.8)
+//
+// This command is the direct-write path the v0.8 architecture exists to
+// remove. It holds a database password for every tenant it writes to, and two
+// copies of it running at once corrupt each other silently. Its work has been
+// split in two, and BOTH replacements already exist:
+//
+//	what it did                     what does it now
+//	------------------------------  --------------------------------------
+//	merge staged rows by hash,      rebate-finder-broker: `pnpm promote`
+//	decide which tenants get what,  (the promoter pass — merge, match,
+//	assign delivery order            queue, shadow-first)
+//
+//	write into a tenant's           rebate-finder: `pnpm feed:sync`
+//	public.rebates, zipcodes,       (the tenant drains its own queue and
+//	categories                       imports it — the only writer to its
+//	                                 own database)
+//
+// It is still here because it is still the live path: nothing has cut over
+// yet. Deleting it before the last customer is migrated would stop collection
+// reaching anybody. It is removed in Feature 7, after cutover, per
+// docs/plans/v0.8-shared-data-bots.md.
+//
+// Do not add features to this command. Anything it needs to do differently
+// belongs in one of the two replacements above.
+//
 // # Modes
 //
 // Single-tenant (no active tenants in TENANTS_FILE):
@@ -58,6 +84,14 @@ func main() {
 
 	logger := logutil.New(cfg.LogLevel, cfg.LogFormat)
 	defer logger.Sync() //nolint:errcheck
+
+	// Deprecation notice — see the package comment. This runs on every
+	// invocation rather than once, because the point is that anybody still
+	// reaching for this command learns what replaced it.
+	logger.Warn("DEPRECATED: cmd/promoter is the direct-write path the v0.8 shared-data-bots " +
+		"architecture replaces. Routing is now rebate-finder-broker `pnpm promote`; writing into a " +
+		"tenant's database is now that tenant's own `pnpm feed:sync`. This command is retained only " +
+		"until the last customer has cut over, and is removed in v0.8 Feature 7.")
 
 	priority := cfg.PromoterSourcePriority
 	if len(priority) == 0 {
