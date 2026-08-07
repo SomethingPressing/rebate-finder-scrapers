@@ -37,6 +37,7 @@ import (
 
 	"github.com/incenva/rebate-scraper/config"
 	"github.com/incenva/rebate-scraper/db"
+	"github.com/incenva/rebate-scraper/internal/brokerlog"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/internal/jobtracker"
 	"github.com/incenva/rebate-scraper/internal/segmentinfer"
@@ -136,6 +137,31 @@ func main() {
 		logger.Fatal("db ping failed", zap.Error(err))
 	}
 	logger.Info("database connected and staging table migrated")
+
+	// ── Shared event log ──────────────────────────────────────────────────────
+	// Ships fleet events to broker.system_events, which lives in this same
+	// staging database, so an administrator reading the broker console sees
+	// collection and delivery as one story rather than two.
+	//
+	// Additive to zap, never a replacement: zap remains the operator's log and
+	// is the only thing guaranteed to be there. This is best-effort — if the
+	// event table is missing, or the writes fail, `blog` is a nil no-op and
+	// nothing below changes behaviour. It carries no tenant identity by
+	// construction; collectors stay tenant-blind.
+	blog := brokerlog.New(database.GORM(), logger, brokerlog.Options{})
+	defer blog.Close()
+
+	hostname, _ := os.Hostname()
+	blog.Info("collector.started", "collector process started", map[string]any{
+		"run_once":        cfg.RunOnce,
+		"source_filter":   source,
+		"multi_tenant":    multiTenant,
+		"proxy_active":    proxyActive,
+		"scraper_version": cfg.ScraperVersion,
+		"host":            hostname,
+		// Deliberately nothing derived from DATABASE_URL, PROXY_URL or
+		// OPENAI_API_KEY: this table is readable by every administrator.
+	})
 
 	// ── Clean up any stalled runs from a previous crash / kill ───────────────
 	if err := database.ResetStalledRuns(); err != nil {
@@ -393,6 +419,15 @@ func main() {
 			} else {
 				fleetRunIDs[s.Name()] = id
 			}
+			// The same moment in the shared event log. fleet_runs answers "how
+			// is this source doing"; the event log is where it sits next to
+			// what the broker and the tenant sites were doing at the time.
+			blog.Info("collector.run-started", "collector started a source run", map[string]any{
+				"source":           s.Name(),
+				"triggered_by":     "schedule",
+				"scraper_version":  cfg.ScraperVersion,
+				"envelope_version": envVersion,
+			})
 		}
 
 		// Register a scraper_run job per source in the Ingestion Monitor.
@@ -452,6 +487,24 @@ func main() {
 				if err := database.FinishFleetRun(fleetID, fleetStatus, sourceCounts[src], scrapeErr); err != nil {
 					logger.Warn("fleet telemetry: could not record run finish", zap.String("source", src), zap.Error(err))
 				}
+			}
+
+			// A failed source is the line somebody actually goes looking for,
+			// so it gets its own action rather than being a status field on
+			// the finish event.
+			if scrapeErr != nil {
+				blog.Error("collector.source-error", "collector source run failed", map[string]any{
+					"source":    src,
+					"programs":  sourceCounts[src],
+					"elapsed_s": int(elapsed.Seconds()),
+					"error":     scrapeErr.Error(),
+				})
+			} else {
+				blog.Info("collector.run-finished", "collector finished a source run", map[string]any{
+					"source":    src,
+					"programs":  sourceCounts[src],
+					"elapsed_s": int(elapsed.Seconds()),
+				})
 			}
 
 			// Update Ingestion Monitor job.
@@ -629,6 +682,16 @@ func main() {
 			zap.Duration("total_elapsed", time.Since(runStarted)),
 		)
 
+		blog.Info("collector.pass-finished", "collector finished a full pass", map[string]any{
+			"sources":        len(activeScrapers),
+			"total_upserted": totalUpserted,
+			"pending_total":  pending,
+			"elapsed_s":      int(time.Since(runStarted).Seconds()),
+		})
+		// The pass is over and the next thing may be a long idle wait, so push
+		// what is buffered out now rather than leaving it for the timer.
+		blog.Flush()
+
 		// Register next scheduled run per source in the Ingestion Monitor so the
 		// Upcoming Jobs table shows when each source will next be scraped.
 		if !cfg.RunOnce {
@@ -674,6 +737,10 @@ func main() {
 	if cfg.RunOnce {
 		runScrapers()
 		logger.Info("RUN_ONCE=true — exiting after single run")
+		// os.Exit skips every deferred Close, so the event writer is shut down
+		// by hand here — otherwise a one-shot run loses its last batch.
+		blog.Info("collector.stopped", "collector exiting after a single run", collectorStopData(blog))
+		blog.Close()
 		os.Exit(0)
 	}
 
@@ -781,6 +848,25 @@ func main() {
 	ctx := c.Stop()
 	<-ctx.Done()
 	logger.Info("cron stopped cleanly")
+
+	blog.Info("collector.stopped", "collector shut down cleanly", collectorStopData(blog))
+	// Explicit, ahead of the deferred Close, so the stop event is in the batch
+	// this flushes rather than racing the process exit.
+	blog.Flush()
+}
+
+// collectorStopData reports what the event writer itself managed to do. A
+// non-zero dropped or failed count is the only way anyone would learn that the
+// shared log is an incomplete record of this run — which is exactly the kind
+// of thing best-effort logging must say out loud rather than hide.
+func collectorStopData(blog *brokerlog.Writer) map[string]any {
+	stats := blog.Stats()
+	return map[string]any{
+		"events_written": stats.Written,
+		"events_dropped": stats.Dropped,
+		"events_failed":  stats.Failed,
+		"batches":        stats.Batches,
+	}
 }
 
 // runRehydrate runs each scraper's RehydrateStream (if implemented), falling
