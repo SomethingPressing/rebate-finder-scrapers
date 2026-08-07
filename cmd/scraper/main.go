@@ -372,10 +372,26 @@ func main() {
 
 		// Record schedule-triggered run start in DB for each active source.
 		runLogIDs := make(map[string]string)
+		// Fleet telemetry (v0.8 F4): the same events recorded WITHOUT a tenant
+		// identity. Under shared collection a run is not performed for any one
+		// tenant, so "your last run" stops being answerable and "when did the
+		// fleet last collect this source?" replaces it.
+		fleetRunIDs := make(map[string]uint)
+		var envVersion *int64
+		if envelope != nil {
+			v := envelope.Version
+			envVersion = &v
+		}
 		for _, s := range activeScrapers {
 			clientIDForSource := sourceClientID[s.Name()]
 			if id, err := database.MarkRunStart(clientIDForSource, s.Name(), "schedule"); err == nil {
 				runLogIDs[s.Name()] = id
+			}
+			// Telemetry must never be able to fail a collection run.
+			if id, err := database.StartFleetRun(s.Name(), "schedule", cfg.ScraperVersion, envVersion); err != nil {
+				logger.Warn("fleet telemetry: could not record run start", zap.String("source", s.Name()), zap.Error(err))
+			} else {
+				fleetRunIDs[s.Name()] = id
 			}
 		}
 
@@ -427,6 +443,15 @@ func main() {
 					status = "error"
 				}
 				_ = database.MarkRunFinish(clientID, src, runLogID, status, sourceCounts[src], int(elapsed.Seconds()), scrapeErr)
+			}
+			if fleetID, ok := fleetRunIDs[src]; ok {
+				fleetStatus := models.FleetRunSuccess
+				if scrapeErr != nil {
+					fleetStatus = models.FleetRunError
+				}
+				if err := database.FinishFleetRun(fleetID, fleetStatus, sourceCounts[src], scrapeErr); err != nil {
+					logger.Warn("fleet telemetry: could not record run finish", zap.String("source", src), zap.Error(err))
+				}
 			}
 
 			// Update Ingestion Monitor job.
