@@ -769,6 +769,13 @@ func mergePromoterGroup(rows []models.StagedRebate) promoterMerged {
 		contactEmail:         pickText(rows, func(r models.StagedRebate) *string { return r.ContactEmail }),
 		contactPhone:         pickText(rows, func(r models.StagedRebate) *string { return r.ContactPhone }),
 		imageURL:             pickText(rows, func(r models.StagedRebate) *string { return r.ImageURL }),
+		// These two were declared on promoterMerged and read when building the
+		// LiveRebate, but never merged here — so every promotion wrote NULL and
+		// discarded what the scrapers had collected (2,978 and 3,007 populated
+		// staging rows at the time this was found). Caught by the v0.8 merge
+		// parity work; see docs/plans/v0.8-shared-data-bots.md Feature 2.
+		contractorRequired:  pickBool(rows, func(r models.StagedRebate) *bool { return r.ContractorRequired }),
+		energyAuditRequired: pickBool(rows, func(r models.StagedRebate) *bool { return r.EnergyAuditRequired }),
 
 		// Arrays — union across all sources, dedup case-insensitively.
 		categoryTag: unionStrings(rows, func(r models.StagedRebate) []string { return r.CategoryTag }),
