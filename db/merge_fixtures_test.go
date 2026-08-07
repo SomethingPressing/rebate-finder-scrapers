@@ -67,6 +67,8 @@ type fixtureRow struct {
 	ContactPhone         *string  `json:"contact_phone"`
 	ImageURL             *string  `json:"image_url"`
 	ImageURLs            []string `json:"image_urls"`
+	ContractorRequired   *bool    `json:"contractor_required"`
+	EnergyAuditRequired  *bool    `json:"energy_audit_required"`
 	RateTiers            []models.RateTier `json:"rate_tiers"`
 }
 
@@ -115,6 +117,8 @@ func (fr fixtureRow) toStagedRebate() models.StagedRebate {
 		ContactPhone:         fr.ContactPhone,
 		ImageURL:             fr.ImageURL,
 		ImageURLs:            models.StringSlice(fr.ImageURLs),
+		ContractorRequired:   fr.ContractorRequired,
+		EnergyAuditRequired:  fr.EnergyAuditRequired,
 		RateTiers:            models.RateTiersJSON(fr.RateTiers),
 	}
 }
@@ -191,12 +195,78 @@ func computeExpected(c fixtureCase) map[string]interface{} {
 		"contact_email":         strOrNil(m.contactEmail),
 		"contact_phone":         strOrNil(m.contactPhone),
 		"image_url":             strOrNil(m.imageURL),
+		"contractor_required":   boolOrNil(m.contractorRequired),
+		"energy_audit_required": boolOrNil(m.energyAuditRequired),
 		"category_tag":          arr(m.categoryTag),
 		"segment":               arr(segment),
 		"image_urls":            arr(m.imageURLs),
 		"sources":               arr(m.sources),
 		"rate_tiers":            tiers,
 		"zips":                  arr(zips),
+	}
+}
+
+// fixtureKeyByField maps every field of promoterMerged to the key it is
+// serialized under. TestFixtureCoversEveryMergedField asserts this map stays
+// exhaustive, which is the guard that matters: without it, a field added to
+// promoterMerged is simply absent from the fixtures, and the TypeScript port
+// in rebate-finder-broker can silently fail to implement it while every
+// parity test still passes. That is exactly how contractor_required and
+// energy_audit_required went missing.
+var fixtureKeyByField = map[string]string{
+	"programName":          "program_name",
+	"utilityCompany":       "utility_company",
+	"incentiveDescription": "incentive_description",
+	"incentiveAmount":      "incentive_amount",
+	"maximumAmount":        "maximum_amount",
+	"percentValue":         "percent_value",
+	"perUnitAmount":        "per_unit_amount",
+	"incentiveFormat":      "incentive_format",
+	"unitType":             "unit_type",
+	"state":                "state",
+	"serviceTerritory":     "service_territory",
+	"availableNationwide":  "available_nationwide",
+	"categoryTag":          "category_tag",
+	"segment":              "segment",
+	"customerType":         "customer_type",
+	"administrator":        "administrator",
+	"implementingSector":   "implementing_sector",
+	"sources":              "sources",
+	"startDate":            "start_date",
+	"endDate":              "end_date",
+	"whileFundsLast":       "while_funds_last",
+	"applicationURL":       "application_url",
+	"applicationProcess":   "application_process",
+	"programURL":           "program_url",
+	"sourceURL":            "source_url",
+	"contactEmail":         "contact_email",
+	"contactPhone":         "contact_phone",
+	"imageURL":             "image_url",
+	"imageURLs":            "image_urls",
+	"contractorRequired":   "contractor_required",
+	"energyAuditRequired":  "energy_audit_required",
+	"rateTiers":            "rate_tiers",
+}
+
+// TestFixtureCoversEveryMergedField fails when promoterMerged gains a field
+// that the fixtures do not carry. Add the field to fixtureKeyByField AND to
+// the map returned by computeExpected, then regenerate the fixtures and
+// implement it in the broker's TypeScript port.
+func TestFixtureCoversEveryMergedField(t *testing.T) {
+	typ := reflect.TypeOf(promoterMerged{})
+	serialized := computeExpected(fixtureCases()[0])
+
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i).Name
+		key, mapped := fixtureKeyByField[field]
+		if !mapped {
+			t.Errorf("promoterMerged.%s is not in fixtureKeyByField — the fixtures (and therefore the "+
+				"broker's TypeScript merge) would silently ignore it", field)
+			continue
+		}
+		if _, present := serialized[key]; !present {
+			t.Errorf("promoterMerged.%s maps to fixture key %q, but computeExpected does not emit it", field, key)
+		}
 	}
 }
 
@@ -299,6 +369,17 @@ func fixtureCases() []fixtureCase {
 			Rows: []fixtureRow{
 				{Source: "rewiring_america", ProgramName: "P", UtilityCompany: "U"},
 				{Source: "dsireusa", ProgramName: "P", UtilityCompany: "U", WhileFundsLast: b(false), AvailableNationwide: b(true)},
+			},
+		},
+		{
+			// contractor_required / energy_audit_required were merged by Go but
+			// missing from these fixtures, so the broker's port dropped them
+			// unnoticed. This case pins both, including false-beats-nil.
+			Name:     "requirement flags merge like any other bool",
+			Priority: DefaultSourcePriority,
+			Rows: []fixtureRow{
+				{Source: "rewiring_america", ProgramName: "P", UtilityCompany: "U", ContractorRequired: b(false)},
+				{Source: "dsireusa", ProgramName: "P", UtilityCompany: "U", ContractorRequired: b(true), EnergyAuditRequired: b(true)},
 			},
 		},
 		{
