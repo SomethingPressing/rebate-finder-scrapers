@@ -159,6 +159,26 @@ func main() {
 		logger.Info("loaded scraper config from DB", zap.Int("active_sources", len(tenants)))
 	}
 
+	// ── Demand envelope: what the fleet is actually asked to collect ─────────
+	// v0.8 Feature 4. The envelope is the compiled union of every tenant's
+	// declared scope, published by the broker with NO tenant identities in it.
+	// It takes precedence over both the DB config and tenants.json, because it
+	// is the only one of the three that reflects every tenant rather than the
+	// one whose database this collector happens to be pointed at.
+	//
+	// Absent envelope = nothing published yet (or pre-broker deployment), in
+	// which case we keep the previous behaviour rather than collecting nothing.
+	envelope, envErr := config.LoadEnvelope(database.GORM())
+	if envErr != nil {
+		logger.Warn("could not read the demand envelope, falling back to local config", zap.Error(envErr))
+	} else if envelope != nil {
+		logger.Info("loaded demand envelope",
+			zap.Int64("version", envelope.Version),
+			zap.Strings("sources", envelope.SourceNames()),
+			zap.Strings("unsubscribed", envelope.UnsubscribedSources),
+		)
+	}
+
 	// ── Job tracker (Ingestion Monitor) ───────────────────────────────────────
 	// Writes scraper_run jobs directly to public.upload_jobs on the staging DB.
 	jobs := jobtracker.NewDB(database.GORM())
@@ -243,6 +263,27 @@ func main() {
 	var activeScrapers []scrapers.Scraper
 	if source != "" {
 		activeScrapers = []scrapers.Scraper{reg.Get(source)}
+	} else if envelope != nil {
+		// The envelope decides. A source nobody subscribes to is not collected
+		// at all — that is the point of publishing demand rather than baking
+		// it in.
+		for _, name := range envelope.SourceNames() {
+			if s := reg.Get(name); s != nil {
+				activeScrapers = append(activeScrapers, s)
+			} else {
+				logger.Warn("envelope asks for a source this collector does not implement",
+					zap.String("source", name))
+			}
+		}
+		names := make([]string, len(activeScrapers))
+		for i, s := range activeScrapers {
+			names[i] = s.Name()
+		}
+		logger.Info("envelope-selected scrapers",
+			zap.Int64("envelope_version", envelope.Version),
+			zap.Strings("sources", names),
+			zap.Strings("standing_down", envelope.UnsubscribedSources),
+		)
 	} else if multiTenant {
 		if allowed := config.ActiveSources(tenants); allowed != nil {
 			for _, name := range allowed {
