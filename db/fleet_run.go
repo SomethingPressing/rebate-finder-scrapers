@@ -68,13 +68,25 @@ func (d *DB) FinishFleetRun(runID uint, status string, programCount int, runErr 
 
 // ResetStalledFleetRuns closes out runs left "running" by a crashed process,
 // so a killed collector does not look like it is still working forever.
+//
+// A PM2 restart, an OOM kill or a SIGKILL all skip FinishFleetRun, leaving the
+// row "running" with no finished_at. Nothing else ever reaps it, so the
+// broker's Health page reports that collector as "collecting now" indefinitely
+// — confidently wrong, which is worse than saying nothing.
+//
+// finished_at is set as well as status. Without it the row reads as a run that
+// never reported, and the health page says "has never reported a run — is this
+// collector deployed?", which sends somebody to check a deployment when the
+// real story is that a run started and died.
 func (d *DB) ResetStalledFleetRuns(olderThan time.Duration) (int64, error) {
 	cutoff := time.Now().UTC().Add(-olderThan)
+	now := time.Now().UTC()
 	res := d.gorm.Model(&models.FleetRun{}).
 		Where("status = ? AND started_at < ?", models.FleetRunRunning, cutoff).
 		Updates(map[string]interface{}{
-			"status": models.FleetRunError,
-			"error":  "run did not finish — collector stopped or crashed",
+			"status":      models.FleetRunError,
+			"finished_at": now,
+			"error":       "run did not finish — the collector stopped or crashed before reporting",
 		})
 	return res.RowsAffected, res.Error
 }

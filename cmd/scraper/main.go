@@ -40,9 +40,9 @@ import (
 	"github.com/incenva/rebate-scraper/internal/brokerlog"
 	"github.com/incenva/rebate-scraper/internal/categoryinfer"
 	"github.com/incenva/rebate-scraper/internal/jobtracker"
-	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/internal/llm"
 	"github.com/incenva/rebate-scraper/internal/logutil"
+	"github.com/incenva/rebate-scraper/internal/segmentinfer"
 	"github.com/incenva/rebate-scraper/internal/zipdata"
 	"github.com/incenva/rebate-scraper/models"
 	"github.com/incenva/rebate-scraper/scrapers"
@@ -50,14 +50,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// stalledRunCutoff is how long a "running" row may sit untouched before it is
+// treated as abandoned. Comfortably longer than the slowest real collection so
+// a genuinely long run is never reaped out from under itself.
+const stalledRunCutoff = 6 * time.Hour
+
 func main() {
-	sourceFlag         := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
-	debugFlag          := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
+	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
+	debugFlag := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
 	forceURLUpdateFlag := flag.Bool("force-url-update", false, "overwrite program_url and application_url on ALL matching staging rows regardless of promotion status (also set via FORCE_URL_UPDATE=true)")
-	forceRefreshFlag   := flag.Bool("force-refresh", false, "re-scrape and reset promotion status to pending so the promoter re-pushes fresh data to live (also set via FORCE_REFRESH=true)")
-	forceRunFlag       := flag.Bool("force-run", false, "bypass per-source schedule check and run all active sources immediately (also set via FORCE_RUN=true)")
-	refreshAgeFlag     := flag.Int("refresh-age", 7, "with --force-refresh: only re-scrape programs not updated within this many days (0 = re-scrape all regardless of age)")
-	limitFlag          := flag.Int("limit", 0, "cap the number of programs fetched per source (0 = no limit); useful for quick smoke tests")
+	forceRefreshFlag := flag.Bool("force-refresh", false, "re-scrape and reset promotion status to pending so the promoter re-pushes fresh data to live (also set via FORCE_REFRESH=true)")
+	forceRunFlag := flag.Bool("force-run", false, "bypass per-source schedule check and run all active sources immediately (also set via FORCE_RUN=true)")
+	refreshAgeFlag := flag.Int("refresh-age", 7, "with --force-refresh: only re-scrape programs not updated within this many days (0 = re-scrape all regardless of age)")
+	limitFlag := flag.Int("limit", 0, "cap the number of programs fetched per source (0 = no limit); useful for quick smoke tests")
 	flag.Parse()
 
 	// ── Config ────────────────────────────────────────────────────────────────
@@ -183,6 +188,24 @@ func main() {
 		tenants = dbTenants
 		multiTenant = true
 		logger.Info("loaded scraper config from DB", zap.Int("active_sources", len(tenants)))
+	}
+
+	// ── Reap telemetry left behind by a process that did not exit cleanly ────
+	// FinishFleetRun is skipped by a SIGKILL, an OOM kill or a PM2 restart, and
+	// nothing else closes those rows out. Left alone they make the broker's
+	// Health page report a dead collector as "collecting now" forever. Doing
+	// this at startup is enough: a collector that is gone for good was already
+	// not reporting, and the age cutoff keeps a genuinely long run safe.
+	//
+	// Best-effort, like all telemetry here: a sweep that fails must never stop
+	// a collection run.
+	if n, err := database.ResetStalledFleetRuns(stalledRunCutoff); err != nil {
+		logger.Warn("could not reap stalled fleet runs", zap.Error(err))
+	} else if n > 0 {
+		logger.Info("reaped fleet runs left behind by a stopped collector",
+			zap.Int64("count", n),
+			zap.Duration("older_than", stalledRunCutoff),
+		)
 	}
 
 	// ── Demand envelope: what the fleet is actually asked to collect ─────────
@@ -622,10 +645,10 @@ func main() {
 		}
 
 		if cfg.ForceRefresh {
-				runRehydrate(ctx, activeScrapers, database, logger, flush, refreshAge)
-			} else {
-				scrapers.RunListFlush(ctx, activeScrapers, logger, flush, onSourceDone)
-			}
+			runRehydrate(ctx, activeScrapers, database, logger, flush, refreshAge)
+		} else {
+			scrapers.RunListFlush(ctx, activeScrapers, logger, flush, onSourceDone)
+		}
 
 		// Post-run: for sources that produced 0 items (scraper failed or returned
 		// nothing), explicitly reset their promoted rows to pending so they are
