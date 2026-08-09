@@ -55,6 +55,48 @@ import (
 // a genuinely long run is never reaped out from under itself.
 const stalledRunCutoff = 6 * time.Hour
 
+// dbConnectMaxWait bounds the retry loop. Long enough to outlast a database
+// that is still recovering, short enough that a genuinely wrong DATABASE_URL
+// still fails loudly instead of hanging forever.
+const dbConnectMaxWait = 2 * time.Minute
+
+// connectWithRetry dials the staging database, backing off between attempts.
+//
+// Every failure is retried, not just the ones that look transient: telling a
+// "still starting" error from a "wrong password" error by matching on strings
+// is fragile, and the bounded wait means the wrong-password case still exits —
+// just two minutes later, with every attempt logged.
+func connectWithRetry(cfg *config.Config, logger *zap.Logger) (*db.DB, error) {
+	deadline := time.Now().Add(dbConnectMaxWait)
+	delay := 500 * time.Millisecond
+	attempt := 0
+
+	for {
+		attempt++
+		database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
+		if err == nil {
+			if attempt > 1 {
+				logger.Info("database reached after retrying",
+					zap.Int("attempts", attempt),
+				)
+			}
+			return database, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		logger.Warn("database not ready, retrying",
+			zap.Int("attempt", attempt),
+			zap.Duration("retry_in", delay),
+			zap.Error(err),
+		)
+		time.Sleep(delay)
+		if delay < 10*time.Second {
+			delay *= 2
+		}
+	}
+}
+
 func main() {
 	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
 	debugFlag := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
@@ -132,9 +174,20 @@ func main() {
 	)
 
 	// ── Database (staging DB) ─────────────────────────────────────────────────
-	database, err := db.Connect(cfg.DatabaseURL, cfg.LogLevel, cfg.ScraperDBSchema)
+	// Retried, not fatal on the first failure. A collector and its database
+	// usually start together — after a reboot, a PM2 resurrect, a Postgres
+	// upgrade — and for the first few seconds Postgres answers
+	// "the database system is not yet accepting connections" (SQLSTATE 57P03),
+	// which means "try again shortly", not "give up".
+	//
+	// Exiting on that turns a normal boot into a crash loop: the process dies,
+	// the supervisor restarts it instantly, and it spins several times a second
+	// until the database happens to be ready. That is exactly what produced 247
+	// restarts inside one minute here. Backing off costs a few seconds of
+	// startup and removes the loop entirely.
+	database, err := connectWithRetry(cfg, logger)
 	if err != nil {
-		logger.Fatal("db connect failed", zap.Error(err))
+		logger.Fatal("db connect failed", zap.Error(err), zap.Duration("gave_up_after", dbConnectMaxWait))
 	}
 	defer database.Close() //nolint:errcheck
 
@@ -155,6 +208,20 @@ func main() {
 	// construction; collectors stay tenant-blind.
 	blog := brokerlog.New(database.GORM(), logger, brokerlog.Options{})
 	defer blog.Close()
+
+	// Liveness. Beats for as long as this process is alive, independently of
+	// whether a scrape is running — which is the whole point: between two
+	// six-hourly runs an idle collector and a dead one are otherwise
+	// indistinguishable for six hours.
+	//
+	// Identified by the source filter when there is one, so a split fleet shows
+	// one row per collector; "all-sources" is the single-process case.
+	heartID := source
+	if heartID == "" {
+		heartID = "all-sources"
+	}
+	heart := brokerlog.StartHeart(database.GORM(), logger, heartID)
+	defer heart.Stop()
 
 	hostname, _ := os.Hostname()
 	blog.Info("collector.started", "collector process started", map[string]any{
@@ -764,6 +831,9 @@ func main() {
 		// by hand here — otherwise a one-shot run loses its last batch.
 		blog.Info("collector.stopped", "collector exiting after a single run", collectorStopData(blog))
 		blog.Close()
+		// os.Exit skips defers, so the goodbye is recorded by hand — otherwise a
+		// one-shot collector looks like it crashed until its beat times out.
+		heart.Stop()
 		os.Exit(0)
 	}
 
