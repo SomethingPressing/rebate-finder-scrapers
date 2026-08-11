@@ -1,0 +1,39 @@
+# Keep the build context to what the build actually needs.
+#
+# Without this, `COPY . .` uploads the entire working tree to Fly's remote
+# builder on every deploy — .git alone is 136 MB of history that the compiler
+# has no use for. It does not reach the final image (that is COPY --from=builder,
+# a binary and one config file), but it is transferred every time and lives in
+# the builder layer.
+#
+# The second reason matters more than the first. A build context is a copy of
+# your repository handed to a remote machine: .git carries every version of
+# every file ever committed, including anything added and later removed.
+
+.git
+.gitignore
+.github
+
+# Local configuration. .env is the one that must never be in a build context —
+# an image is far more widely readable than a developer's laptop.
+.env
+.env.*
+*.local
+
+# Build output and caches — rebuilt inside the image anyway.
+bin/
+dist/
+tmp/
+*.test
+*.out
+coverage.*
+
+# Editor and OS noise.
+.vscode/
+.idea/
+.DS_Store
+
+# Documentation and scratch work, none of which compiles.
+*.md
+docs/
+scratchpad/
