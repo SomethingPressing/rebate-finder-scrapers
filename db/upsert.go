@@ -23,14 +23,16 @@ const upsertBatchSize = 500
 // UpsertToStaging writes all items into the rebates_staging table.
 //
 // Normal scrape (forceRefresh=false):
-//   On conflict the lifecycle columns (stg_promotion_status, stg_promoted_at,
-//   stg_rebate_id) are excluded from the update so a re-scrape never resets
-//   promotion state set by the promoter or an admin.
+//
+//	On conflict the lifecycle columns (stg_promotion_status, stg_promoted_at,
+//	stg_rebate_id) are excluded from the update so a re-scrape never resets
+//	promotion state set by the promoter or an admin.
 //
 // Force-refresh (forceRefresh=true):
-//   stg_promotion_status and stg_promoted_at are included in the conflict
-//   update and reset to 'pending' / NULL atomically inside the upsert — no
-//   separate SQL call needed, no race condition possible.
+//
+//	stg_promotion_status and stg_promoted_at are included in the conflict
+//	update and reset to 'pending' / NULL atomically inside the upsert — no
+//	separate SQL call needed, no race condition possible.
 //
 // When forceURLUpdate is true, an additional UPDATE overwrites program_url and
 // application_url regardless of promotion status (lifecycle cols untouched).
@@ -78,7 +80,14 @@ func UpsertToStaging(d *DB, items []models.Incentive, forceURLUpdate bool, force
 		"program_name", "utility_company", "incentive_description",
 		"incentive_amount", "maximum_amount", "percent_value", "per_unit_amount",
 		"incentive_format", "unit_type", "state", "zip_code", "zip_codes", "service_territory",
-		"available_nationwide", "category_tag", "segment", "portfolio",
+		// No "portfolio": StagedRebate has no such field, so GORM never creates
+		// the column and never writes it. Listing it here put excluded.portfolio
+		// in the ON CONFLICT clause and every upsert failed with 42703 — but only
+		// on a database GORM built from the model. Older databases carry the
+		// column from an earlier hand-applied change, which is why this survived
+		// so long: it works everywhere the schema was inherited and nowhere it
+		// was created.
+		"available_nationwide", "category_tag", "segment",
 		"customer_type", "product_category", "administrator", "source",
 		"start_date", "end_date", "while_funds_last",
 		"application_url", "application_process", "program_url",
