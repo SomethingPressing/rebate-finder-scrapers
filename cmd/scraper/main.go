@@ -97,6 +97,25 @@ func connectWithRetry(cfg *config.Config, logger *zap.Logger) (*db.DB, error) {
 	}
 }
 
+// reg0Sources is the list of source names whose settings we ask the broker for.
+//
+// Scope in broker.collector_settings is "*" or a source name, never a tenant,
+// so asking for these tells the broker nothing about who the work serves. The
+// names must match each scraper's Name(); a typo means a setting somebody has
+// filled in on the console silently applies to nothing.
+func reg0Sources() []string {
+	return []string{
+		"dsireusa",
+		"rewiring_america",
+		"energy_star",
+		"con_edison",
+		"pnm",
+		"xcel_energy",
+		"srp",
+		"peninsula_clean_energy",
+	}
+}
+
 func main() {
 	sourceFlag := flag.String("source", "", "run only this scraper (dsireusa | rewiring_america | energy_star | con_edison | pnm | xcel_energy | srp | peninsula_clean_energy)")
 	debugFlag := flag.Bool("debug", false, "enable verbose per-item debug output (sets log level to debug)")
@@ -196,6 +215,26 @@ func main() {
 	}
 	logger.Info("database connected and staging table migrated")
 
+	// ── Settings the broker hands down ────────────────────────────────────────
+	//
+	// LoadCollectorSettings was written, tested, and never called. The broker's
+	// "Collector fleet" screen wrote broker.collector_settings, nothing read it,
+	// and the screen said nothing about that — so every value on it was a
+	// promise the fleet did not keep, and the only way to discover that was to
+	// change a setting and watch nothing happen.
+	//
+	// Read here, once, straight after the database is up: these settings live in
+	// the staging database this process is already connected to, so there is no
+	// API call and no new credential. Precedence is broker value, then this
+	// process's own environment — the fallback is the point, because a broker
+	// mid-migration must leave the fleet running on what it already had rather
+	// than starting it with nothing.
+	settings := config.LoadCollectorSettings(database.GORM(), reg0Sources())
+	applied := cfg.ApplyBrokerSettings(settings, logger)
+	if len(applied) > 0 {
+		logger.Info("applied settings from the broker", zap.Strings("settings", applied))
+	}
+
 	// ── Shared event log ──────────────────────────────────────────────────────
 	// Ships fleet events to broker.system_events, which lives in this same
 	// staging database, so an administrator reading the broker console sees
@@ -222,6 +261,23 @@ func main() {
 	}
 	heart := brokerlog.StartHeart(database.GORM(), logger, heartID)
 	defer heart.Stop()
+
+	// Which settings the broker actually reached us with, recorded where the
+	// console can read it back. This is the proof the wiring works: a settings
+	// screen that cannot show when a collector last read it is indistinguishable
+	// from the one that reached nothing at all, which is what it was.
+	//
+	// Names only, never values — this table is readable by every administrator
+	// and one of these settings is an API key.
+	blog.Info("collector.settings-applied", func() string {
+		if len(applied) == 0 {
+			return "collector read the broker's settings; none of them changed anything"
+		}
+		return "collector applied settings handed down by the broker"
+	}(), map[string]any{
+		"applied":  applied,
+		"run_once": cfg.RunOnce,
+	})
 
 	hostname, _ := os.Hostname()
 	blog.Info("collector.started", "collector process started", map[string]any{
@@ -840,12 +896,31 @@ func main() {
 	// ── Scheduled mode ────────────────────────────────────────────────────────
 	c := cron.New(cron.WithLogger(zapCronLogger{logger}))
 
-	if _, err := c.AddFunc(cfg.ScraperInterval, runScrapers); err != nil {
-		logger.Fatal("invalid SCRAPER_INTERVAL",
-			zap.String("interval", cfg.ScraperInterval),
+	// The broker's collection interval is applied HERE and only here, because
+	// this is the only place a schedule exists to receive it. Under RUN_ONCE the
+	// process has already exited by now, which is why the console's cadence
+	// setting cannot take effect on a one-shot machine however it is wired —
+	// worth knowing before somebody changes it and waits.
+	//
+	// ScrapeInterval enforces the six-hour floor on read as well as on write,
+	// so a value written before the floor existed, or straight into the table by
+	// hand, cannot have the fleet hammering upstream APIs.
+	schedule := cfg.ScraperInterval
+	if d := settings.ScrapeInterval(parseEveryInterval(cfg.ScraperInterval)); d > 0 {
+		if fromBroker := fmt.Sprintf("@every %s", d); fromBroker != schedule {
+			logger.Info("broker set the collection interval",
+				zap.String("was", schedule), zap.String("now", fromBroker))
+			schedule = fromBroker
+		}
+	}
+
+	if _, err := c.AddFunc(schedule, runScrapers); err != nil {
+		logger.Fatal("invalid collection interval",
+			zap.String("interval", schedule),
 			zap.Error(err),
 		)
 	}
+	logger.Info("collection scheduled", zap.String("interval", schedule))
 
 	c.Start()
 	logger.Info("scraper scheduled", zap.String("interval", cfg.ScraperInterval))
