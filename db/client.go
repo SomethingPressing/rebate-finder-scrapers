@@ -1,7 +1,9 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
+	"sync"
 
 	"github.com/incenva/rebate-scraper/models"
 	"gorm.io/driver/postgres"
@@ -13,6 +15,13 @@ import (
 type DB struct {
 	gorm   *gorm.DB
 	schema string // PostgreSQL schema that owns the Go-side tables (e.g. "scraper")
+
+	// The connection holding the fleet-wide collection lock, if this process
+	// holds it. An advisory lock belongs to the session that took it, so the
+	// connection has to be kept rather than returned to the pool — see
+	// run_lock.go for why the lock exists at all.
+	lockMu   sync.Mutex
+	lockConn *sql.Conn
 }
 
 // Schema returns the PostgreSQL schema name used for Go-owned tables.

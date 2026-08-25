@@ -482,6 +482,37 @@ func main() {
 	canMarkStale := cfg.ForceRefresh && effectiveLimit == 0
 
 	runScrapers := func() {
+		// ── One pass at a time, fleet-wide ────────────────────────────────────
+		//
+		// Collection is scheduled by this process's own cron (decided
+		// 2026-08-25). The risk that decision carries is a Fly machine schedule
+		// left in place beside it: both would start collection, both passes
+		// would work, and the only symptom would be double the upstream
+		// requests against sources that rate-limit — surfacing as unexplained
+		// 429s days later, with nothing pointing at the cause.
+		//
+		// So the migration does not depend on anybody remembering to delete the
+		// Fly schedule. Two passes can be started; only one runs.
+		locked, err := database.TryLockCollection()
+		if err != nil {
+			// A lock we cannot take is not a reason to skip the work: the
+			// database may be momentarily unreachable, and refusing to collect
+			// because of it would turn a blip into a missed cycle.
+			logger.Warn("could not take the collection lock — running anyway", zap.Error(err))
+		} else if !locked {
+			logger.Info("another collector is already running a pass — skipping this one")
+			blog.Info("collector.pass-skipped", "another collector already holds the pass lock", map[string]any{
+				"reason": "already-running",
+			})
+			return
+		} else {
+			defer func() {
+				if err := database.UnlockCollection(); err != nil {
+					logger.Warn("could not release the collection lock", zap.Error(err))
+				}
+			}()
+		}
+
 		// Shadow activeScrapers with a schedule-filtered subset so the rest of the
 		// function works without changes. In multi-tenant mode we re-read the DB to
 		// get up-to-date schedule + last_run_at values before deciding what to run.

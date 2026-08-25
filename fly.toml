@@ -1,8 +1,35 @@
 # fly.toml — Incenva Scraper (multi-tenant background worker)
 #
 # This is a pure background worker — no HTTP services.
-# Each machine run scrapes all active tenants and exits (RUN_ONCE=true).
-# Schedule runs via: fly machine run --schedule "0 */6 * * *"
+#
+# ── The schedule lives HERE, in the process, not in Fly ──────────────────────
+#
+# Decided 2026-08-25, after the two options were held against what this system
+# has to be able to say about itself:
+#
+#   · Fly's machine scheduler would keep the timetable in a control plane that
+#     neither repository can read. The broker's Health page could not answer
+#     "does anything collect without a person pressing a button?" without a Fly
+#     token, and reported `unknown` instead — which is the honest answer and a
+#     useless one.
+#
+#   · Worse, it would leave the broker's "Collection interval" setting reaching
+#     nothing. That setting exists, enforces a six-hour floor, and was wired to
+#     the collectors on purpose; it is read only in scheduled mode. Choosing
+#     Fly would have made a control on the console change nothing at all, which
+#     is the exact fault that wiring was written to remove.
+#
+# So RUN_ONCE is false and the machine stays up holding its own cron. The cost
+# is one small idle machine; what it buys is a schedule that is visible in the
+# code, settable from the console, and reportable by it.
+#
+# ── If you are moving back ───────────────────────────────────────────────────
+#
+# Set RUN_ONCE=true and add a Fly schedule. Do not do both halves separately:
+# a Fly schedule beside a standing cron starts two passes. That cannot double-
+# collect — a fleet-wide advisory lock in db/run_lock.go makes the second pass
+# a no-op — but it does mean a machine waking to do nothing, and the console
+# will describe a schedule that is not the one in force.
 #
 # Tenant config: config/tenants.json (bundled in the image)
 # Per-tenant DB URLs: fly secrets (TENANT_<ID>_DB_URL)
@@ -15,16 +42,17 @@ primary_region = "iad"
 [env]
   LOG_LEVEL        = "info"
   LOG_FORMAT       = "json"
-  RUN_ONCE         = "true"
+  RUN_ONCE         = "false"
   SCRAPER_VERSION  = "1.0"
   TENANTS_FILE     = "/app/config/tenants.json"
-  # UNREACHABLE while RUN_ONCE is true — the process exits before the cron is
-  # built, so this value is read by nothing on a one-shot machine. It is the
-  # fallback for a long-lived machine (RUN_ONCE=false), and the broker's
-  # "Collection interval" setting overrides it there. Left in place rather than
-  # deleted so the fallback exists if the fleet ever moves to a standing
-  # machine; if that never happens, delete it — a setting that reaches nothing
-  # must not look like one that does.
+  # The fallback cadence, and now genuinely reachable: with RUN_ONCE=false the
+  # cron is built and reads this. The broker's "Collection interval" setting
+  # overrides it on every start, and the six-hour floor is enforced on read as
+  # well as on write — so a value written straight into the table by hand
+  # cannot have the fleet hammering upstream APIs.
+  #
+  # This is what the fleet collects on before anybody has set an interval in
+  # the console, and what it falls back to if the broker has nothing to say.
   SCRAPER_INTERVAL = "@every 6h"
 
 # No [[services]] block — this app has no HTTP endpoints.
