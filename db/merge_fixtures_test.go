@@ -36,39 +36,39 @@ const fixturesPath = "../testdata/merge_fixtures.json"
 // fixtureRow is the JSON shape of one staging row input. Field names mirror
 // the staging table's column names so the TypeScript side reads naturally.
 type fixtureRow struct {
-	Source               string   `json:"source"`
-	ProgramName          string   `json:"program_name"`
-	UtilityCompany       string   `json:"utility_company"`
-	IncentiveDescription *string  `json:"incentive_description"`
-	IncentiveAmount      *float64 `json:"incentive_amount"`
-	MaximumAmount        *float64 `json:"maximum_amount"`
-	PercentValue         *float64 `json:"percent_value"`
-	PerUnitAmount        *float64 `json:"per_unit_amount"`
-	IncentiveFormat      *string  `json:"incentive_format"`
-	UnitType             *string  `json:"unit_type"`
-	State                *string  `json:"state"`
-	ZipCode              *string  `json:"zip_code"`
-	ZipCodes             []string `json:"zip_codes"`
-	ServiceTerritory     *string  `json:"service_territory"`
-	AvailableNationwide  *bool    `json:"available_nationwide"`
-	CategoryTag          []string `json:"category_tag"`
-	Segment              []string `json:"segment"`
-	CustomerType         *string  `json:"customer_type"`
-	Administrator        *string  `json:"administrator"`
-	ImplementingSector   *string  `json:"implementing_sector"`
-	StartDate            *string  `json:"start_date"`
-	EndDate              *string  `json:"end_date"`
-	WhileFundsLast       *bool    `json:"while_funds_last"`
-	ApplicationURL       *string  `json:"application_url"`
-	ApplicationProcess   *string  `json:"application_process"`
-	ProgramURL           *string  `json:"program_url"`
-	SourceURL            *string  `json:"source_url"`
-	ContactEmail         *string  `json:"contact_email"`
-	ContactPhone         *string  `json:"contact_phone"`
-	ImageURL             *string  `json:"image_url"`
-	ImageURLs            []string `json:"image_urls"`
-	ContractorRequired   *bool    `json:"contractor_required"`
-	EnergyAuditRequired  *bool    `json:"energy_audit_required"`
+	Source               string            `json:"source"`
+	ProgramName          string            `json:"program_name"`
+	UtilityCompany       string            `json:"utility_company"`
+	IncentiveDescription *string           `json:"incentive_description"`
+	IncentiveAmount      *float64          `json:"incentive_amount"`
+	MaximumAmount        *float64          `json:"maximum_amount"`
+	PercentValue         *float64          `json:"percent_value"`
+	PerUnitAmount        *float64          `json:"per_unit_amount"`
+	IncentiveFormat      *string           `json:"incentive_format"`
+	UnitType             *string           `json:"unit_type"`
+	State                *string           `json:"state"`
+	ZipCode              *string           `json:"zip_code"`
+	ZipCodes             []string          `json:"zip_codes"`
+	ServiceTerritory     *string           `json:"service_territory"`
+	AvailableNationwide  *bool             `json:"available_nationwide"`
+	CategoryTag          []string          `json:"category_tag"`
+	Segment              []string          `json:"segment"`
+	CustomerType         *string           `json:"customer_type"`
+	Administrator        *string           `json:"administrator"`
+	ImplementingSector   *string           `json:"implementing_sector"`
+	StartDate            *string           `json:"start_date"`
+	EndDate              *string           `json:"end_date"`
+	WhileFundsLast       *bool             `json:"while_funds_last"`
+	ApplicationURL       *string           `json:"application_url"`
+	ApplicationProcess   *string           `json:"application_process"`
+	ProgramURL           *string           `json:"program_url"`
+	SourceURL            *string           `json:"source_url"`
+	ContactEmail         *string           `json:"contact_email"`
+	ContactPhone         *string           `json:"contact_phone"`
+	ImageURL             *string           `json:"image_url"`
+	ImageURLs            []string          `json:"image_urls"`
+	ContractorRequired   *bool             `json:"contractor_required"`
+	EnergyAuditRequired  *bool             `json:"energy_audit_required"`
 	RateTiers            []models.RateTier `json:"rate_tiers"`
 }
 
@@ -270,9 +270,9 @@ func TestFixtureCoversEveryMergedField(t *testing.T) {
 	}
 }
 
-func s(v string) *string    { return &v }
-func f(v float64) *float64  { return &v }
-func b(v bool) *bool        { return &v }
+func s(v string) *string   { return &v }
+func f(v float64) *float64 { return &v }
+func b(v bool) *bool       { return &v }
 
 // fixtureCases defines the inputs. Expected outputs are always computed from
 // the live Go implementation, never hand-written.

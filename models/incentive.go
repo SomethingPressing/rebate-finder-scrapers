@@ -72,44 +72,44 @@ type Incentive struct {
 	// normalize(ProgramName)|normalize(UtilityCompany).
 	// Source is excluded so the same program scraped by multiple sources merges.
 	// Pre-computed here so the promoter can rely on it without recomputing.
-	ProgramHash          string
-	State                *string
-	ZipCode              *string   // primary / discovery ZIP (single, legacy)
-	ZipCodes             []string  // full list of ZIPs this incentive covers
-	ServiceTerritory     *string
-	AvailableNationwide  *bool
-	CategoryTag          []string
-	Segment              []string
-	CustomerType         *string
-	ProductCategory      *string
-	Administrator        *string
-	Source               string
-	StartDate            *string
-	EndDate              *string
-	WhileFundsLast       *bool
-	ApplicationURL       *string
-	ApplicationProcess   *string
-	ProgramURL           *string
-	ContactEmail         *string
-	ContactPhone         *string
-	IsFeatured           bool
-	ImageURL             *string
-	ImageURLs            []string
-	ContractorRequired   *bool
-	EnergyAuditRequired  *bool
+	ProgramHash         string
+	State               *string
+	ZipCode             *string  // primary / discovery ZIP (single, legacy)
+	ZipCodes            []string // full list of ZIPs this incentive covers
+	ServiceTerritory    *string
+	AvailableNationwide *bool
+	CategoryTag         []string
+	Segment             []string
+	CustomerType        *string
+	ProductCategory     *string
+	Administrator       *string
+	Source              string
+	StartDate           *string
+	EndDate             *string
+	WhileFundsLast      *bool
+	ApplicationURL      *string
+	ApplicationProcess  *string
+	ProgramURL          *string
+	ContactEmail        *string
+	ContactPhone        *string
+	IsFeatured          bool
+	ImageURL            *string
+	ImageURLs           []string
+	ContractorRequired  *bool
+	EnergyAuditRequired *bool
 	// SourceURL is the canonical URL in the originating data system where this
 	// incentive was collected from (e.g. DSIRE detail page, Energy Star listing).
 	// For HTML scrapers this is the same as ProgramURL.
-	SourceURL            *string
+	SourceURL *string
 	// ImplementingSector is WHO offers the incentive: "Utility", "State",
 	// "Federal", "Local Government", etc.  Distinct from Portfolio (what the
 	// program does) and Segment (who the customer is).
-	ImplementingSector   *string
-	RateTiers            []RateTier
-	ScraperVersion       string
-	Processed            bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ImplementingSector *string
+	RateTiers          []RateTier
+	ScraperVersion     string
+	Processed          bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 
 	// RawResponse is the verbatim source payload that produced this incentive.
 	// API scrapers set this to the JSON-marshalled record; HTML scrapers set it

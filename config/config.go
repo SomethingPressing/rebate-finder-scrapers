@@ -23,8 +23,8 @@ type Config struct {
 	DSIREBaseURL string
 
 	// Rewiring America
-	RewiringAmericaAPIKey     string
-	RewiringAmericaBaseURL    string
+	RewiringAmericaAPIKey  string
+	RewiringAmericaBaseURL string
 	// RewiringAmericaConcurrency controls how many ZIP requests are in-flight at
 	// once.  Higher values finish faster but may trigger rate limiting.
 	RewiringAmericaConcurrency int
@@ -41,7 +41,6 @@ type Config struct {
 	// ZipCSVPath is the path to uszips.csv used to populate the zip_codes field
 	// per incentive.  Auto-detected at data/uszips.csv if left empty.
 	ZipCSVPath string
-
 
 	// ScraperVersion is written to the scraper_version column on every upsert.
 	ScraperVersion string
@@ -147,48 +146,47 @@ type Config struct {
 	// never run there). Combine with RUN_ONCE=true for an immediate one-shot run.
 	// Env var: FORCE_RUN — CLI flag: --force-run — default: false
 	ForceRun bool
-
 }
 
 // Load reads configuration from the environment.
 // It silently ignores a missing .env file so Docker env vars work without one.
 //
 // Dotenv loading (in order):
-//   1. If DOTENV_PATH is set, load that file only.
-//   2. Otherwise walk upward from the process working directory until a directory
-//      contains both prisma/schema.prisma and .env (monorepo root), then load .env.
+//  1. If DOTENV_PATH is set, load that file only.
+//  2. Otherwise walk upward from the process working directory until a directory
+//     contains both prisma/schema.prisma and .env (monorepo root), then load .env.
 //
 // No scraper-service/.env is required; keep a single .env at the repo root.
 func Load() (*Config, error) {
 	loadDotenv()
 
 	cfg := &Config{
-		DatabaseURL:            getEnv("DATABASE_URL", ""),
-		ScraperInterval:        getEnv("SCRAPER_INTERVAL", "@every 1h"),
-		DSIREBaseURL:           getEnv("DSIREUSA_BASE_URL", "https://programs.dsireusa.org/api/v1/programs"),
-		RewiringAmericaAPIKey:        getEnv("REWIRING_AMERICA_API_KEY", ""),
-		RewiringAmericaBaseURL:       getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
-		RewiringAmericaConcurrency:   getIntEnv("REWIRING_AMERICA_CONCURRENCY", 3),
-		EnergyStarAPIBaseURL:     getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
-		PageDelay:              getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
-		MaxConcurrency:         getIntEnv("MAX_CONCURRENCY", 3),
-		ZipCSVPath:             getEnv("ZIP_CSV_PATH", ""),
-		ScraperVersion:         getEnv("SCRAPER_VERSION", "1.0"),
-		LogLevel:               getEnv("LOG_LEVEL", "info"),
-		LogFormat:              getEnv("LOG_FORMAT", "json"),
-		RunOnce:                getBoolEnv("RUN_ONCE", false),
-		Source:                 getEnv("SOURCE", ""),
-		ScraperDBSchema:        getEnv("SCRAPER_DB_SCHEMA", "scraper"),
-		PromoterSourcePriority: getCSVEnv("PROMOTER_SOURCE_PRIORITY", []string{"rewiring_america", "dsireusa", "energy_star"}),
-		ProxyURL:               getEnv("SCRAPER_PROXY_URL", ""),
-		TenantsFile:            getEnv("TENANTS_FILE", "config/tenants.json"),
-		Debug:                  getBoolEnv("DEBUG", false),
-		ForceURLUpdate:         getBoolEnv("FORCE_URL_UPDATE", false),
-		ForceRefresh:           getBoolEnv("FORCE_REFRESH", false),
-		ForceRun:               getBoolEnv("FORCE_RUN", false),
-		OpenAIKey:              getEnv("OPENAI_API_KEY", ""),
-		AppURL:                 getEnv("APP_URL", ""),
-		SyncSecret:             getEnv("PROMOTER_SYNC_SECRET", ""),
+		DatabaseURL:                getEnv("DATABASE_URL", ""),
+		ScraperInterval:            getEnv("SCRAPER_INTERVAL", "@every 1h"),
+		DSIREBaseURL:               getEnv("DSIREUSA_BASE_URL", "https://programs.dsireusa.org/api/v1/programs"),
+		RewiringAmericaAPIKey:      getEnv("REWIRING_AMERICA_API_KEY", ""),
+		RewiringAmericaBaseURL:     getEnv("REWIRING_AMERICA_BASE_URL", "https://api.rewiringamerica.org/api/v1/calculator"),
+		RewiringAmericaConcurrency: getIntEnv("REWIRING_AMERICA_CONCURRENCY", 3),
+		EnergyStarAPIBaseURL:       getEnv("ENERGY_STAR_API_BASE_URL", "https://www.energystar.gov"),
+		PageDelay:                  getDurationMsEnv("PAGE_DELAY_MS", 500*time.Millisecond),
+		MaxConcurrency:             getIntEnv("MAX_CONCURRENCY", 3),
+		ZipCSVPath:                 getEnv("ZIP_CSV_PATH", ""),
+		ScraperVersion:             getEnv("SCRAPER_VERSION", "1.0"),
+		LogLevel:                   getEnv("LOG_LEVEL", "info"),
+		LogFormat:                  getEnv("LOG_FORMAT", "json"),
+		RunOnce:                    getBoolEnv("RUN_ONCE", false),
+		Source:                     getEnv("SOURCE", ""),
+		ScraperDBSchema:            getEnv("SCRAPER_DB_SCHEMA", "scraper"),
+		PromoterSourcePriority:     getCSVEnv("PROMOTER_SOURCE_PRIORITY", []string{"rewiring_america", "dsireusa", "energy_star"}),
+		ProxyURL:                   getEnv("SCRAPER_PROXY_URL", ""),
+		TenantsFile:                getEnv("TENANTS_FILE", "config/tenants.json"),
+		Debug:                      getBoolEnv("DEBUG", false),
+		ForceURLUpdate:             getBoolEnv("FORCE_URL_UPDATE", false),
+		ForceRefresh:               getBoolEnv("FORCE_REFRESH", false),
+		ForceRun:                   getBoolEnv("FORCE_RUN", false),
+		OpenAIKey:                  getEnv("OPENAI_API_KEY", ""),
+		AppURL:                     getEnv("APP_URL", ""),
+		SyncSecret:                 getEnv("PROMOTER_SYNC_SECRET", ""),
 	}
 
 	return cfg, nil

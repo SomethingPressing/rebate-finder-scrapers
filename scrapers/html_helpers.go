@@ -43,11 +43,11 @@ var (
 	reEmail = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
 
 	// Boolean field patterns from the LLM schema rules.
-	reContractorRequired   = regexp.MustCompile(`(?i)(?:must be (?:installed|completed) by|licensed contractor|approved contractor|trade ally|contractor required|participating contractor)`)
+	reContractorRequired  = regexp.MustCompile(`(?i)(?:must be (?:installed|completed) by|licensed contractor|approved contractor|trade ally|contractor required|participating contractor)`)
 	reEnergyAuditRequired = regexp.MustCompile(`(?i)(?:energy audit required|energy assessment required|home assessment required|home energy assessment|home energy checkup required|pre-inspection required|site inspection required|pre-installation inspection|must (?:complete|schedule|obtain|get) an? (?:energy audit|energy assessment|home assessment))`)
-	reCurrentlyActive      = regexp.MustCompile(`(?i)(?:expired|program ended|no longer available|program closed|funding exhausted|wait ?list)`)
-	reIncomeQualified      = regexp.MustCompile(`(?i)(?:low.income|income.qualified|income.eligible|CARE|FERA|LIHEAP|Good Neighbor|affordable|<\s*\d+%\s*AMI|\d+%\s*(?:of\s+)?(?:area\s+median|AMI))`)
-	reStartDate = regexp.MustCompile(`(?i)(?:effective|start(?:s|ing)?|begin(?:s|ning)?|as of|from)\s+(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},?\s*\d{4})`)
+	reCurrentlyActive     = regexp.MustCompile(`(?i)(?:expired|program ended|no longer available|program closed|funding exhausted|wait ?list)`)
+	reIncomeQualified     = regexp.MustCompile(`(?i)(?:low.income|income.qualified|income.eligible|CARE|FERA|LIHEAP|Good Neighbor|affordable|<\s*\d+%\s*AMI|\d+%\s*(?:of\s+)?(?:area\s+median|AMI))`)
+	reStartDate           = regexp.MustCompile(`(?i)(?:effective|start(?:s|ing)?|begin(?:s|ning)?|as of|from)\s+(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},?\s*\d{4})`)
 	// reEndDate requires a real month name (or ISO date) so "end of 2027" / "of 2030" are not captured.
 	reEndDate = regexp.MustCompile(`(?i)(?:end(?:s|ing)?|expires?|through|until|deadline|valid\s+through|offer\s+ends?)\s+(\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2},?\s*\d{4}|(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4})`)
 )

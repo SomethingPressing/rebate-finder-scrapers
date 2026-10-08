@@ -15,7 +15,7 @@ import (
 // the two results field by field.
 type htmlEvaluator struct{}
 
-func (e *htmlEvaluator) Mode() string   { return "" }
+func (e *htmlEvaluator) Mode() string  { return "" }
 func (e *htmlEvaluator) UsesLLM() bool { return true }
 
 func (e *htmlEvaluator) EvaluateDB(cfg Config, row models.StagedRebate) EvalResult {
@@ -79,7 +79,7 @@ func (e *htmlEvaluator) EvaluateTestcase(cfg Config, tc TestCase, staged *models
 // re-called; for test cases it falls back to a live HTTP fetch.
 type cachedEvaluator struct{}
 
-func (e *cachedEvaluator) Mode() string   { return "" }
+func (e *cachedEvaluator) Mode() string  { return "" }
 func (e *cachedEvaluator) UsesLLM() bool { return true }
 
 func (e *cachedEvaluator) EvaluateDB(cfg Config, row models.StagedRebate) EvalResult {

@@ -10,19 +10,19 @@ import (
 
 // ScraperSourceConfigRow mirrors the scraper_source_configs table (public schema).
 type ScraperSourceConfigRow struct {
-	ClientID         string     `gorm:"column:client_id;primaryKey"`
-	Source           string     `gorm:"column:source;primaryKey"`
-	Active           bool       `gorm:"column:active"`
-	Schedule         string     `gorm:"column:schedule"`
-	States           StringSlice `gorm:"column:states;type:text[]"`
-	Utilities        StringSlice `gorm:"column:utilities;type:text[]"`
-	ServiceAreas     StringSlice `gorm:"column:service_areas;type:text[]"`
-	ZipCodes         StringSlice `gorm:"column:zip_codes;type:text[]"`
-	MaxIncentives    *int       `gorm:"column:max_incentives"`
-	LastRunAt        *time.Time `gorm:"column:last_run_at"`
-	LastRunStatus    string     `gorm:"column:last_run_status"`
-	LastRunCount     *int       `gorm:"column:last_run_count"`
-	LastRunError     *string    `gorm:"column:last_run_error"`
+	ClientID      string      `gorm:"column:client_id;primaryKey"`
+	Source        string      `gorm:"column:source;primaryKey"`
+	Active        bool        `gorm:"column:active"`
+	Schedule      string      `gorm:"column:schedule"`
+	States        StringSlice `gorm:"column:states;type:text[]"`
+	Utilities     StringSlice `gorm:"column:utilities;type:text[]"`
+	ServiceAreas  StringSlice `gorm:"column:service_areas;type:text[]"`
+	ZipCodes      StringSlice `gorm:"column:zip_codes;type:text[]"`
+	MaxIncentives *int        `gorm:"column:max_incentives"`
+	LastRunAt     *time.Time  `gorm:"column:last_run_at"`
+	LastRunStatus string      `gorm:"column:last_run_status"`
+	LastRunCount  *int        `gorm:"column:last_run_count"`
+	LastRunError  *string     `gorm:"column:last_run_error"`
 }
 
 func (ScraperSourceConfigRow) TableName() string { return "scraper_source_configs" }
@@ -41,17 +41,17 @@ func (ScraperJobRow) TableName() string { return "scraper_jobs" }
 
 // ScraperRunLogRow mirrors the scraper_run_logs table (public schema).
 type ScraperRunLogRow struct {
-	ID               string     `gorm:"column:id;primaryKey"`
-	ClientID         string     `gorm:"column:client_id"`
-	Source           string     `gorm:"column:source"`
-	Status           string     `gorm:"column:status"`
-	StartedAt        time.Time  `gorm:"column:started_at"`
-	FinishedAt       *time.Time `gorm:"column:finished_at"`
-	ProgramCount     *int       `gorm:"column:program_count"`
-	DurationS        *int       `gorm:"column:duration_s"`
-	Error            *string    `gorm:"column:error"`
-	TriggeredBy      *string    `gorm:"column:triggered_by"`
-	LastHeartbeatAt  *time.Time `gorm:"column:last_heartbeat_at"`
+	ID              string     `gorm:"column:id;primaryKey"`
+	ClientID        string     `gorm:"column:client_id"`
+	Source          string     `gorm:"column:source"`
+	Status          string     `gorm:"column:status"`
+	StartedAt       time.Time  `gorm:"column:started_at"`
+	FinishedAt      *time.Time `gorm:"column:finished_at"`
+	ProgramCount    *int       `gorm:"column:program_count"`
+	DurationS       *int       `gorm:"column:duration_s"`
+	Error           *string    `gorm:"column:error"`
+	TriggeredBy     *string    `gorm:"column:triggered_by"`
+	LastHeartbeatAt *time.Time `gorm:"column:last_heartbeat_at"`
 }
 
 func (ScraperRunLogRow) TableName() string { return "scraper_run_logs" }

@@ -30,17 +30,19 @@
 // # Modes
 //
 // Single-tenant (no active tenants in TENANTS_FILE):
-//   Behaves exactly as before — connects to DATABASE_URL and promotes all
-//   pending rows into that database's public.rebates table.
+//
+//	Behaves exactly as before — connects to DATABASE_URL and promotes all
+//	pending rows into that database's public.rebates table.
 //
 // Multi-tenant (active tenants found in TENANTS_FILE):
-//   Connects to DATABASE_URL as the shared staging DB.
-//   For each active tenant:
-//     1. Reads pending staging rows tagged for that tenant.
-//     2. Connects to the tenant's dedicated database (TENANT_<ID>_DB_URL).
-//     3. Upserts into that database's public.rebates, public.zipcodes, etc.
-//     4. Marks the tenant status rows as promoted in staging.
-//   One tenant failure does not stop promotion for the remaining tenants.
+//
+//	Connects to DATABASE_URL as the shared staging DB.
+//	For each active tenant:
+//	  1. Reads pending staging rows tagged for that tenant.
+//	  2. Connects to the tenant's dedicated database (TENANT_<ID>_DB_URL).
+//	  3. Upserts into that database's public.rebates, public.zipcodes, etc.
+//	  4. Marks the tenant status rows as promoted in staging.
+//	One tenant failure does not stop promotion for the remaining tenants.
 //
 // # Environment variables
 //

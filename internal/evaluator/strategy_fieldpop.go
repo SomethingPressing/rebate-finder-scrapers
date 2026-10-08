@@ -18,7 +18,7 @@ import (
 // Register new JS-rendered sources in strategy.go's registry to use this evaluator.
 type fieldPopEvaluator struct{}
 
-func (e *fieldPopEvaluator) Mode() string   { return "field_population" }
+func (e *fieldPopEvaluator) Mode() string  { return "field_population" }
 func (e *fieldPopEvaluator) UsesLLM() bool { return false }
 
 func (e *fieldPopEvaluator) EvaluateDB(cfg Config, row models.StagedRebate) EvalResult {

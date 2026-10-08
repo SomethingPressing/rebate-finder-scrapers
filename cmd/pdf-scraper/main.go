@@ -108,7 +108,7 @@ func main() {
 	ctx := context.Background()
 
 	opts := scrapers.PDFScrapeOpts{
-		SaveSupabase:        *saveSupabaseFlag,
+		SaveSupabase:   *saveSupabaseFlag,
 		DB:             database,
 		ScraperVersion: scraperVersion,
 	}

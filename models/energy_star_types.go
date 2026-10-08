@@ -44,19 +44,19 @@ type EnergyStarSearchResponse struct {
 // IncentiveData is a stringified JSON blob that must be parsed separately with
 // a second json.Unmarshal call.
 type EnergyStarRawResult struct {
-	IncentiveID          string `json:"incentive_id"`
-	PublishedIncentiveID string `json:"publishedincentiveid"`
-	Utility              string `json:"utility"`
-	ZipCode              string `json:"zip_code"`
-	AvailableNationwide  string `json:"available_nationwide"` // "Yes" / "No"
-	PartnerCategory      string `json:"partner_category"`
-	ProductCategory      string `json:"product_category"`
-	ProductGeneral       string `json:"product_general"`
-	Product              string `json:"product"` // subcategory / "All"
-	IncentiveAmount      string `json:"incentiveamount"`
+	IncentiveID          string     `json:"incentive_id"`
+	PublishedIncentiveID string     `json:"publishedincentiveid"`
+	Utility              string     `json:"utility"`
+	ZipCode              string     `json:"zip_code"`
+	AvailableNationwide  string     `json:"available_nationwide"` // "Yes" / "No"
+	PartnerCategory      string     `json:"partner_category"`
+	ProductCategory      string     `json:"product_category"`
+	ProductGeneral       string     `json:"product_general"`
+	Product              string     `json:"product"` // subcategory / "All"
+	IncentiveAmount      string     `json:"incentiveamount"`
 	IncentiveStartDate   FlexString `json:"incentive_start_date"` // Unix ms — may arrive as string or number
 	IncentiveEndDate     FlexString `json:"incentive_end_date"`   // Unix ms — may arrive as string or number
-	IncentiveData        string `json:"incentivedata"`        // stringified JSON
+	IncentiveData        string     `json:"incentivedata"`        // stringified JSON
 }
 
 // EnergyStarIncentiveData is the parsed form of the incentivedata field.

@@ -346,7 +346,7 @@ func (s *RewiringAmericaScraper) ScrapeStream(ctx context.Context, sink func([]m
 			)
 		}
 	}
-	flush() // drain any remaining items
+	flush()      // drain any remaining items
 	bar.Finish() //nolint:errcheck
 
 	s.Logger.Info("rewiring_america scrape complete",

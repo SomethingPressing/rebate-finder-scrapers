@@ -8,10 +8,10 @@ import (
 
 // PromotionStatus values for StagedRebate.PromotionStatus.
 const (
-	PromotionPending   = "pending"   // not yet reviewed by the promoter
-	PromotionPromoted  = "promoted"  // successfully upserted into rebates
-	PromotionSkipped   = "skipped"   // duplicate / unchanged; deliberately not promoted
-	PromotionStale     = "stale"     // was promoted but no longer returned by the source API
+	PromotionPending  = "pending"  // not yet reviewed by the promoter
+	PromotionPromoted = "promoted" // successfully upserted into rebates
+	PromotionSkipped  = "skipped"  // duplicate / unchanged; deliberately not promoted
+	PromotionStale    = "stale"    // was promoted but no longer returned by the source API
 )
 
 // ReleaseStatus values for StagedRebate.ReleaseStatus (stg_release_status).
@@ -48,48 +48,48 @@ type StagedRebate struct {
 
 	// ── Core program fields ──────────────────────────────────────────────────
 
-	ProgramName          string      `gorm:"column:program_name;not null"`
-	UtilityCompany       string      `gorm:"column:utility_company;not null"`
-	IncentiveDescription *string     `gorm:"column:incentive_description"`
-	IncentiveAmount      *float64    `gorm:"column:incentive_amount"`
-	MaximumAmount        *float64    `gorm:"column:maximum_amount"`
-	PercentValue         *float64    `gorm:"column:percent_value"`
-	PerUnitAmount        *float64    `gorm:"column:per_unit_amount"`
-	IncentiveFormat      *string     `gorm:"column:incentive_format"`
-	UnitType             *string     `gorm:"column:unit_type"`
-	State                *string     `gorm:"column:state"`
-	ZipCode              *string     `gorm:"column:zip_code"`
+	ProgramName          string   `gorm:"column:program_name;not null"`
+	UtilityCompany       string   `gorm:"column:utility_company;not null"`
+	IncentiveDescription *string  `gorm:"column:incentive_description"`
+	IncentiveAmount      *float64 `gorm:"column:incentive_amount"`
+	MaximumAmount        *float64 `gorm:"column:maximum_amount"`
+	PercentValue         *float64 `gorm:"column:percent_value"`
+	PerUnitAmount        *float64 `gorm:"column:per_unit_amount"`
+	IncentiveFormat      *string  `gorm:"column:incentive_format"`
+	UnitType             *string  `gorm:"column:unit_type"`
+	State                *string  `gorm:"column:state"`
+	ZipCode              *string  `gorm:"column:zip_code"`
 	// ZipCodes holds all ZIP codes this incentive covers (state-wide programs
 	// get every ZIP in the state; utility programs get the utility's ZIP list).
-	ZipCodes             StringSlice `gorm:"column:zip_codes;type:text[]"`
-	ServiceTerritory     *string     `gorm:"column:service_territory"`
-	AvailableNationwide  *bool       `gorm:"column:available_nationwide"`
-	CategoryTag          StringSlice `gorm:"column:category_tag;type:text[]"`
-	Segment              StringSlice `gorm:"column:segment;type:text[]"`
-	CustomerType         *string     `gorm:"column:customer_type"`
-	ProductCategory      *string     `gorm:"column:product_category"`
-	Administrator        *string     `gorm:"column:administrator"`
-	Source               string      `gorm:"column:source;not null"`
-	StartDate            *string     `gorm:"column:start_date"`
-	EndDate              *string     `gorm:"column:end_date"`
-	WhileFundsLast       *bool       `gorm:"column:while_funds_last"`
-	ApplicationURL       *string     `gorm:"column:application_url"`
-	ApplicationProcess   *string     `gorm:"column:application_process"`
-	ProgramURL           *string     `gorm:"column:program_url"`
-	ContactEmail         *string     `gorm:"column:contact_email"`
-	ContactPhone         *string     `gorm:"column:contact_phone"`
-	ImageURL             *string     `gorm:"column:image_url"`
-	ImageURLs            StringSlice `gorm:"column:image_urls;type:text[]"`
-	ContractorRequired   *bool          `gorm:"column:contractor_required"`
-	EnergyAuditRequired  *bool          `gorm:"column:energy_audit_required"`
+	ZipCodes            StringSlice `gorm:"column:zip_codes;type:text[]"`
+	ServiceTerritory    *string     `gorm:"column:service_territory"`
+	AvailableNationwide *bool       `gorm:"column:available_nationwide"`
+	CategoryTag         StringSlice `gorm:"column:category_tag;type:text[]"`
+	Segment             StringSlice `gorm:"column:segment;type:text[]"`
+	CustomerType        *string     `gorm:"column:customer_type"`
+	ProductCategory     *string     `gorm:"column:product_category"`
+	Administrator       *string     `gorm:"column:administrator"`
+	Source              string      `gorm:"column:source;not null"`
+	StartDate           *string     `gorm:"column:start_date"`
+	EndDate             *string     `gorm:"column:end_date"`
+	WhileFundsLast      *bool       `gorm:"column:while_funds_last"`
+	ApplicationURL      *string     `gorm:"column:application_url"`
+	ApplicationProcess  *string     `gorm:"column:application_process"`
+	ProgramURL          *string     `gorm:"column:program_url"`
+	ContactEmail        *string     `gorm:"column:contact_email"`
+	ContactPhone        *string     `gorm:"column:contact_phone"`
+	ImageURL            *string     `gorm:"column:image_url"`
+	ImageURLs           StringSlice `gorm:"column:image_urls;type:text[]"`
+	ContractorRequired  *bool       `gorm:"column:contractor_required"`
+	EnergyAuditRequired *bool       `gorm:"column:energy_audit_required"`
 	// source_url: canonical URL in the originating data system (DSIRE detail page,
 	// Energy Star listing, etc.). For HTML scrapers this equals program_url.
-	SourceURL            *string        `gorm:"column:source_url"`
+	SourceURL *string `gorm:"column:source_url"`
 	// implementing_sector: WHO offers the incentive — "Utility", "State", "Federal",
 	// "Local Government". Kept separate from portfolio (what the program does).
-	ImplementingSector   *string        `gorm:"column:implementing_sector"`
-	RateTiers            RateTiersJSON  `gorm:"column:rate_tiers;type:jsonb"`
-	ScraperVersion       string         `gorm:"column:scraper_version"`
+	ImplementingSector *string       `gorm:"column:implementing_sector"`
+	RateTiers          RateTiersJSON `gorm:"column:rate_tiers;type:jsonb"`
+	ScraperVersion     string        `gorm:"column:scraper_version"`
 
 	// ── Staging lifecycle fields ─────────────────────────────────────────────
 

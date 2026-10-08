@@ -262,8 +262,8 @@ func Promote(d *DB, opts PromoteOptions) (*PromoteResult, error) {
 			AvailableNationwide:  merged.availableNationwide,
 			Segment:              models.StringSlice(deriveSegment(merged)),
 			Portfolio:            models.StringSlice(portfoliosByRebateID[id]),
-			CustomerType:  merged.customerType,
-			Administrator: merged.administrator,
+			CustomerType:         merged.customerType,
+			Administrator:        merged.administrator,
 			ImplementingSector:   merged.implementingSector,
 			Source:               ptrStr(primary.Source),
 			Sources:              models.StringSlice(merged.sources),
@@ -675,8 +675,8 @@ type promoterMerged struct {
 	availableNationwide  *bool
 	categoryTag          []string
 	segment              []string
-	customerType   *string
-	administrator  *string
+	customerType         *string
+	administrator        *string
 	implementingSector   *string
 	sources              []string
 	startDate            *string
@@ -756,8 +756,8 @@ func mergePromoterGroup(rows []models.StagedRebate) promoterMerged {
 		state:                pickText(rows, func(r models.StagedRebate) *string { return r.State }),
 		serviceTerritory:     pickText(rows, func(r models.StagedRebate) *string { return r.ServiceTerritory }),
 		availableNationwide:  pickBool(rows, func(r models.StagedRebate) *bool { return r.AvailableNationwide }),
-		customerType: pickText(rows, func(r models.StagedRebate) *string { return r.CustomerType }),
-		administrator: pickText(rows, func(r models.StagedRebate) *string { return r.Administrator }),
+		customerType:         pickText(rows, func(r models.StagedRebate) *string { return r.CustomerType }),
+		administrator:        pickText(rows, func(r models.StagedRebate) *string { return r.Administrator }),
 		implementingSector:   pickText(rows, func(r models.StagedRebate) *string { return r.ImplementingSector }),
 		startDate:            pickText(rows, func(r models.StagedRebate) *string { return r.StartDate }),
 		endDate:              pickText(rows, func(r models.StagedRebate) *string { return r.EndDate }),
@@ -856,13 +856,13 @@ var segmentNormMap = map[string][]string{
 	"nonprofits":   {"Nonprofit"},
 
 	// ── Residential variants ────────────────────────────────────────────────
-	"low income residential":      {"Residential"},
-	"low-income residential":      {"Residential"},
-	"multifamily residential":     {"Multifamily"},
-	"homeowner":                   {"Residential"},
-	"renter":                      {"Residential"},
-	"residential and commercial":  {"Residential", "Commercial"},
-	"residential & commercial":    {"Residential", "Commercial"},
+	"low income residential":     {"Residential"},
+	"low-income residential":     {"Residential"},
+	"multifamily residential":    {"Multifamily"},
+	"homeowner":                  {"Residential"},
+	"renter":                     {"Residential"},
+	"residential and commercial": {"Residential", "Commercial"},
+	"residential & commercial":   {"Residential", "Commercial"},
 
 	// ── Government variants ────────────────────────────────────────────────
 	"local government":   {"Government"},

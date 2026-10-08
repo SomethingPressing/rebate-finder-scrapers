@@ -431,7 +431,7 @@ var xcelExtractCfg = PageExtractConfig{
 		"select a service area",
 		"choose your service area",
 		"which state do you live in",
-		"uh-oh",         // Salesforce error page ("Uh-oh. We may have left this page unplugged.")
+		"uh-oh",          // Salesforce error page ("Uh-oh. We may have left this page unplugged.")
 		"page unplugged", // same error, alternate phrasing
 	),
 	StateDetector: func(text string) (state, territory, zip string) {

@@ -111,6 +111,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any) (
 
 // ── Convenience helpers ───────────────────────────────────────────────────────
 
-func IntPtr(v int) *int       { return &v }
-func StrPtr(v string) *string { return &v }
+func IntPtr(v int) *int              { return &v }
+func StrPtr(v string) *string        { return &v }
 func TimePtr(v time.Time) *time.Time { return &v }

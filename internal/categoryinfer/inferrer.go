@@ -52,10 +52,10 @@ func New(client *llm.Client, threshold float64) *CategoryInferrer {
 	}
 	cats := allCategoryNames()
 	return &CategoryInferrer{
-		client:    client,
+		client:     client,
 		categories: cats,
-		embeds:    make(map[string][]float32, len(cats)),
-		threshold: threshold,
+		embeds:     make(map[string][]float32, len(cats)),
+		threshold:  threshold,
 	}
 }
 

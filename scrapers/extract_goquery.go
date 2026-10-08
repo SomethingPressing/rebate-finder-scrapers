@@ -59,7 +59,6 @@ type PageExtractConfig struct {
 	// a fallback so novel program types are classified without keyword additions.
 	CategoryInferrer *categoryinfer.CategoryInferrer
 
-
 	// SegmentInferrer is optional. When set and inferSegments returns no match,
 	// the hybrid inferrer (embeddings + GPT-4o mini) is used as a fallback.
 	SegmentInferrer *segmentinfer.SegmentInferrer

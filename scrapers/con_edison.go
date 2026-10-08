@@ -906,7 +906,6 @@ func isFooterOnlyDescription(desc string) bool {
 	return false
 }
 
-
 func (s *ConEdisonScraper) httpClient() *http.Client {
 	if s.HTTPClient != nil {
 		return s.HTTPClient

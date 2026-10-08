@@ -45,15 +45,15 @@ type LiveRebate struct {
 	AvailableNationwide *bool   `gorm:"column:available_nationwide"`
 
 	// ── Array fields ──────────────────────────────────────────────────────────
-	Segment     StringSlice `gorm:"column:segment;type:text[]"`
-	Portfolio   StringSlice `gorm:"column:portfolio;type:text[]"`
-	ImageURLs   StringSlice `gorm:"column:image_urls;type:text[]"`
-	Sources     StringSlice `gorm:"column:sources;type:text[]"`
+	Segment   StringSlice `gorm:"column:segment;type:text[]"`
+	Portfolio StringSlice `gorm:"column:portfolio;type:text[]"`
+	ImageURLs StringSlice `gorm:"column:image_urls;type:text[]"`
+	Sources   StringSlice `gorm:"column:sources;type:text[]"`
 
 	// ── Audience / metadata ───────────────────────────────────────────────────
 	CustomerType       *string `gorm:"column:customer_type"`
 	Administrator      *string `gorm:"column:administrator"`
-	ImplementingSector   *string `gorm:"column:implementing_sector"`
+	ImplementingSector *string `gorm:"column:implementing_sector"`
 
 	// ── Tenant identity ──────────────────────────────────────────────────────
 	// ClientID is the public.clients.id of the tenant this rebate belongs to.
@@ -77,14 +77,14 @@ type LiveRebate struct {
 	// SourceURL is the canonical URL in the originating data system
 	// (e.g. energystar.gov/rebate-finder?incentive_id=…, programs.dsireusa.org/…).
 	// Distinct from ProgramURL which is the utility's own website.
-	SourceURL          *string `gorm:"column:source_url"`
-	ContactEmail       *string `gorm:"column:contact_email"`
-	ContactPhone       *string `gorm:"column:contact_phone"`
-	ImageURL           *string `gorm:"column:image_url"`
+	SourceURL    *string `gorm:"column:source_url"`
+	ContactEmail *string `gorm:"column:contact_email"`
+	ContactPhone *string `gorm:"column:contact_phone"`
+	ImageURL     *string `gorm:"column:image_url"`
 
 	// ── Requirements ─────────────────────────────────────────────────────────
-	ContractorRequired  *bool        `gorm:"column:contractor_required"`
-	EnergyAuditRequired *bool        `gorm:"column:energy_audit_required"`
+	ContractorRequired  *bool         `gorm:"column:contractor_required"`
+	EnergyAuditRequired *bool         `gorm:"column:energy_audit_required"`
 	RateTiers           RateTiersJSON `gorm:"column:rate_tiers;type:jsonb"`
 
 	// ── Audit ─────────────────────────────────────────────────────────────────

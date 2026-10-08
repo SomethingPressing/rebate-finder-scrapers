@@ -61,10 +61,10 @@ func cePaths() cePDFPaths {
 
 // ceIncentiveSpec describes one measure with its catalog and application pages.
 type ceIncentiveSpec struct {
-	Key            string      // machine-readable key
-	MeasureName    string      // human title
-	MeasureIDs     string      // IDs as printed in the docs (e.g. "HV101a–HV101j")
-	Category       string      // section in catalog
+	Key            string // machine-readable key
+	MeasureName    string // human title
+	MeasureIDs     string // IDs as printed in the docs (e.g. "HV101a–HV101j")
+	Category       string // section in catalog
 	Description    string
 	CatalogPages   []PageRange // PDF page numbers in the Catalog
 	AppPages       []PageRange // PDF page numbers in the Application
@@ -284,9 +284,9 @@ func ScrapeConsumersEnergyPDFs(ctx context.Context, log *zap.Logger, opts PDFScr
 // ── Console (pretty) output ───────────────────────────────────────────────────
 
 const (
-	lineWidth = 80
-	thickLine = "━"
-	thinLine  = "─"
+	lineWidth  = 80
+	thickLine  = "━"
+	thinLine   = "─"
 	doubleLine = "═"
 )
 

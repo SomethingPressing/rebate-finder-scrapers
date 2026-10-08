@@ -231,7 +231,10 @@ func PrintReportMarkdown(results []EvalResult, path string) error {
 		fmt.Fprintf(w, "---\n\n## Top Gaps Across All Programs\n\n")
 		fmt.Fprintf(w, "| Field | Programs Affected |\n")
 		fmt.Fprintf(w, "|-------|------------------|\n")
-		type kv struct{ k string; v int }
+		type kv struct {
+			k string
+			v int
+		}
 		var sorted []kv
 		for k, v := range freq {
 			sorted = append(sorted, kv{k, v})

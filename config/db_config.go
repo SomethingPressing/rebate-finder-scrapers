@@ -26,10 +26,10 @@ func LoadTenantsFromDB(database interface {
 			maxIncentives = *row.MaxIncentives
 		}
 		configs = append(configs, TenantConfig{
-			ID:      row.ClientID,   // client_id is the tenant ID — used to tag incentives
-			Name:    row.ClientID,
-			Active:  row.Active,
-			Sources: []string{row.Source},
+			ID:       row.ClientID, // client_id is the tenant ID — used to tag incentives
+			Name:     row.ClientID,
+			Active:   row.Active,
+			Sources:  []string{row.Source},
 			DBURLEnv: "DATABASE_URL",
 			LocationFilter: LocationFilter{
 				States:       row.States,
